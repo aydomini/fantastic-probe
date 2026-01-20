@@ -36,10 +36,10 @@ wget -qO- https://raw.githubusercontent.com/aydomini/fantastic-probe/main/instal
 
 ```bash
 # 下载 deb 包
-wget https://github.com/aydomini/fantastic-probe/releases/download/v2.5.1/fantastic-probe_2.5.1_all.deb
+wget https://github.com/aydomini/fantastic-probe/releases/download/v2.5.2/fantastic-probe_2.5.2_all.deb
 
 # 安装
-sudo apt install ./fantastic-probe_2.5.1_all.deb
+sudo apt install ./fantastic-probe_2.5.2_all.deb
 ```
 
 安装后配置：
@@ -733,6 +733,7 @@ A: 不会。已配置 logrotate 自动管理：
 <details>
 <summary><b>📝 版本历史</b>（点击展开）</summary>
 
+- **v2.5.2** (2026-01-20) - 修复 ISO 文件大小显示问题：移除 bc 依赖，改用系统标准 awk 计算（解决部分系统 ISO 大小显示为 0 MB 的问题）
 - **v2.5.1** (2026-01-20) - 禁用 MPLS 提取逻辑，恢复标准提取方式（用户反馈：标准提取信息最完整，ffprobe bluray 协议已自动处理所有逻辑）
 - **v2.5.0** (2026-01-20) - MPLS 语言提取支持：提取 BDMV 结构读取蓝光音轨/字幕语言信息，兼容 rclone fuse 挂载，强制安装 7z 依赖，修复临时目录冲突，配置面板更新自动重启
 - **v2.4.0** (2026-01-20) - 命名统一：所有命名统一为 `fantastic-probe`，简化用户体验

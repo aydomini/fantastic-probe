@@ -8,7 +8,7 @@
 #==============================================================================
 
 # 版本号（用于更新检查）
-VERSION="2.5.1"
+VERSION="2.5.2"
 
 set -euo pipefail
 
@@ -195,7 +195,7 @@ validate_config() {
 # 版本检查和自动更新
 #==============================================================================
 
-CURRENT_VERSION="2.5.1"
+CURRENT_VERSION="2.5.2"
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
 VERSION_CHECK_CACHE="/var/cache/fantastic-probe-last-check"
 VERSION_CHECK_INTERVAL=86400  # 24小时检查一次
@@ -728,10 +728,11 @@ process_iso_strm() {
 
     # 获取 ISO 文件大小（字节）
     local iso_size=$(stat -c%s "$iso_path" 2>/dev/null || stat -f%z "$iso_path" 2>/dev/null || echo "0")
-    local iso_size_mb=$(echo "scale=2; $iso_size / 1024 / 1024" | bc 2>/dev/null || echo "0")
-    local iso_size_gb=$(echo "scale=2; $iso_size / 1024 / 1024 / 1024" | bc 2>/dev/null || echo "0")
+    local iso_size_mb=$(awk -v size="$iso_size" 'BEGIN {printf "%.2f", size/1024/1024}')
+    local iso_size_gb=$(awk -v size="$iso_size" 'BEGIN {printf "%.2f", size/1024/1024/1024}')
 
-    if [ "$iso_size_gb" != "0" ] && [ "$(echo "$iso_size_gb > 1" | bc)" -eq 1 ]; then
+    # 判断是否 >= 1 GB（使用 awk 比较浮点数）
+    if awk -v gb="$iso_size_gb" 'BEGIN {exit (gb >= 1) ? 0 : 1}'; then
         log_info "  ISO 大小: ${iso_size_gb} GB (${iso_size} bytes)"
     else
         log_info "  ISO 大小: ${iso_size_mb} MB (${iso_size} bytes)"

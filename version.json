@@ -1,7 +1,7 @@
 {
-  "version": "2.5.1",
+  "version": "2.5.2",
   "release_date": "2026-01-20",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.5.1.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.5.2.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "禁用 MPLS 提取逻辑，恢复标准提取方式（用户反馈：标准提取信息最完整）"
+  "changelog": "修复 ISO 文件大小显示问题：移除 bc 依赖，改用系统标准 awk 计算"
 }
