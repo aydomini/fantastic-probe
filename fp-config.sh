@@ -1,0 +1,660 @@
+#!/bin/bash
+
+#==============================================================================
+# Fantastic-Probe 配置工具
+# 功能：允许用户随时修改配置而无需重新安装
+#==============================================================================
+
+set -euo pipefail
+
+#==============================================================================
+# 配置
+#==============================================================================
+
+SERVICE_NAME="fantastic-probe-monitor"
+CONFIG_FILE="/etc/fantastic-probe/config"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+#==============================================================================
+# 工具函数
+#==============================================================================
+
+# 检查是否以 root 运行
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        echo "❌ 错误: 此工具需要 root 权限"
+        echo "   请使用: sudo fantastic-probe-config"
+        exit 1
+    fi
+}
+
+# 加载当前配置
+load_config() {
+    if [ -f "$CONFIG_FILE" ]; then
+        # shellcheck source=/dev/null
+        source "$CONFIG_FILE"
+    else
+        echo "❌ 错误: 配置文件不存在: $CONFIG_FILE"
+        echo "   请先安装 Fantastic-Probe"
+        exit 1
+    fi
+}
+
+# 显示当前配置
+show_current_config() {
+    echo ""
+    echo "📋 当前配置："
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  📁 STRM 根目录: $STRM_ROOT"
+    echo "  🎬 FFprobe 路径: $FFPROBE"
+    echo "  📝 日志文件: $LOG_FILE"
+    echo "  ⏱️  FFprobe 超时: ${FFPROBE_TIMEOUT}秒"
+    echo "  ⏱️  最大处理时间: ${MAX_FILE_PROCESSING_TIME}秒"
+    echo "  ⏱️  防抖时间: ${DEBOUNCE_TIME}秒"
+    echo "  🔄 自动检查更新: ${AUTO_UPDATE_CHECK}"
+    echo "  🔄 自动安装更新: ${AUTO_UPDATE_INSTALL}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+}
+
+# 重启服务
+restart_service() {
+    echo ""
+    echo "🔄 重启服务以应用配置..."
+
+    if systemctl restart "$SERVICE_NAME"; then
+        echo "   ✅ 服务重启成功"
+        sleep 2
+        if systemctl is-active --quiet "$SERVICE_NAME"; then
+            echo "   ✅ 服务运行正常"
+        else
+            echo "   ⚠️  警告: 服务未能正常启动"
+            echo "   请检查: systemctl status $SERVICE_NAME"
+        fi
+    else
+        echo "   ❌ 服务重启失败"
+        echo "   请检查: systemctl status $SERVICE_NAME"
+        return 1
+    fi
+    echo ""
+}
+
+# 更新配置文件中的某一行
+update_config_line() {
+    local key="$1"
+    local value="$2"
+
+    if [ -f "$CONFIG_FILE" ]; then
+        # 创建备份
+        cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
+
+        # 更新配置行
+        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "$CONFIG_FILE"
+
+        # 删除备份
+        rm -f "$CONFIG_FILE.bak"
+
+        echo "   ✅ 配置已更新: $key=\"$value\""
+    else
+        echo "   ❌ 配置文件不存在"
+        return 1
+    fi
+}
+
+#==============================================================================
+# 配置修改函数
+#==============================================================================
+
+# 修改 STRM 根目录
+change_strm_root() {
+    echo ""
+    echo "📁 修改 STRM 根目录"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   当前目录: $STRM_ROOT"
+    echo ""
+    read -p "   请输入新的 STRM 根目录路径: " new_strm_root
+
+    if [ -z "$new_strm_root" ]; then
+        echo "   ⚠️  未输入路径，取消修改"
+        return 1
+    fi
+
+    # 验证目录
+    if [ ! -d "$new_strm_root" ]; then
+        echo "   ⚠️  警告: 目录不存在: $new_strm_root"
+        read -p "   是否创建该目录？[Y/n]: " create_dir
+        create_dir="${create_dir:-Y}"
+
+        if [[ "$create_dir" =~ ^[Yy]$ ]]; then
+            mkdir -p "$new_strm_root"
+            echo "   ✅ 目录已创建"
+        else
+            echo "   ⚠️  目录不存在，配置可能无法正常工作"
+        fi
+    fi
+
+    # 更新配置
+    update_config_line "STRM_ROOT" "$new_strm_root"
+    STRM_ROOT="$new_strm_root"
+
+    # 询问是否重启服务
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已更新，但需要重启服务才能生效"
+        echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+    fi
+}
+
+# 重新配置 FFprobe
+reconfigure_ffprobe() {
+    echo ""
+    echo "🎬 重新配置 FFprobe"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   当前路径: $FFPROBE"
+    echo ""
+
+    # 检查是否有预编译包
+    ARCH=$(uname -m)
+    PREBUILT_AVAILABLE=false
+
+    if [ "$ARCH" = "x86_64" ] && [ -f "$SCRIPT_DIR/static/ffprobe_linux_x64.zip" ]; then
+        PREBUILT_AVAILABLE=true
+        PREBUILT_ZIP="$SCRIPT_DIR/static/ffprobe_linux_x64.zip"
+        echo "   ✅ 检测到预编译 ffprobe（x86_64）"
+    elif [ "$ARCH" = "aarch64" ] && [ -f "$SCRIPT_DIR/static/ffprobe_linux_arm64.zip" ]; then
+        PREBUILT_AVAILABLE=true
+        PREBUILT_ZIP="$SCRIPT_DIR/static/ffprobe_linux_arm64.zip"
+        echo "   ✅ 检测到预编译 ffprobe（ARM64）"
+    fi
+
+    # 提供选项
+    echo ""
+    echo "   选项："
+    if [ "$PREBUILT_AVAILABLE" = true ]; then
+        echo "     1) 使用项目提供的预编译 ffprobe（推荐）"
+        echo "     2) 使用系统已安装的 ffprobe"
+        echo "     3) 手动指定 ffprobe 路径"
+    else
+        echo "     1) 使用系统已安装的 ffprobe"
+        echo "     2) 手动指定 ffprobe 路径"
+    fi
+    echo ""
+
+    if [ "$PREBUILT_AVAILABLE" = true ]; then
+        read -p "   请选择 [1/2/3]: " choice
+    else
+        read -p "   请选择 [1/2]: " choice
+    fi
+
+    local new_ffprobe=""
+
+    case "$choice" in
+        1)
+            if [ "$PREBUILT_AVAILABLE" = true ]; then
+                # 安装预编译包
+                echo ""
+                echo "   📦 安装预编译 ffprobe..."
+
+                # 检查 unzip
+                if ! command -v unzip &> /dev/null; then
+                    echo "   ⚠️  需要安装 unzip 工具"
+                    echo "   请先安装: sudo apt install unzip"
+                    return 1
+                fi
+
+                # 解压到临时目录
+                TEMP_DIR="/tmp/ffprobe-config-$$"
+                mkdir -p "$TEMP_DIR"
+                unzip -q "$PREBUILT_ZIP" -d "$TEMP_DIR"
+
+                # 安装到 /usr/local/bin
+                if [ -f "$TEMP_DIR/ffprobe" ]; then
+                    cp "$TEMP_DIR/ffprobe" /usr/local/bin/ffprobe
+                    chmod +x /usr/local/bin/ffprobe
+                    new_ffprobe="/usr/local/bin/ffprobe"
+                    echo "   ✅ ffprobe 已安装到: /usr/local/bin/ffprobe"
+                else
+                    echo "   ❌ 错误: 解压后未找到 ffprobe"
+                    rm -rf "$TEMP_DIR"
+                    return 1
+                fi
+
+                # 清理临时文件
+                rm -rf "$TEMP_DIR"
+            else
+                # 使用系统 ffprobe
+                if command -v ffprobe &> /dev/null; then
+                    new_ffprobe=$(command -v ffprobe)
+                    echo "   ✅ 使用系统 ffprobe: $new_ffprobe"
+                else
+                    echo "   ❌ 系统中未检测到 ffprobe"
+                    return 1
+                fi
+            fi
+            ;;
+        2)
+            if [ "$PREBUILT_AVAILABLE" = true ]; then
+                # 使用系统 ffprobe
+                if command -v ffprobe &> /dev/null; then
+                    new_ffprobe=$(command -v ffprobe)
+                    echo "   ✅ 使用系统 ffprobe: $new_ffprobe"
+                else
+                    echo "   ❌ 系统中未检测到 ffprobe"
+                    return 1
+                fi
+            else
+                # 手动指定路径
+                read -p "   请输入 ffprobe 路径: " new_ffprobe
+            fi
+            ;;
+        3)
+            # 手动指定路径
+            read -p "   请输入 ffprobe 路径: " new_ffprobe
+            ;;
+        *)
+            echo "   ❌ 无效选择"
+            return 1
+            ;;
+    esac
+
+    # 验证 ffprobe
+    if [ ! -x "$new_ffprobe" ]; then
+        echo "   ⚠️  警告: ffprobe 不存在或不可执行: $new_ffprobe"
+        read -p "   是否仍要保存此配置？[y/N]: " confirm
+        confirm="${confirm:-N}"
+
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "   ⚠️  取消修改"
+            return 1
+        fi
+    fi
+
+    # 更新配置
+    update_config_line "FFPROBE" "$new_ffprobe"
+    FFPROBE="$new_ffprobe"
+
+    # 询问是否重启服务
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已更新，但需要重启服务才能生效"
+        echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+    fi
+}
+
+# 修改自动更新设置
+change_auto_update() {
+    echo ""
+    echo "🔄 修改自动更新设置"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   当前设置："
+    echo "     自动检查更新: ${AUTO_UPDATE_CHECK}"
+    echo "     自动安装更新: ${AUTO_UPDATE_INSTALL}"
+    echo ""
+
+    # 修改自动检查更新
+    read -p "   是否启用自动检查更新？[Y/n]: " check_update
+    check_update="${check_update:-Y}"
+
+    if [[ "$check_update" =~ ^[Yy]$ ]]; then
+        update_config_line "AUTO_UPDATE_CHECK" "true"
+        AUTO_UPDATE_CHECK="true"
+    else
+        update_config_line "AUTO_UPDATE_CHECK" "false"
+        AUTO_UPDATE_CHECK="false"
+    fi
+
+    # 修改自动安装更新
+    echo ""
+    echo "   ⚠️  注意: 自动安装更新会在队列清空后自动更新服务"
+    read -p "   是否启用自动安装更新？[y/N]: " install_update
+    install_update="${install_update:-N}"
+
+    if [[ "$install_update" =~ ^[Yy]$ ]]; then
+        update_config_line "AUTO_UPDATE_INSTALL" "true"
+        AUTO_UPDATE_INSTALL="true"
+    else
+        update_config_line "AUTO_UPDATE_INSTALL" "false"
+        AUTO_UPDATE_INSTALL="false"
+    fi
+
+    echo ""
+    echo "   ✅ 自动更新设置已更新"
+
+    # 询问是否重启服务
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    fi
+}
+
+# 直接编辑配置文件
+edit_config_file() {
+    echo ""
+    echo "📝 编辑配置文件"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   配置文件: $CONFIG_FILE"
+    echo ""
+
+    # 检查编辑器
+    EDITOR="${EDITOR:-nano}"
+
+    if ! command -v "$EDITOR" &> /dev/null; then
+        EDITOR="vi"
+    fi
+
+    echo "   使用编辑器: $EDITOR"
+    echo "   ⚠️  警告: 请确保配置语法正确（KEY=\"VALUE\" 格式）"
+    echo ""
+    read -p "   按 Enter 继续，或 Ctrl+C 取消..."
+
+    # 打开编辑器
+    "$EDITOR" "$CONFIG_FILE"
+
+    echo ""
+    echo "   ✅ 编辑完成"
+
+    # 询问是否重启服务
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已修改，但需要重启服务才能生效"
+        echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+    fi
+}
+
+#==============================================================================
+# 服务管理函数
+#==============================================================================
+
+# 查看服务状态
+show_service_status() {
+    echo ""
+    echo "📊 服务状态"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    systemctl status "$SERVICE_NAME" --no-pager || true
+    echo ""
+}
+
+# 启动服务
+start_service() {
+    echo ""
+    echo "▶️  启动服务..."
+
+    if systemctl start "$SERVICE_NAME"; then
+        echo "   ✅ 服务启动成功"
+        sleep 2
+        if systemctl is-active --quiet "$SERVICE_NAME"; then
+            echo "   ✅ 服务运行正常"
+        else
+            echo "   ⚠️  警告: 服务未能正常启动"
+            echo "   请检查: systemctl status $SERVICE_NAME"
+        fi
+    else
+        echo "   ❌ 服务启动失败"
+        return 1
+    fi
+    echo ""
+}
+
+# 停止服务
+stop_service() {
+    echo ""
+    echo "⏹️  停止服务..."
+
+    if systemctl stop "$SERVICE_NAME"; then
+        echo "   ✅ 服务已停止"
+    else
+        echo "   ❌ 服务停止失败"
+        return 1
+    fi
+    echo ""
+}
+
+#==============================================================================
+# 日志管理函数
+#==============================================================================
+
+# 查看实时主日志
+view_logs() {
+    echo ""
+    echo "📝 实时主日志（按 Ctrl+C 退出）"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    tail -f "$LOG_FILE" 2>/dev/null || echo "❌ 日志文件不存在: $LOG_FILE"
+}
+
+# 查看错误日志
+view_error_logs() {
+    echo ""
+    echo "⚠️  错误日志（最近 50 行）"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    if [ -f "$ERROR_LOG_FILE" ]; then
+        tail -50 "$ERROR_LOG_FILE"
+    else
+        echo "ℹ️  暂无错误日志"
+    fi
+    echo ""
+}
+
+# 查看系统日志
+view_system_logs() {
+    echo ""
+    echo "🖥️  系统日志（最近 50 行，按 Ctrl+C 退出）"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    journalctl -u "$SERVICE_NAME" -n 50 -f
+}
+
+# 清空日志文件
+clear_logs() {
+    echo ""
+    echo "🗑️  清空日志文件"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   ⚠️  警告: 此操作将删除所有历史日志"
+    echo ""
+    read -p "   确定要清空日志吗？[y/N]: " confirm
+
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        truncate -s 0 "$LOG_FILE" 2>/dev/null && echo "   ✅ 主日志已清空"
+        truncate -s 0 "$ERROR_LOG_FILE" 2>/dev/null && echo "   ✅ 错误日志已清空"
+    else
+        echo "   ℹ️  操作已取消"
+    fi
+    echo ""
+}
+
+#==============================================================================
+# 主菜单
+#==============================================================================
+
+show_menu() {
+    echo ""
+    echo "╔════════════════════════════════════════════════╗"
+    echo "║    Fantastic-Probe 管理工具                    ║"
+    echo "╚════════════════════════════════════════════════╝"
+    echo ""
+    echo "  配置管理"
+    echo "  ────────"
+    echo "  1) 查看当前配置"
+    echo "  2) 修改 STRM 根目录"
+    echo "  3) 重新配置 FFprobe"
+    echo "  4) 修改自动更新设置"
+    echo "  5) 直接编辑配置文件"
+    echo ""
+    echo "  服务管理"
+    echo "  ────────"
+    echo "  6) 查看服务状态"
+    echo "  7) 启动服务"
+    echo "  8) 停止服务"
+    echo "  9) 重启服务"
+    echo ""
+    echo "  日志管理"
+    echo "  ────────"
+    echo "  10) 查看实时日志"
+    echo "  11) 查看错误日志"
+    echo "  12) 查看系统日志"
+    echo "  13) 清空日志文件"
+    echo ""
+    echo "  0) 退出"
+    echo ""
+    read -p "请选择操作 [0-13]: " choice
+    echo ""
+
+    case "$choice" in
+        1)
+            show_current_config
+            read -p "按 Enter 返回菜单..."
+            ;;
+        2)
+            change_strm_root
+            read -p "按 Enter 返回菜单..."
+            ;;
+        3)
+            reconfigure_ffprobe
+            read -p "按 Enter 返回菜单..."
+            ;;
+        4)
+            change_auto_update
+            read -p "按 Enter 返回菜单..."
+            ;;
+        5)
+            edit_config_file
+            read -p "按 Enter 返回菜单..."
+            ;;
+        6)
+            show_service_status
+            read -p "按 Enter 返回菜单..."
+            ;;
+        7)
+            start_service
+            read -p "按 Enter 返回菜单..."
+            ;;
+        8)
+            stop_service
+            read -p "按 Enter 返回菜单..."
+            ;;
+        9)
+            restart_service
+            read -p "按 Enter 返回菜单..."
+            ;;
+        10)
+            view_logs
+            ;;
+        11)
+            view_error_logs
+            read -p "按 Enter 返回菜单..."
+            ;;
+        12)
+            view_system_logs
+            ;;
+        13)
+            clear_logs
+            read -p "按 Enter 返回菜单..."
+            ;;
+        0)
+            echo "👋 再见！"
+            exit 0
+            ;;
+        *)
+            echo "❌ 无效选择"
+            read -p "按 Enter 返回菜单..."
+            ;;
+    esac
+}
+
+#==============================================================================
+# 主函数
+#==============================================================================
+
+main() {
+    check_root
+    load_config
+
+    # 如果有参数，直接执行对应功能
+    if [ $# -gt 0 ]; then
+        case "$1" in
+            show|view)
+                show_current_config
+                ;;
+            strm)
+                change_strm_root
+                ;;
+            ffprobe)
+                reconfigure_ffprobe
+                ;;
+            update)
+                change_auto_update
+                ;;
+            edit)
+                edit_config_file
+                ;;
+            restart)
+                restart_service
+                ;;
+            status)
+                show_service_status
+                ;;
+            start)
+                start_service
+                ;;
+            stop)
+                stop_service
+                ;;
+            logs)
+                view_logs
+                ;;
+            logs-error)
+                view_error_logs
+                ;;
+            logs-system)
+                view_system_logs
+                ;;
+            logs-clear)
+                clear_logs
+                ;;
+            *)
+                echo "❌ 未知命令: $1"
+                echo ""
+                echo "用法: fp-config [命令]"
+                echo ""
+                echo "可用命令："
+                echo "  show          查看当前配置"
+                echo "  strm          修改 STRM 根目录"
+                echo "  ffprobe       重新配置 FFprobe"
+                echo "  update        修改自动更新设置"
+                echo "  edit          直接编辑配置文件"
+                echo "  restart       重启服务"
+                echo "  status        查看服务状态"
+                echo "  start         启动服务"
+                echo "  stop          停止服务"
+                echo "  logs          查看实时日志"
+                echo "  logs-error    查看错误日志"
+                echo "  logs-system   查看系统日志"
+                echo "  logs-clear    清空日志文件"
+                echo ""
+                exit 1
+                ;;
+        esac
+    else
+        # 交互式菜单
+        while true; do
+            show_menu
+        done
+    fi
+}
+
+main "$@"
