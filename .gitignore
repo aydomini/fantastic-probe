@@ -54,3 +54,6 @@ env/
 static/ffprobe
 static/bin/
 static/extracted/
+# 预编译包（已迁移到 GitHub Releases）
+static/
+*.zip
