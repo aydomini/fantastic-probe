@@ -12,6 +12,18 @@ REPO_RAW_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe"
 VERSION="${1:-main}"  # 默认使用 main 分支，可指定版本标签
 INSTALL_DIR="/tmp/fantastic-probe-install-$$"
 
+# 清理临时文件函数
+cleanup() {
+    if [ -d "$INSTALL_DIR" ]; then
+        echo "清理临时文件..."
+        cd /
+        rm -rf "$INSTALL_DIR"
+    fi
+}
+
+# 设置退出时自动清理（即使脚本失败或中断也会执行）
+trap cleanup EXIT INT TERM
+
 #==============================================================================
 # 颜色输出
 #==============================================================================
@@ -136,13 +148,7 @@ else
     exit 1
 fi
 
-# 7. 清理临时文件
-info "清理临时文件..."
-cd /
-rm -rf "$INSTALL_DIR"
-success "清理完成"
-
-# 8. 安装完成
+# 7. 安装完成
 echo ""
 echo "=========================================="
 success "Fantastic-Probe 安装完成！"

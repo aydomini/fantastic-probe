@@ -424,6 +424,255 @@ stop_service() {
 }
 
 #==============================================================================
+# 系统管理函数
+#==============================================================================
+
+# 检查更新
+check_updates() {
+    echo ""
+    echo "🔍 检查更新"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "   正在检查 GitHub 仓库..."
+
+    # 获取本地版本
+    LOCAL_VERSION=""
+    if [ -f "/usr/local/bin/fantastic-probe-monitor" ]; then
+        LOCAL_VERSION=$(grep "^VERSION=" /usr/local/bin/fantastic-probe-monitor | head -1 | cut -d'"' -f2 || echo "unknown")
+    fi
+
+    echo "   本地版本: $LOCAL_VERSION"
+    echo ""
+
+    # 获取远程最新版本
+    REMOTE_VERSION=$(curl -fsSL "https://api.github.com/repos/aydomini/fantastic-probe/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/' || echo "")
+
+    if [ -z "$REMOTE_VERSION" ]; then
+        echo "   ❌ 无法获取远程版本信息"
+        echo "   请检查网络连接或访问: https://github.com/aydomini/fantastic-probe/releases"
+        echo ""
+        return 1
+    fi
+
+    echo "   最新版本: $REMOTE_VERSION"
+    echo ""
+
+    # 比较版本
+    if [ "$LOCAL_VERSION" = "$REMOTE_VERSION" ]; then
+        echo "   ✅ 已是最新版本"
+    else
+        echo "   🎉 发现新版本: $LOCAL_VERSION → $REMOTE_VERSION"
+        echo ""
+        read -p "   是否立即安装更新？[y/N]: " install_now
+        if [[ "$install_now" =~ ^[Yy]$ ]]; then
+            install_updates
+        fi
+    fi
+    echo ""
+}
+
+# 安装更新
+install_updates() {
+    echo ""
+    echo "📦 安装更新"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # 确认操作
+    echo "   ⚠️  注意："
+    echo "      1. 更新过程中服务将暂时停止"
+    echo "      2. 配置文件将保留"
+    echo "      3. 建议在任务队列空闲时更新"
+    echo ""
+    read -p "   确认继续？[y/N]: " confirm
+    confirm="${confirm:-N}"
+
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "   ℹ️  操作已取消"
+        echo ""
+        return 1
+    fi
+
+    # 停止服务
+    echo ""
+    echo "   ⏹️  停止服务..."
+    systemctl stop "$SERVICE_NAME" || true
+
+    # 下载并运行安装脚本（保留配置）
+    echo ""
+    echo "   📥 下载更新..."
+    TEMP_DIR="/tmp/fantastic-probe-update-$$"
+    mkdir -p "$TEMP_DIR"
+
+    if curl -fsSL "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh" -o "$TEMP_DIR/install.sh"; then
+        echo "   ✅ 下载完成"
+        echo ""
+        echo "   🔧 正在安装..."
+        echo ""
+
+        # 运行安装脚本（会自动检测并保留配置）
+        bash "$TEMP_DIR/install.sh"
+
+        # 清理临时文件
+        rm -rf "$TEMP_DIR"
+
+        echo ""
+        echo "   ✅ 更新完成！"
+    else
+        echo "   ❌ 下载失败"
+        echo "   请检查网络连接或手动更新"
+        rm -rf "$TEMP_DIR"
+
+        # 尝试重启服务
+        echo ""
+        echo "   🔄 尝试重启服务..."
+        systemctl start "$SERVICE_NAME" || true
+        return 1
+    fi
+    echo ""
+}
+
+# 卸载服务
+uninstall_service() {
+    echo ""
+    echo "🗑️  卸载 Fantastic-Probe"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "   ⚠️  警告："
+    echo "      此操作将完全卸载 Fantastic-Probe 服务"
+    echo "      包括服务、脚本和系统配置"
+    echo ""
+    echo "   可选择保留："
+    echo "      - 配置文件 (/etc/fantastic-probe/)"
+    echo "      - 日志文件 (/var/log/fantastic_probe*.log)"
+    echo "      - 生成的 JSON 文件 (*.iso-mediainfo.json)"
+    echo ""
+    read -p "   确认卸载？请输入 YES 确认: " confirm
+
+    if [ "$confirm" != "YES" ]; then
+        echo "   ℹ️  操作已取消"
+        echo ""
+        return 1
+    fi
+
+    # 执行卸载
+    echo ""
+    echo "   🔧 开始卸载..."
+    echo ""
+
+    # 1. 停止服务
+    echo "   1️⃣  停止服务..."
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        systemctl stop "$SERVICE_NAME"
+        echo "      ✅ 服务已停止"
+    else
+        echo "      ✅ 服务未运行"
+    fi
+
+    # 2. 禁用服务
+    echo "   2️⃣  禁用服务..."
+    if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+        systemctl disable "$SERVICE_NAME"
+        echo "      ✅ 服务已禁用"
+    else
+        echo "      ✅ 服务未启用"
+    fi
+
+    # 3. 删除服务文件
+    echo "   3️⃣  删除服务文件..."
+    if [ -f "/etc/systemd/system/$SERVICE_NAME.service" ]; then
+        rm -f "/etc/systemd/system/$SERVICE_NAME.service"
+        echo "      ✅ 服务文件已删除"
+    else
+        echo "      ✅ 服务文件不存在"
+    fi
+
+    # 4. 重新加载 systemd
+    echo "   4️⃣  重新加载 systemd..."
+    systemctl daemon-reload
+    echo "      ✅ systemd 配置已重新加载"
+
+    # 5. 删除脚本和工具
+    echo "   5️⃣  删除脚本和工具..."
+    rm -f /usr/local/bin/fantastic-probe-monitor
+    rm -f /usr/local/bin/fantastic-probe-auto-update
+    rm -f /usr/local/bin/fp-config
+    rm -f /usr/local/bin/fantastic-probe-config
+    echo "      ✅ 所有脚本已删除"
+
+    # 6. 清理临时文件
+    echo "   6️⃣  清理临时文件..."
+    rm -f /tmp/fantastic_probe_monitor.lock
+    rm -f /tmp/fantastic_probe_queue.fifo
+    rm -f /tmp/fantastic-probe-update-marker
+    rm -f /tmp/fantastic-probe-auto-update.lock
+    rm -rf /tmp/fantastic-probe-install-* 2>/dev/null || true
+    echo "      ✅ 临时文件已清理"
+
+    # 7. 清理 logrotate 配置
+    echo "   7️⃣  清理 logrotate 配置..."
+    if [ -f "/etc/logrotate.d/fantastic-probe" ]; then
+        rm -f /etc/logrotate.d/fantastic-probe
+        echo "      ✅ logrotate 配置已删除"
+    else
+        echo "      ✅ logrotate 配置不存在"
+    fi
+
+    # 8. 询问是否删除配置文件
+    echo ""
+    echo "   8️⃣  配置文件处理..."
+    if [ -d "/etc/fantastic-probe" ]; then
+        read -p "      是否删除配置文件？[y/N]: " delete_config
+        if [[ "$delete_config" =~ ^[Yy]$ ]]; then
+            rm -rf /etc/fantastic-probe
+            echo "      ✅ 配置目录已删除"
+        else
+            echo "      ℹ️  配置文件保留在: /etc/fantastic-probe/"
+        fi
+    else
+        echo "      ✅ 配置目录不存在"
+    fi
+
+    # 9. 询问是否删除日志
+    echo ""
+    echo "   9️⃣  日志文件处理..."
+    read -p "      是否删除日志文件？[y/N]: " delete_logs
+    if [[ "$delete_logs" =~ ^[Yy]$ ]]; then
+        rm -f /var/log/fantastic_probe.log
+        rm -f /var/log/fantastic_probe_errors.log
+        echo "      ✅ 日志文件已删除"
+    else
+        echo "      ℹ️  日志文件保留"
+    fi
+
+    # 10. 询问是否删除生成的 JSON 文件
+    echo ""
+    echo "   🔟 生成的 JSON 文件处理..."
+    echo "      ⚠️  注意：删除 JSON 文件会导致 Emby 需要重新扫描媒体库"
+    read -p "      是否删除所有 .iso-mediainfo.json 文件？[y/N]: " delete_json
+
+    if [[ "$delete_json" =~ ^[Yy]$ ]] && [ -d "$STRM_ROOT" ]; then
+        JSON_COUNT=$(find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" 2>/dev/null | wc -l)
+        if [ "$JSON_COUNT" -gt 0 ]; then
+            find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" -delete
+            echo "      ✅ 已删除 $JSON_COUNT 个 JSON 文件"
+        else
+            echo "      ℹ️  没有找到 JSON 文件"
+        fi
+    else
+        echo "      ℹ️  JSON 文件保留"
+    fi
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   ✅ Fantastic-Probe 卸载完成！"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    exit 0
+}
+
+#==============================================================================
 # 日志管理函数
 #==============================================================================
 
@@ -509,9 +758,15 @@ show_menu() {
     echo "  12) 查看系统日志"
     echo "  13) 清空日志文件"
     echo ""
+    echo "  系统管理"
+    echo "  ────────"
+    echo "  14) 检查更新"
+    echo "  15) 安装更新"
+    echo "  16) 卸载服务"
+    echo ""
     echo "  0) 退出"
     echo ""
-    read -p "请选择操作 [0-13]: " choice
+    read -p "请选择操作 [0-16]: " choice
     echo ""
 
     case "$choice" in
@@ -564,6 +819,17 @@ show_menu() {
         13)
             clear_logs
             read -p "按 Enter 返回菜单..."
+            ;;
+        14)
+            check_updates
+            read -p "按 Enter 返回菜单..."
+            ;;
+        15)
+            install_updates
+            read -p "按 Enter 返回菜单..."
+            ;;
+        16)
+            uninstall_service
             ;;
         0)
             echo "👋 再见！"
@@ -626,25 +892,44 @@ main() {
             logs-clear)
                 clear_logs
                 ;;
+            check-update)
+                check_updates
+                ;;
+            install-update)
+                install_updates
+                ;;
+            uninstall)
+                uninstall_service
+                ;;
             *)
                 echo "❌ 未知命令: $1"
                 echo ""
                 echo "用法: fp-config [命令]"
                 echo ""
                 echo "可用命令："
-                echo "  show          查看当前配置"
-                echo "  strm          修改 STRM 根目录"
-                echo "  ffprobe       重新配置 FFprobe"
-                echo "  update        修改自动更新设置"
-                echo "  edit          直接编辑配置文件"
-                echo "  restart       重启服务"
-                echo "  status        查看服务状态"
-                echo "  start         启动服务"
-                echo "  stop          停止服务"
-                echo "  logs          查看实时日志"
-                echo "  logs-error    查看错误日志"
-                echo "  logs-system   查看系统日志"
-                echo "  logs-clear    清空日志文件"
+                echo "  配置管理："
+                echo "    show            查看当前配置"
+                echo "    strm            修改 STRM 根目录"
+                echo "    ffprobe         重新配置 FFprobe"
+                echo "    update          修改自动更新设置"
+                echo "    edit            直接编辑配置文件"
+                echo ""
+                echo "  服务管理："
+                echo "    restart         重启服务"
+                echo "    status          查看服务状态"
+                echo "    start           启动服务"
+                echo "    stop            停止服务"
+                echo ""
+                echo "  日志管理："
+                echo "    logs            查看实时日志"
+                echo "    logs-error      查看错误日志"
+                echo "    logs-system     查看系统日志"
+                echo "    logs-clear      清空日志文件"
+                echo ""
+                echo "  系统管理："
+                echo "    check-update    检查更新"
+                echo "    install-update  安装更新"
+                echo "    uninstall       卸载服务"
                 echo ""
                 exit 1
                 ;;
