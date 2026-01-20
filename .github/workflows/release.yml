@@ -9,6 +9,8 @@ on:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 允许创建 releases 和上传文件
 
     steps:
       - name: 检出代码
@@ -17,7 +19,7 @@ jobs:
       - name: 设置环境
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev lintian
+          sudo apt-get install -y dpkg-dev lintian fakeroot
 
       - name: 提取版本号
         id: version
@@ -66,7 +68,8 @@ jobs:
           fi
 
           chmod +x build-deb.sh
-          ./build-deb.sh
+          # 使用 fakeroot 确保文件所有权为 root:root
+          fakeroot ./build-deb.sh
 
       - name: 验证 Deb 包
         run: |
