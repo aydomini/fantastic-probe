@@ -328,21 +328,23 @@ detect_iso_type() {
 find_main_playlist() {
     local iso_path="$1"
 
-    # 使用 isoinfo 列出 ISO 内的 BDMV/PLAYLIST 目录
-    # 如果没有 isoinfo，尝试使用 7z
+    # 使用 7z 或 isoinfo 列出 ISO 内的 BDMV/PLAYLIST 目录
     local playlist_files=""
 
-    if command -v isoinfo &>/dev/null; then
-        # 使用 isoinfo（推荐）
-        # 移除 $ 结尾匹配以兼容 ISO 版本号后缀（如 .mpls;1）
-        playlist_files=$(isoinfo -i "$iso_path" -f 2>/dev/null | grep -i "BDMV/PLAYLIST/.*\.mpls" || true)
-    elif command -v 7z &>/dev/null; then
-        # 使用 7z 作为备选
-        # 7z 使用反斜杠路径分隔符，需要分步匹配
-        # 移除 $ 结尾匹配以兼容 ISO 版本号后缀
-        playlist_files=$(7z l "$iso_path" 2>/dev/null | grep -i "BDMV" | grep -i "PLAYLIST" | grep -i "\.mpls" | awk '{print $NF}' || true)
+    if command -v 7z &>/dev/null; then
+        # 使用 7z 列出所有 mpls 文件
+        playlist_files=$(7z l "$iso_path" 2>/dev/null | \
+            grep -i "BDMV" | \
+            grep -i "PLAYLIST" | \
+            grep -i "\.mpls" | \
+            awk '{print $NF}' | \
+            tr '\\' '/' || true)
+    elif command -v isoinfo &>/dev/null; then
+        # 备选：使用 isoinfo
+        playlist_files=$(isoinfo -i "$iso_path" -f 2>/dev/null | \
+            grep -i "BDMV/PLAYLIST/.*\.mpls" || true)
     else
-        log_warn "未找到 isoinfo 或 7z 工具，无法查找 MPLS 播放列表"
+        log_warn "未找到 7z 或 isoinfo 工具，无法查找 MPLS 播放列表"
         return 1
     fi
 
@@ -351,46 +353,15 @@ find_main_playlist() {
         return 1
     fi
 
-    # 找到时长最长的播放列表（主播放列表）
-    local max_duration=0
-    local main_playlist=""
-
-    while IFS= read -r playlist; do
-        # 清理路径（去除前导斜杠和空格，转换反斜杠为正斜杠，去除 ISO 版本号后缀）
-        playlist=$(echo "$playlist" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^\///' | tr '\\' '/' | sed 's/;[0-9]*$//')
-
-        # 尝试获取该播放列表的时长
-        local duration_json=$(timeout 30 "$FFPROBE" -v quiet -print_format json \
-            -show_format \
-            -protocol_whitelist "file,bluray" \
-            -i "bluray:${iso_path}/${playlist}" 2>/dev/null || true)
-
-        if [ -n "$duration_json" ]; then
-            # 提取时长（秒）
-            local duration=$(echo "$duration_json" | jq -r '.format.duration // "0"' 2>/dev/null || echo "0")
-
-            # 转换为整数比较
-            duration_int=$(echo "$duration" | awk '{print int($1)}')
-
-            if [ "$duration_int" -gt "$max_duration" ]; then
-                max_duration=$duration_int
-                main_playlist="$playlist"
-            fi
-        fi
-    done <<< "$playlist_files"
-
-    if [ -n "$main_playlist" ]; then
-        log_info "  主播放列表: $main_playlist (时长: ${max_duration}秒)"
-        echo "$main_playlist"
-        return 0
-    else
-        log_warn "无法确定主播放列表"
-        return 1
-    fi
+    # 返回所有 MPLS 文件（后续会提取整个 PLAYLIST 目录）
+    log_info "  找到 $(echo "$playlist_files" | wc -l) 个 MPLS 播放列表"
+    echo "$playlist_files" | head -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^\///' | sed 's/;[0-9]*$//'
+    return 0
 }
 
 #==============================================================================
 # 从 MPLS 提取媒体信息（包含准确的语言标签）
+# 提取 BDMV 目录结构（PLAYLIST + CLIPINF），使用 bluray: 协议读取
 #==============================================================================
 
 extract_mediainfo_from_mpls() {
@@ -399,10 +370,58 @@ extract_mediainfo_from_mpls() {
 
     log_info "  从 MPLS 提取语言信息: $mpls_path"
 
+    # 创建临时目录（每个任务唯一，防止并发冲突）
+    local temp_dir=$(mktemp -d)
+
+    # 清理函数
+    cleanup_bluray() {
+        rm -rf "$temp_dir"
+    }
+    trap cleanup_bluray RETURN
+
+    # 提取 BDMV 目录结构（只提取 PLAYLIST 和 CLIPINF，不提取大的 STREAM）
+    # PLAYLIST: 播放列表，包含语言信息（几百KB）
+    # CLIPINF: 剪辑信息，MPLS 需要引用（几百KB）
+    log_info "  提取 BDMV 目录结构（PLAYLIST + CLIPINF）..."
+
+    if command -v 7z &>/dev/null; then
+        # 使用 7z 提取指定目录
+        if 7z x "$iso_path" "BDMV/PLAYLIST/*" "BDMV/CLIPINF/*" -o"$temp_dir" -y >/dev/null 2>&1; then
+            log_info "  ✅ BDMV 结构提取完成"
+        else
+            log_warn "提取 BDMV 结构失败"
+            return 1
+        fi
+    else
+        log_warn "未找到 7z 工具，无法提取 BDMV 结构"
+        return 1
+    fi
+
+    # 验证目录是否成功创建
+    if [ ! -d "$temp_dir/BDMV/PLAYLIST" ]; then
+        log_warn "BDMV/PLAYLIST 目录提取失败"
+        return 1
+    fi
+
+    # 查找主播放列表（最大的 mpls 文件）
+    log_info "  查找主播放列表..."
+    local main_mpls=$(find "$temp_dir/BDMV/PLAYLIST" -type f -name "*.mpls" -o -name "*.MPLS" 2>/dev/null | \
+        xargs ls -lS 2>/dev/null | head -1 | awk '{print $NF}')
+
+    if [ -z "$main_mpls" ] || [ ! -f "$main_mpls" ]; then
+        log_warn "未找到主播放列表文件"
+        return 1
+    fi
+
+    log_info "  主播放列表: $(basename "$main_mpls")"
+
+    # 使用 ffprobe bluray: 协议读取 MPLS
+    # bluray: 协议期望完整的 BDMV 目录结构
+    log_info "  分析播放列表元数据..."
     timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v quiet -print_format json \
         -show_format -show_streams -show_chapters \
         -protocol_whitelist "file,bluray" \
-        -i "bluray:${iso_path}/${mpls_path}" 2>/dev/null
+        -i "bluray:$main_mpls" 2>/dev/null
 }
 
 #==============================================================================
