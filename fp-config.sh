@@ -552,14 +552,31 @@ check_updates() {
     echo "   本地版本: $LOCAL_VERSION"
     echo ""
 
-    # 获取远程最新版本
-    REMOTE_VERSION=$(curl -fsSL "https://api.github.com/repos/aydomini/fantastic-probe/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/' || echo "")
+    # 获取远程最新版本（排除 ffprobe 相关的 releases）
+    # 从所有 releases 中过滤出项目版本（排除 tag_name 包含 "ffprobe" 的）
+    REMOTE_VERSION=$(curl -fsSL "https://api.github.com/repos/aydomini/fantastic-probe/releases" 2>/dev/null | \
+        grep -E '"tag_name":|"draft":|"prerelease":' | \
+        paste -d ' ' - - - | \
+        grep '"draft": false' | \
+        grep '"prerelease": false' | \
+        grep -v 'ffprobe' | \
+        head -1 | \
+        sed -E 's/.*"tag_name": "v?([^"]+)".*/\1/' || echo "")
 
     if [ -z "$REMOTE_VERSION" ]; then
-        echo "   ❌ 无法获取远程版本信息"
-        echo "   请检查网络连接或访问: https://github.com/aydomini/fantastic-probe/releases"
-        echo ""
-        return 1
+        # 如果没有找到项目版本的 Release，从主分支获取版本号
+        echo "   ℹ️  仓库中暂无正式版本 Release"
+        echo "   正在从主分支获取版本信息..."
+        REMOTE_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/fantastic-probe-monitor.sh" 2>/dev/null | \
+            grep "^VERSION=" | head -1 | cut -d'"' -f2 || echo "")
+
+        if [ -z "$REMOTE_VERSION" ]; then
+            echo "   ❌ 无法获取远程版本信息"
+            echo "   请检查网络连接或访问: https://github.com/aydomini/fantastic-probe"
+            echo ""
+            return 1
+        fi
+        echo "   主分支版本: $REMOTE_VERSION"
     fi
 
     echo "   最新版本: $REMOTE_VERSION"
