@@ -5,6 +5,9 @@ build/
 *.tar.gz
 *.zip
 
+# 例外：保留 static 目录下的预编译 ffprobe 包
+!static/*.zip
+
 # 临时文件和备份
 *.bak
 *.tmp
