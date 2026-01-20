@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：2.6.0 - 7z+MPLS 语言提取（蓝光增强版）
+# 版本：2.6.1 - 7z+MPLS 语言提取（蓝光增强版）
 #==============================================================================
 
 # 版本号（用于更新检查）
-VERSION="2.6.0"
+VERSION="2.6.1"
 
 set -euo pipefail
 
@@ -201,7 +201,7 @@ validate_config() {
 # 版本检查和自动更新
 #==============================================================================
 
-CURRENT_VERSION="2.6.0"
+CURRENT_VERSION="2.6.1"
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
 VERSION_CHECK_CACHE="/var/cache/fantastic-probe-last-check"
 VERSION_CHECK_INTERVAL=86400  # 24小时检查一次
@@ -813,9 +813,8 @@ convert_to_emby_format() {
                             true
                         end
                     ) |
-                    {
-                    "Codec": (.codec_name | codec_upper),
-                    "Language": (
+                    # 先计算 enhanced_lang（MPLS 增强的语言信息）
+                    (
                         if .codec_type == "video" then null
                         elif .codec_type == "audio" then
                             # 优先使用 MPLS 的语言信息，回退到 ffprobe 的 tags.language
@@ -826,7 +825,10 @@ convert_to_emby_format() {
                         else
                             (.tags.language // null)
                         end
-                    ),
+                    ) as $enhanced_lang |
+                    {
+                    "Codec": (.codec_name | codec_upper),
+                    "Language": $enhanced_lang,
                     "ColorTransfer": (if .codec_type == "video" then .color_transfer else null end),
                     "ColorPrimaries": (if .codec_type == "video" then .color_primaries else null end),
                     "ColorSpace": (if .codec_type == "video" then .color_space else null end),
@@ -864,11 +866,11 @@ convert_to_emby_format() {
                         end
                     ),
                     "DisplayLanguage": (
-                        # 优先使用已增强的 Language 字段（已包含 MPLS 数据）
+                        # 使用已计算的 $enhanced_lang 变量（包含 MPLS 数据）
                         if .codec_type == "subtitle" then
-                            (if .Language then (.Language | lang_code) else lang_detail end)
-                        elif .Language then
-                            (.Language | lang_code)
+                            (if $enhanced_lang then ($enhanced_lang | lang_code) else lang_detail end)
+                        elif $enhanced_lang then
+                            ($enhanced_lang | lang_code)
                         else null end
                     ),
                     "IsInterlaced": (if .field_order then (.field_order != "progressive") else false end),
@@ -1060,9 +1062,8 @@ process_iso_strm() {
     # 提取媒体信息
     local ffprobe_output
 
-    # 禁用 MPLS 提取（用户反馈：MPLS 方式获取的信息反而更少）
-    # 统一使用标准提取方式（bluray: 或 dvd: 协议）
-    log_info "  使用标准提取方式..."
+    # 步骤 1：使用 ffprobe 提取基础媒体信息（编码、分辨率、时长等）
+    log_info "  [步骤 1/2] 提取基础媒体信息（ffprobe）..."
     ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
 
     # 注释掉的 MPLS 提取逻辑（保留代码以供将来改进）
@@ -1103,10 +1104,13 @@ process_iso_strm() {
 
     log_debug "ffprobe 提取成功，输出长度: ${#ffprobe_output} 字符"
 
-    # 尝试从 MPLS 提取语言信息（仅对蓝光 ISO）
+    # 步骤 2：尝试从 MPLS 提取语言信息（仅对蓝光 ISO）
     local mpls_lang="{}"
     if [ "$iso_type" = "bluray" ]; then
+        log_info "  [步骤 2/2] 提取语言信息（MPLS 增强）..."
         mpls_lang=$(extract_language_info_from_mpls "$iso_path" || echo "{}")
+    else
+        log_debug "DVD ISO，跳过 MPLS 提取"
     fi
 
     # 转换为 Emby 格式（传递 ISO 文件大小和 MPLS 数据）

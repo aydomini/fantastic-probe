@@ -1,7 +1,7 @@
 {
-  "version": "2.6.0",
+  "version": "2.6.1",
   "release_date": "2026-01-20",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.0.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.1.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🎨 集成 7z+MPLS 语言提取功能：支持从蓝光 ISO 的 MPLS 文件中提取音轨和字幕语言信息，完整的回退机制确保稳定性"
+  "changelog": "🐛 修复 jq 脚本错误和日志显示优化：修复 DisplayLanguage 字段引用错误导致 JSON 转换失败，优化日志顺序明确双步骤处理流程"
 }
