@@ -173,17 +173,17 @@ if ! command -v jq &> /dev/null; then
     PACKAGES_TO_INSTALL+=($pkg_name)
 fi
 
-# 检查 isoinfo（用于读取 ISO 内的 MPLS 文件）
+# 检查 isoinfo（genisoimage 或 cdrtools）
 if ! command -v isoinfo &> /dev/null; then
     pkg_name=$(get_package_name "$PKG_MANAGER" "genisoimage")
-    echo "   需要安装: $pkg_name (提供 isoinfo 命令，用于 MPLS 语言提取)"
+    echo "   需要安装: $pkg_name (提供 isoinfo 命令)"
     PACKAGES_TO_INSTALL+=($pkg_name)
 fi
 
-# 如果没有 isoinfo，至少需要 7z 作为备选
-if ! command -v isoinfo &> /dev/null && ! command -v 7z &> /dev/null; then
+# 检查 7z（Blu-ray MPLS 语言提取必需）
+if ! command -v 7z &> /dev/null; then
     pkg_name=$(get_package_name "$PKG_MANAGER" "p7zip")
-    echo "   需要安装: $pkg_name (7z 备选工具)"
+    echo "   需要安装: $pkg_name (Blu-ray MPLS 语言提取必需)"
     PACKAGES_TO_INSTALL+=($pkg_name)
 fi
 
