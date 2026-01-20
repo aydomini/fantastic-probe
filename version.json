@@ -1,7 +1,7 @@
 {
-  "version": "2.4.0",
+  "version": "2.5.0",
   "release_date": "2026-01-20",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.4.0.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.5.0.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "命名统一：所有命名统一为 fantastic-probe，简化用户体验，优化 README 文档结构"
+  "changelog": "MPLS 语言提取支持：提取 BDMV 结构读取蓝光语言信息，兼容 rclone fuse 挂载，强制安装 7z 依赖"
 }

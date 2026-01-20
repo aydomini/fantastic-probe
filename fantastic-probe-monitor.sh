@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：2.4.0 - 通用 Linux 安装方案
+# 版本：2.5.0 - MPLS 语言提取支持
 #==============================================================================
 
 # 版本号（用于更新检查）
-VERSION="2.4.0"
+VERSION="2.5.0"
 
 set -euo pipefail
 
@@ -195,7 +195,7 @@ validate_config() {
 # 版本检查和自动更新
 #==============================================================================
 
-CURRENT_VERSION="2.4.0"
+CURRENT_VERSION="2.5.0"
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
 VERSION_CHECK_CACHE="/var/cache/fantastic-probe-last-check"
 VERSION_CHECK_INTERVAL=86400  # 24小时检查一次

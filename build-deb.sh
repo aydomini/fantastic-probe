@@ -7,7 +7,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="2.4.0"
+VERSION="2.5.0"
 ARCH="all"
 PKG_NAME="fantastic-probe_${VERSION}_${ARCH}"
 BUILD_DIR="$SCRIPT_DIR/build/$PKG_NAME"
