@@ -1,7 +1,7 @@
 {
-  "version": "2.6.1",
+  "version": "2.6.2",
   "release_date": "2026-01-20",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.1.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.2.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🐛 修复 jq 脚本错误和日志显示优化：修复 DisplayLanguage 字段引用错误导致 JSON 转换失败，优化日志顺序明确双步骤处理流程"
+  "changelog": "🐛 修复 libbluray 警告污染 JSON 输出：使用 -v error 和 sed 过滤确保纯净 JSON，解决 jq 解析失败问题"
 }
