@@ -155,129 +155,178 @@ reconfigure_ffprobe() {
     echo "🎬 重新配置 FFprobe"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "   当前路径: $FFPROBE"
+    echo "   说明：ffprobe 用于提取蓝光/DVD 媒体信息"
     echo ""
 
-    # 检查是否有预编译包
+    # 检测架构和预编译包
     ARCH=$(uname -m)
     PREBUILT_AVAILABLE=false
+    PREBUILT_ZIP=""
+    ARCH_NAME=""
 
     if [ "$ARCH" = "x86_64" ] && [ -f "$SCRIPT_DIR/static/ffprobe_linux_x64.zip" ]; then
         PREBUILT_AVAILABLE=true
         PREBUILT_ZIP="$SCRIPT_DIR/static/ffprobe_linux_x64.zip"
-        echo "   ✅ 检测到预编译 ffprobe（x86_64）"
+        ARCH_NAME="x86_64"
     elif [ "$ARCH" = "aarch64" ] && [ -f "$SCRIPT_DIR/static/ffprobe_linux_arm64.zip" ]; then
         PREBUILT_AVAILABLE=true
         PREBUILT_ZIP="$SCRIPT_DIR/static/ffprobe_linux_arm64.zip"
-        echo "   ✅ 检测到预编译 ffprobe（ARM64）"
-    fi
-
-    # 提供选项
-    echo ""
-    echo "   选项："
-    if [ "$PREBUILT_AVAILABLE" = true ]; then
-        echo "     1) 使用项目提供的预编译 ffprobe（推荐）"
-        echo "     2) 使用系统已安装的 ffprobe"
-        echo "     3) 手动指定 ffprobe 路径"
-    else
-        echo "     1) 使用系统已安装的 ffprobe"
-        echo "     2) 手动指定 ffprobe 路径"
-    fi
-    echo ""
-
-    if [ "$PREBUILT_AVAILABLE" = true ]; then
-        read -p "   请选择 [1/2/3]: " choice
-    else
-        read -p "   请选择 [1/2]: " choice
+        ARCH_NAME="ARM64"
     fi
 
     local new_ffprobe=""
 
-    case "$choice" in
-        1)
-            if [ "$PREBUILT_AVAILABLE" = true ]; then
-                # 安装预编译包
-                echo ""
-                echo "   📦 安装预编译 ffprobe..."
+    # 自动安装预编译包（优先方案）
+    if [ "$PREBUILT_AVAILABLE" = true ]; then
+        echo "   ✅ 检测到架构: $ARCH_NAME"
+        echo "   ✅ 找到项目提供的预编译 ffprobe"
+        echo ""
+        read -p "   是否自动安装预编译 ffprobe？[Y/n]: " auto_install
+        auto_install="${auto_install:-Y}"
 
-                # 检查 unzip
-                if ! command -v unzip &> /dev/null; then
-                    echo "   ⚠️  需要安装 unzip 工具"
-                    echo "   请先安装: sudo apt install unzip"
+        if [[ "$auto_install" =~ ^[Yy]$ ]]; then
+            echo ""
+            echo "   📦 正在安装预编译 ffprobe..."
+
+            # 检查 unzip 是否可用
+            if ! command -v unzip &> /dev/null; then
+                echo "   ⚠️  需要安装 unzip 工具"
+                read -p "   现在安装 unzip？[Y/n]: " install_unzip
+                if [[ "$install_unzip" =~ ^[Yy]$ ]]; then
+                    apt-get update && apt-get install -y unzip
+                else
+                    echo "   ❌ 无法继续，需要 unzip"
                     return 1
                 fi
+            fi
 
-                # 解压到临时目录
-                TEMP_DIR="/tmp/ffprobe-config-$$"
-                mkdir -p "$TEMP_DIR"
-                unzip -q "$PREBUILT_ZIP" -d "$TEMP_DIR"
+            # 解压到临时目录
+            TEMP_DIR="/tmp/ffprobe-config-$$"
+            mkdir -p "$TEMP_DIR"
 
+            if unzip -q "$PREBUILT_ZIP" -d "$TEMP_DIR" 2>/dev/null; then
                 # 安装到 /usr/local/bin
                 if [ -f "$TEMP_DIR/ffprobe" ]; then
                     cp "$TEMP_DIR/ffprobe" /usr/local/bin/ffprobe
                     chmod +x /usr/local/bin/ffprobe
                     new_ffprobe="/usr/local/bin/ffprobe"
-                    echo "   ✅ ffprobe 已安装到: /usr/local/bin/ffprobe"
+
+                    # 验证安装
+                    if /usr/local/bin/ffprobe -version &> /dev/null; then
+                        echo "   ✅ ffprobe 已安装到: /usr/local/bin/ffprobe"
+                        echo "   ✅ 安装成功！"
+                    else
+                        echo "   ❌ 安装失败: ffprobe 无法执行"
+                        new_ffprobe=""
+                    fi
                 else
                     echo "   ❌ 错误: 解压后未找到 ffprobe"
-                    rm -rf "$TEMP_DIR"
-                    return 1
-                fi
-
-                # 清理临时文件
-                rm -rf "$TEMP_DIR"
-            else
-                # 使用系统 ffprobe
-                if command -v ffprobe &> /dev/null; then
-                    new_ffprobe=$(command -v ffprobe)
-                    echo "   ✅ 使用系统 ffprobe: $new_ffprobe"
-                else
-                    echo "   ❌ 系统中未检测到 ffprobe"
-                    return 1
-                fi
-            fi
-            ;;
-        2)
-            if [ "$PREBUILT_AVAILABLE" = true ]; then
-                # 使用系统 ffprobe
-                if command -v ffprobe &> /dev/null; then
-                    new_ffprobe=$(command -v ffprobe)
-                    echo "   ✅ 使用系统 ffprobe: $new_ffprobe"
-                else
-                    echo "   ❌ 系统中未检测到 ffprobe"
-                    return 1
+                    new_ffprobe=""
                 fi
             else
-                # 手动指定路径
-                read -p "   请输入 ffprobe 路径: " new_ffprobe
+                echo "   ❌ 解压失败"
+                new_ffprobe=""
             fi
-            ;;
-        3)
-            # 手动指定路径
-            read -p "   请输入 ffprobe 路径: " new_ffprobe
-            ;;
-        *)
-            echo "   ❌ 无效选择"
-            return 1
-            ;;
-    esac
 
-    # 验证 ffprobe
-    if [ ! -x "$new_ffprobe" ]; then
-        echo "   ⚠️  警告: ffprobe 不存在或不可执行: $new_ffprobe"
-        read -p "   是否仍要保存此配置？[y/N]: " confirm
-        confirm="${confirm:-N}"
-
-        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-            echo "   ⚠️  取消修改"
-            return 1
+            # 清理临时文件
+            rm -rf "$TEMP_DIR"
+        else
+            echo "   ℹ️  跳过自动安装，进入手动配置..."
         fi
     fi
 
-    # 更新配置
-    update_config_line "FFPROBE" "$new_ffprobe"
-    FFPROBE="$new_ffprobe"
+    # 手动配置（回退方案）
+    if [ -z "$new_ffprobe" ]; then
+        echo ""
+        echo "   🔍 手动配置 FFprobe"
+        echo ""
+        echo "   选项："
+        echo "     1) 使用系统已安装的 ffprobe（需先安装 ffmpeg）"
+        echo "     2) 手动指定 ffprobe 路径"
+        echo "     3) 保持原配置不变"
+        echo ""
+        read -p "   请选择 [1/2/3，默认: 1]: " manual_choice
+        manual_choice="${manual_choice:-1}"
+
+        case "$manual_choice" in
+            1)
+                # 使用系统 ffprobe
+                if command -v ffprobe &> /dev/null; then
+                    detected_ffprobe=$(command -v ffprobe)
+                    echo "   ✅ 检测到: $detected_ffprobe"
+                    new_ffprobe="$detected_ffprobe"
+                else
+                    echo "   ❌ 系统中未检测到 ffprobe"
+                    echo ""
+                    echo "   请先安装 ffmpeg："
+                    echo "      Debian/Ubuntu: apt-get install -y ffmpeg"
+                    echo "      RHEL/CentOS:   dnf install -y ffmpeg"
+                    echo "      Arch Linux:    pacman -S ffmpeg"
+                    echo ""
+                    read -p "   现在安装 ffmpeg？[y/N]: " install_now
+
+                    if [[ "$install_now" =~ ^[Yy]$ ]]; then
+                        apt-get update && apt-get install -y ffmpeg
+                        if command -v ffprobe &> /dev/null; then
+                            new_ffprobe=$(command -v ffprobe)
+                            echo "   ✅ ffmpeg 安装成功: $new_ffprobe"
+                        else
+                            echo "   ❌ 安装失败，保持原配置"
+                            new_ffprobe="$FFPROBE"
+                        fi
+                    else
+                        echo "   ℹ️  保持原配置: $FFPROBE"
+                        new_ffprobe="$FFPROBE"
+                    fi
+                fi
+                ;;
+            2)
+                # 手动指定路径
+                echo ""
+                read -p "   请输入 ffprobe 完整路径: " new_ffprobe
+
+                if [ -z "$new_ffprobe" ]; then
+                    echo "   ⚠️  路径为空，保持原配置: $FFPROBE"
+                    new_ffprobe="$FFPROBE"
+                fi
+                ;;
+            3)
+                # 保持原配置
+                echo "   ℹ️  保持原配置: $FFPROBE"
+                new_ffprobe="$FFPROBE"
+                ;;
+            *)
+                echo "   ⚠️  无效选择，保持原配置: $FFPROBE"
+                new_ffprobe="$FFPROBE"
+                ;;
+        esac
+    fi
+
+    # 更新配置文件
+    if [ -n "$new_ffprobe" ]; then
+        update_config_line "FFPROBE" "$new_ffprobe"
+        FFPROBE="$new_ffprobe"
+        echo ""
+        echo "   ✅ FFprobe 路径已更新: $new_ffprobe"
+
+        # 验证是否可执行
+        if [ ! -x "$new_ffprobe" ]; then
+            echo ""
+            echo "   ⚠️  警告: ffprobe 不存在或不可执行: $new_ffprobe"
+            echo "   ⚠️  服务可能无法正常启动！"
+            echo ""
+            echo "   请执行以下操作之一："
+            echo "     1) 安装 ffmpeg: apt-get install -y ffmpeg"
+            echo "     2) 重新配置: fp-config ffprobe"
+            echo "     3) 手动编辑: /etc/fantastic-probe/config"
+        fi
+    else
+        echo "   ❌ 错误: 无法确定 ffprobe 路径"
+        return 1
+    fi
 
     # 询问是否重启服务
+    echo ""
     read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
     do_restart="${do_restart:-Y}"
 
