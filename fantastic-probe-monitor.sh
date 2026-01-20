@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：2.6.4 - 7z+MPLS 语言提取（蓝光增强版）
+# 版本：2.6.5 - 稳定版（回滚到 2.5.2 的工作代码）
 #==============================================================================
 
 # 版本号（用于更新检查）
-VERSION="2.6.4"
+VERSION="2.6.5"
 
 set -euo pipefail
 
@@ -121,12 +121,6 @@ log_success() {
     log "✅ SUCCESS: $1"
 }
 
-log_debug() {
-    if [ "${DEBUG:-false}" = "true" ]; then
-        log "🔍 DEBUG: $1"
-    fi
-}
-
 #==============================================================================
 # 配置验证
 #==============================================================================
@@ -201,7 +195,7 @@ validate_config() {
 # 版本检查和自动更新
 #==============================================================================
 
-CURRENT_VERSION="2.6.4"
+CURRENT_VERSION="2.6.5"
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
 VERSION_CHECK_CACHE="/var/cache/fantastic-probe-last-check"
 VERSION_CHECK_INTERVAL=86400  # 24小时检查一次
@@ -305,102 +299,25 @@ check_disk_space() {
 detect_iso_type() {
     local iso_path="$1"
 
-    # 检查 1：文件是否存在
-    if [ ! -f "$iso_path" ]; then
-        log_error "ISO 文件不存在: $iso_path"
-        log_info "建议：检查 STRM 文件中的路径是否正确"
-        return 1
-    fi
-
-    # 检查 2：文件是否可读
-    if [ ! -r "$iso_path" ]; then
-        log_error "ISO 文件不可读: $iso_path"
-        log_info "建议：检查文件权限（chmod +r）或运行用户权限"
-        local file_perms=$(ls -lh "$iso_path" 2>/dev/null | awk '{print $1, $3, $4}')
-        log_info "  当前权限: $file_perms"
-        return 1
-    fi
-
-    # 检查 3：文件大小是否合理（>1MB）
-    local file_size=$(stat -c%s "$iso_path" 2>/dev/null || stat -f%z "$iso_path" 2>/dev/null || echo "0")
-    if [ "$file_size" -lt 1048576 ]; then
-        log_error "ISO 文件过小（${file_size} bytes），可能已损坏: $iso_path"
-        log_info "建议：重新下载或修复 ISO 文件"
-        return 1
-    fi
-
-    log_debug "ISO 文件大小: $file_size bytes"
-
-    # 尝试检测 Blu-ray
-    log_debug "尝试检测为 Blu-ray 格式..."
-    local bluray_error=$(mktemp)
-
     set +o pipefail
+
     if timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v error -print_format json -show_streams \
         -protocol_whitelist "file,bluray,dvd" \
-        -i "bluray:$iso_path" 2>"$bluray_error" | grep -q '"streams"'; then
+        -i "bluray:$iso_path" 2>/dev/null | grep -q '"streams"'; then
         set -o pipefail
-        rm -f "$bluray_error"
-        log_debug "检测为 Blu-ray 格式"
         echo "bluray"
         return 0
     fi
 
-    # 尝试检测 DVD
-    log_debug "尝试检测为 DVD 格式..."
-    local dvd_error=$(mktemp)
     if timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v error -print_format json -show_streams \
         -protocol_whitelist "file,bluray,dvd" \
-        -i "dvd:$iso_path" 2>"$dvd_error" | grep -q '"streams"'; then
+        -i "dvd:$iso_path" 2>/dev/null | grep -q '"streams"'; then
         set -o pipefail
-        rm -f "$bluray_error" "$dvd_error"
-        log_debug "检测为 DVD 格式"
         echo "dvd"
         return 0
     fi
+
     set -o pipefail
-
-    # 所有检测失败：显示详细错误
-    log_error "无法识别 ISO 格式: $iso_path"
-    log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_error "诊断信息："
-
-    # 显示文件大小（人类可读格式）
-    local file_size_human=$(numfmt --to=iec-i --suffix=B "$file_size" 2>/dev/null || awk -v size="$file_size" 'BEGIN {printf "%.2f GiB", size/1024/1024/1024}')
-    log_error "  文件大小: $file_size_human"
-
-    # 显示 ffprobe 错误（Blu-ray）
-    if [ -s "$bluray_error" ]; then
-        log_error "  Blu-ray 检测错误:"
-        head -5 "$bluray_error" | sed 's/^/    /' | while IFS= read -r line; do
-            log_error "$line"
-        done
-    fi
-
-    # 显示 ffprobe 错误（DVD）
-    if [ -s "$dvd_error" ]; then
-        log_error "  DVD 检测错误:"
-        head -5 "$dvd_error" | sed 's/^/    /' | while IFS= read -r line; do
-            log_error "$line"
-        done
-    fi
-
-    log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_error "可能原因："
-    log_error "  1. ISO 文件格式不受支持（非标准 Blu-ray/DVD 结构）"
-    log_error "  2. ISO 文件已损坏或不完整（请验证 MD5/SHA1）"
-    log_error "  3. ffprobe 版本过旧或缺少必要的编解码器支持"
-    log_error "  4. ISO 内部目录结构异常（缺少 BDMV 或 VIDEO_TS 目录）"
-    log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_error "调试建议："
-    log_error "  1. 手动测试 Blu-ray: ffprobe -v error -i \"bluray:$iso_path\""
-    log_error "  2. 手动测试 DVD: ffprobe -v error -i \"dvd:$iso_path\""
-    log_error "  3. 检查 ISO 结构: isoinfo -d -i \"$iso_path\""
-    log_error "  4. 验证文件完整性: md5sum \"$iso_path\""
-    log_error "  5. 尝试挂载 ISO: sudo mount -o loop \"$iso_path\" /mnt/test"
-    log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-    rm -f "$bluray_error" "$dvd_error"
     return 1
 }
 
@@ -522,184 +439,6 @@ extract_mediainfo() {
 }
 
 #==============================================================================
-# MPLS 语言信息提取（7z + Python 解析）
-#==============================================================================
-
-find_main_mpls() {
-    local iso_path="$1"
-
-    log_debug "查找主 MPLS 播放列表..."
-
-    # 列出所有 MPLS 文件，按大小排序，选择最大的（通常是主播放列表）
-    local mpls_list=$(mktemp)
-    if ! 7z l "$iso_path" "BDMV/PLAYLIST/*.mpls" 2>/dev/null > "$mpls_list"; then
-        log_debug "无法列出 MPLS 文件"
-        rm -f "$mpls_list"
-        return 1
-    fi
-
-    # 检查是否找到 MPLS 文件
-    local mpls_count=$(grep "BDMV/PLAYLIST/" "$mpls_list" | grep "\.mpls$" | wc -l)
-    if [ "$mpls_count" -eq 0 ]; then
-        log_debug "未找到 MPLS 文件（可能不是标准蓝光格式）"
-        rm -f "$mpls_list"
-        return 1
-    fi
-
-    log_debug "找到 $mpls_count 个 MPLS 文件"
-
-    # 找到最大的 MPLS 文件
-    local main_mpls
-    main_mpls=$(grep "BDMV/PLAYLIST/" "$mpls_list" | grep "\.mpls$" | \
-        awk '{print $(NF-1), $NF}' | \
-        sort -rn | \
-        head -1 | \
-        awk '{print $2}')
-
-    rm -f "$mpls_list"
-
-    if [ -z "$main_mpls" ]; then
-        log_debug "无法确定主 MPLS 播放列表"
-        return 1
-    fi
-
-    log_debug "主播放列表: $main_mpls"
-    echo "$main_mpls"
-    return 0
-}
-
-extract_mpls() {
-    local iso_path="$1"
-    local mpls_file="$2"
-    local max_retries=3
-    local retry_count=0
-
-    log_debug "提取 MPLS: $mpls_file"
-
-    # 生成临时文件路径
-    local output_file="/tmp/mpls_$(basename "$mpls_file")_$(date +%s).mpls"
-
-    # 重试机制（应对 FUSE 网盘读取不稳定）
-    while [ $retry_count -lt $max_retries ]; do
-        if 7z x -so "$iso_path" "$mpls_file" 2>/dev/null > "$output_file"; then
-            # 检查文件是否有效
-            if [ -f "$output_file" ] && [ -s "$output_file" ]; then
-                log_debug "MPLS 提取成功: $(basename "$output_file")"
-                echo "$output_file"
-                return 0
-            fi
-        fi
-
-        ((retry_count++))
-        if [ $retry_count -lt $max_retries ]; then
-            log_debug "7z 提取失败，重试 $retry_count/$max_retries..."
-            sleep 1
-        fi
-    done
-
-    log_debug "7z 提取失败（已重试 $max_retries 次）"
-    rm -f "$output_file"
-    return 1
-}
-
-parse_mpls_language() {
-    local mpls_file="$1"
-
-    # Python 解析脚本路径（优先查找安装后的路径）
-    local parse_script="/usr/local/bin/fantastic-probe-parse-mpls"
-
-    # 如果未找到，回退到与主脚本同目录查找
-    if [ ! -f "$parse_script" ]; then
-        local script_dir="$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")")"
-        parse_script="$script_dir/parse_mpls.py"
-    fi
-
-    log_debug "解析 MPLS 语言信息..."
-
-    # 检查解析脚本是否存在
-    if [ ! -f "$parse_script" ]; then
-        log_debug "MPLS 解析脚本不存在: $parse_script"
-        echo "{}"
-        return 1
-    fi
-
-    # 调用 Python 脚本解析
-    local mpls_json
-    if ! mpls_json=$(python3 "$parse_script" "$mpls_file" 2>/dev/null); then
-        log_debug "MPLS 解析失败"
-        echo "{}"
-        return 1
-    fi
-
-    # 验证 JSON 格式
-    if ! echo "$mpls_json" | jq -e . >/dev/null 2>&1; then
-        log_debug "MPLS 解析输出不是有效的 JSON"
-        echo "{}"
-        return 1
-    fi
-
-    # 检查是否有错误
-    if echo "$mpls_json" | jq -e '.error' >/dev/null 2>&1; then
-        local error_msg=$(echo "$mpls_json" | jq -r '.error')
-        log_debug "MPLS 解析错误: $error_msg"
-    fi
-
-    # 检查是否提取到语言信息
-    local audio_count=$(echo "$mpls_json" | jq '.audio_streams | length')
-    local subtitle_count=$(echo "$mpls_json" | jq '.subtitle_streams | length')
-
-    if [ "$audio_count" -gt 0 ] || [ "$subtitle_count" -gt 0 ]; then
-        log_debug "提取到 $audio_count 个音频流和 $subtitle_count 个字幕流的语言信息"
-        echo "$mpls_json"
-        return 0
-    else
-        log_debug "未提取到语言信息"
-        echo "{}"
-        return 1
-    fi
-}
-
-extract_language_info_from_mpls() {
-    local iso_path="$1"
-
-    log_info "  尝试从 MPLS 提取语言信息（7z + Python 解析）..."
-
-    # 步骤 1：查找主播放列表
-    local main_mpls
-    if ! main_mpls=$(find_main_mpls "$iso_path"); then
-        log_info "  └─ 查找主播放列表失败，将使用 ffprobe 提取的语言信息"
-        echo "{}"
-        return 1
-    fi
-
-    # 步骤 2：提取 MPLS 文件
-    local mpls_tmp
-    if ! mpls_tmp=$(extract_mpls "$iso_path" "$main_mpls"); then
-        log_info "  └─ MPLS 提取失败，将使用 ffprobe 提取的语言信息"
-        echo "{}"
-        return 1
-    fi
-
-    # 步骤 3：解析语言信息
-    local mpls_lang
-    mpls_lang=$(parse_mpls_language "$mpls_tmp")
-
-    # 清理临时文件
-    rm -f "$mpls_tmp"
-
-    # 检查是否成功
-    if [ "$mpls_lang" != "{}" ]; then
-        log_success "  └─ ✅ MPLS 语言信息提取成功"
-        echo "$mpls_lang"
-        return 0
-    else
-        log_info "  └─ MPLS 解析未提取到语言信息，将使用 ffprobe 提取的语言信息"
-        echo "{}"
-        return 1
-    fi
-}
-
-#==============================================================================
 # 转换为 Emby MediaSourceInfo 格式
 #==============================================================================
 
@@ -707,28 +446,8 @@ convert_to_emby_format() {
     local ffprobe_json="$1"
     local strm_file="$2"
     local iso_file_size="${3:-0}"  # ISO 文件实际大小（字节）
-    local mpls_lang="${4:-{}}"     # MPLS 语言信息（JSON 格式）
 
-    echo "$ffprobe_json" | jq -c --arg strm_file "$strm_file" --arg iso_size "$iso_file_size" --argjson mpls "$mpls_lang" '
-    # 辅助函数：安全的数字转换（避免非数字字符串导致异常）
-    def safe_tonumber:
-        if . == null or . == "" or . == "N/A" or . == "unknown" then null
-        else (try tonumber catch null)
-        end;
-
-    # 辅助函数：解析帧率字符串（如 "24000/1001"）并进行除零保护
-    def parse_frame_rate:
-        if . and . != "0/0" then
-            (split("/") |
-                if (.[1] | safe_tonumber) == 0 or (.[1] | safe_tonumber) == null then null
-                else ((.[0] | safe_tonumber) / (.[1] | safe_tonumber) | floor)
-                end)
-        else null end;
-
-    # 从 MPLS 构建语言映射表（stream index -> language code）
-    ($mpls.audio_streams // [] | map({(.index | tostring): .language}) | add // {}) as $mpls_audio_lang |
-    ($mpls.subtitle_streams // [] | map({(.index | tostring): .language}) | add // {}) as $mpls_subtitle_lang |
-
+    echo "$ffprobe_json" | jq -c --arg strm_file "$strm_file" --arg iso_size "$iso_file_size" '
     def lang_code:
         if . == "chi" or . == "zh" or . == "zho" then "Chinese"
         elif . == "eng" then "English"
@@ -797,38 +516,11 @@ convert_to_emby_format() {
             "RequiresClosing": false,
             "RequiresLooping": false,
             "SupportsProbing": true,
-            "MediaStreams": (
-                # 选择主视频流（基于 duration 最长）
-                .streams as $all_streams |
-                ($all_streams | map(select(.codec_type == "video")) |
-                    (if length > 0 then max_by(.duration // "0" | safe_tonumber).index else -1 end)) as $main_video_index |
-                [
-                    $all_streams[] |
-                    # 过滤无效流和非主视频流
-                    select(.codec_type != null and .codec_type != "") |
-                    select(
-                        if .codec_type == "video" then
-                            .index == $main_video_index
-                        else
-                            true
-                        end
-                    ) |
-                    # 先计算 enhanced_lang（MPLS 增强的语言信息）
-                    (
-                        if .codec_type == "video" then null
-                        elif .codec_type == "audio" then
-                            # 优先使用 MPLS 的语言信息，回退到 ffprobe 的 tags.language
-                            ($mpls_audio_lang[.index | tostring] // .tags.language // null)
-                        elif .codec_type == "subtitle" then
-                            # 优先使用 MPLS 的语言信息，回退到 ffprobe 的 tags.language
-                            ($mpls_subtitle_lang[.index | tostring] // .tags.language // null)
-                        else
-                            (.tags.language // null)
-                        end
-                    ) as $enhanced_lang |
-                    {
+            "MediaStreams": [
+                .streams[] |
+                {
                     "Codec": (.codec_name | codec_upper),
-                    "Language": $enhanced_lang,
+                    "Language": (if .codec_type != "video" then (.tags.language // null) else null end),
                     "ColorTransfer": (if .codec_type == "video" then .color_transfer else null end),
                     "ColorPrimaries": (if .codec_type == "video" then .color_primaries else null end),
                     "ColorSpace": (if .codec_type == "video" then .color_space else null end),
@@ -866,11 +558,8 @@ convert_to_emby_format() {
                         end
                     ),
                     "DisplayLanguage": (
-                        # 使用已计算的 $enhanced_lang 变量（包含 MPLS 数据）
-                        if .codec_type == "subtitle" then
-                            (if $enhanced_lang then ($enhanced_lang | lang_code) else lang_detail end)
-                        elif $enhanced_lang then
-                            ($enhanced_lang | lang_code)
+                        if .codec_type == "subtitle" then lang_detail
+                        elif .tags.language then (.tags.language | lang_code)
                         else null end
                     ),
                     "IsInterlaced": (if .field_order then (.field_order != "progressive") else false end),
@@ -889,11 +578,13 @@ convert_to_emby_format() {
                     "Height": (.height // null | if . then (. | tonumber) else null end),
                     "Width": (.width // null | if . then (. | tonumber) else null end),
                     "AverageFrameRate": (
-                        if .codec_type == "video" then (.avg_frame_rate | parse_frame_rate)
+                        if .avg_frame_rate and .avg_frame_rate != "0/0" then
+                            (.avg_frame_rate | split("/") | (.[0] | tonumber) / (.[1] | tonumber) | floor)
                         else null end
                     ),
                     "RealFrameRate": (
-                        if .codec_type == "video" then (.r_frame_rate | parse_frame_rate)
+                        if .r_frame_rate and .r_frame_rate != "0/0" then
+                            (.r_frame_rate | split("/") | (.[0] | tonumber) / (.[1] | tonumber) | floor)
                         else null end
                     ),
                     "Profile": .profile,
@@ -950,8 +641,7 @@ convert_to_emby_format() {
                     "AttachmentSize": 0,
                     "SubtitleLocationType": (if .codec_type == "subtitle" then "InternalStream" else null end)
                 } | with_entries(select(.value != null))
-                ]
-            ),
+            ],
             "Formats": [],
             "Bitrate": (.format.bit_rate // null | if . then (. | tonumber) else null end),
             "RequiredHttpHeaders": {},
@@ -1062,8 +752,9 @@ process_iso_strm() {
     # 提取媒体信息
     local ffprobe_output
 
-    # 步骤 1：使用 ffprobe 提取基础媒体信息（编码、分辨率、时长等）
-    log_info "  [步骤 1/2] 提取基础媒体信息（ffprobe）..."
+    # 禁用 MPLS 提取（用户反馈：MPLS 方式获取的信息反而更少）
+    # 统一使用标准提取方式（bluray: 或 dvd: 协议）
+    log_info "  使用标准提取方式..."
     ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
 
     # 注释掉的 MPLS 提取逻辑（保留代码以供将来改进）
@@ -1089,91 +780,23 @@ process_iso_strm() {
 
     if [ -z "$ffprobe_output" ] || ! echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
         log_error "ffprobe 提取失败: $iso_path"
-        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_error "可能原因："
-        log_error "  1. ffprobe 无法解析此 ISO 的媒体流"
-        log_error "  2. ISO 内部结构损坏"
-        log_error "  3. 超时（超过 ${FFPROBE_TIMEOUT} 秒）"
-        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_error "调试建议："
-        log_error "  1. 增加超时时间: FFPROBE_TIMEOUT=600"
-        log_error "  2. 手动测试: ffprobe -v error -print_format json -show_streams -i \"${iso_type}:$iso_path\""
-        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         return 1
     fi
 
-    log_debug "ffprobe 提取成功，输出长度: ${#ffprobe_output} 字符"
-
-    # 步骤 2：尝试从 MPLS 提取语言信息（仅对蓝光 ISO）
-    local mpls_lang="{}"
-    if [ "$iso_type" = "bluray" ]; then
-        log_info "  [步骤 2/2] 提取语言信息（MPLS 增强）..."
-        mpls_lang=$(extract_language_info_from_mpls "$iso_path" || echo "{}")
-    else
-        log_debug "DVD ISO，跳过 MPLS 提取"
-    fi
-
-    # 转换为 Emby 格式（传递 ISO 文件大小和 MPLS 数据）
+    # 转换为 Emby 格式（传递 ISO 文件大小）
     local emby_json
-    local jq_error=$(mktemp)
-    emby_json=$(convert_to_emby_format "$ffprobe_output" "$strm_file" "$iso_size" "$mpls_lang" 2>"$jq_error")
+    emby_json=$(convert_to_emby_format "$ffprobe_output" "$strm_file" "$iso_size")
 
     if [ -z "$emby_json" ]; then
         log_error "JSON 转换失败: $strm_file"
-        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-        # 显示 jq 错误
-        if [ -s "$jq_error" ]; then
-            log_error "jq 错误信息:"
-            head -10 "$jq_error" | sed 's/^/  /' | while IFS= read -r line; do
-                log_error "$line"
-            done
-        fi
-
-        # 显示 ffprobe 输出片段（前 1000 字符）
-        log_error "ffprobe 输出片段（前 1000 字符）:"
-        echo "$ffprobe_output" | head -c 1000 | sed 's/^/  /' | while IFS= read -r line; do
-            log_error "$line"
-        done
-        log_error "  ..."
-
-        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_error "可能原因："
-        log_error "  1. jq 脚本存在语法错误（脚本 bug）"
-        log_error "  2. ffprobe 返回了意外的数据结构"
-        log_error "  3. 媒体流包含特殊字段导致解析失败"
-        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_error "调试建议："
-        log_error "  1. 启用调试模式: DEBUG=true"
-        log_error "  2. 查看完整日志: tail -100 $ERROR_LOG_FILE"
-        log_error "  3. 手动测试 jq: echo '\$ffprobe_output' | jq ."
-        log_error "  4. 报告问题: https://github.com/your-repo/issues （附带错误日志）"
-        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-        rm -f "$jq_error"
         return 1
     fi
-
-    rm -f "$jq_error"
 
     # 验证 JSON 格式
     if ! echo "$emby_json" | jq -e . >/dev/null 2>&1; then
         log_error "生成的 JSON 格式无效: $strm_file"
-        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_error "生成的 JSON 片段（前 1000 字符）:"
-        echo "$emby_json" | head -c 1000 | sed 's/^/  /' | while IFS= read -r line; do
-            log_error "$line"
-        done
-        log_error "  ..."
-        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_error "这是脚本 bug，请报告此问题"
-        log_error "  GitHub: https://github.com/your-repo/issues"
-        log_error "  附带: 完整错误日志 + ISO 文件信息"
-        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         return 1
     fi
-
-    log_debug "JSON 转换成功，输出长度: ${#emby_json} 字符"
 
     # 原子写入
     local json_file="${strm_dir}/${strm_name}-mediainfo.json"

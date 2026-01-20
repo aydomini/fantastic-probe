@@ -1,7 +1,7 @@
 {
-  "version": "2.6.4",
+  "version": "2.6.5",
   "release_date": "2026-01-20",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.4.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.5.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🐛 回滚到 2.6.0 之前的工作代码：恢复 -v quiet 和 2>/dev/null，移除问题 grep 过滤"
+  "changelog": "🔄 完全回滚到 v2.5.2 稳定版本：移除所有 v2.6.x 的问题修改（MPLS、jq 修复、过滤方案），恢复到最后一个稳定工作的代码"
 }
