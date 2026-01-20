@@ -643,6 +643,19 @@ install_updates() {
 
         echo ""
         echo "   ✅ 更新完成！"
+        echo ""
+
+        # 重启服务
+        echo "   🔄 重启服务..."
+        if systemctl restart "$SERVICE_NAME"; then
+            echo "   ✅ 服务已启动"
+            echo ""
+            echo "   查看服务状态: systemctl status $SERVICE_NAME"
+            echo "   查看日志:     tail -f /var/log/fantastic_probe.log"
+        else
+            echo "   ⚠️  服务启动失败，请检查日志"
+            echo "   查看详细错误: systemctl status $SERVICE_NAME"
+        fi
     else
         echo "   ❌ 下载失败"
         echo "   请检查网络连接或手动更新"
