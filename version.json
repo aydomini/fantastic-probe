@@ -1,7 +1,7 @@
 {
-  "version": "2.5.0",
+  "version": "2.5.1",
   "release_date": "2026-01-20",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.5.0.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.5.1.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "MPLS 语言提取支持：提取 BDMV 结构读取蓝光语言信息，兼容 rclone fuse 挂载，强制安装 7z 依赖"
+  "changelog": "禁用 MPLS 提取逻辑，恢复标准提取方式（用户反馈：标准提取信息最完整）"
 }

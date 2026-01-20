@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：2.5.0 - MPLS 语言提取支持
+# 版本：2.5.1 - 标准提取（稳定版）
 #==============================================================================
 
 # 版本号（用于更新检查）
-VERSION="2.5.0"
+VERSION="2.5.1"
 
 set -euo pipefail
 
@@ -195,7 +195,7 @@ validate_config() {
 # 版本检查和自动更新
 #==============================================================================
 
-CURRENT_VERSION="2.5.0"
+CURRENT_VERSION="2.5.1"
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
 VERSION_CHECK_CACHE="/var/cache/fantastic-probe-last-check"
 VERSION_CHECK_INTERVAL=86400  # 24小时检查一次
@@ -751,31 +751,31 @@ process_iso_strm() {
     # 提取媒体信息
     local ffprobe_output
 
-    # 对于蓝光，优先尝试从 MPLS 提取（包含准确的语言标签）
-    if [ "$iso_type" = "bluray" ]; then
-        log_info "  尝试从 MPLS 提取语言信息..."
+    # 禁用 MPLS 提取（用户反馈：MPLS 方式获取的信息反而更少）
+    # 统一使用标准提取方式（bluray: 或 dvd: 协议）
+    log_info "  使用标准提取方式..."
+    ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
 
-        local main_playlist
-        main_playlist=$(find_main_playlist "$iso_path" 2>/dev/null || true)
-
-        if [ -n "$main_playlist" ]; then
-            # 从 MPLS 提取
-            ffprobe_output=$(extract_mediainfo_from_mpls "$iso_path" "$main_playlist")
-
-            if [ -n "$ffprobe_output" ] && echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
-                log_success "✅ 成功从 MPLS 提取媒体信息"
-            else
-                log_warn "从 MPLS 提取失败，回退到标准提取方式"
-                ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
-            fi
-        else
-            log_warn "未找到 MPLS 播放列表，使用标准提取方式"
-            ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
-        fi
-    else
-        # DVD 或其他类型，直接提取
-        ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
-    fi
+    # 注释掉的 MPLS 提取逻辑（保留代码以供将来改进）
+    # if [ "$iso_type" = "bluray" ]; then
+    #     log_info "  尝试从 MPLS 提取语言信息..."
+    #     local main_playlist
+    #     main_playlist=$(find_main_playlist "$iso_path" 2>/dev/null || true)
+    #     if [ -n "$main_playlist" ]; then
+    #         ffprobe_output=$(extract_mediainfo_from_mpls "$iso_path" "$main_playlist")
+    #         if [ -n "$ffprobe_output" ] && echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
+    #             log_success "✅ 成功从 MPLS 提取媒体信息"
+    #         else
+    #             log_warn "从 MPLS 提取失败，回退到标准提取方式"
+    #             ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
+    #         fi
+    #     else
+    #         log_warn "未找到 MPLS 播放列表，使用标准提取方式"
+    #         ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
+    #     fi
+    # else
+    #     ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
+    # fi
 
     if [ -z "$ffprobe_output" ] || ! echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
         log_error "ffprobe 提取失败: $iso_path"
