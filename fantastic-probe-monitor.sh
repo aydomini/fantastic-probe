@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：2.6.3 - 7z+MPLS 语言提取（蓝光增强版）
+# 版本：2.6.4 - 7z+MPLS 语言提取（蓝光增强版）
 #==============================================================================
 
 # 版本号（用于更新检查）
-VERSION="2.6.3"
+VERSION="2.6.4"
 
 set -euo pipefail
 
@@ -201,7 +201,7 @@ validate_config() {
 # 版本检查和自动更新
 #==============================================================================
 
-CURRENT_VERSION="2.6.3"
+CURRENT_VERSION="2.6.4"
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
 VERSION_CHECK_CACHE="/var/cache/fantastic-probe-last-check"
 VERSION_CHECK_INTERVAL=86400  # 24小时检查一次
@@ -515,13 +515,10 @@ extract_mediainfo() {
     local iso_path="$1"
     local iso_type="$2"
 
-    # 使用 -v error 替代 -v quiet，更严格地抑制警告
-    # 使用 grep 过滤掉 libbluray 的警告信息（格式：文件名.c:行号: 消息）
-    timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v error -print_format json \
+    timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v quiet -print_format json \
         -show_format -show_streams -show_chapters \
         -protocol_whitelist "file,bluray,dvd" \
-        -i "${iso_type}:${iso_path}" 2>&1 | \
-        grep -v "\.c:[0-9]*:"
+        -i "${iso_type}:${iso_path}" 2>/dev/null
 }
 
 #==============================================================================

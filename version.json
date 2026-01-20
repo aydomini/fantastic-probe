@@ -1,7 +1,7 @@
 {
-  "version": "2.6.3",
+  "version": "2.6.4",
   "release_date": "2026-01-20",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.3.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.4.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🐛 改进警告过滤方案：使用 grep 替代 sed 精确过滤 libbluray 警告，避免误删 JSON 输出"
+  "changelog": "🐛 回滚到 2.6.0 之前的工作代码：恢复 -v quiet 和 2>/dev/null，移除问题 grep 过滤"
 }

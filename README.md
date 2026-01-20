@@ -36,10 +36,10 @@ wget -qO- https://raw.githubusercontent.com/aydomini/fantastic-probe/main/instal
 
 ```bash
 # 下载 deb 包
-wget https://github.com/aydomini/fantastic-probe/releases/download/v2.6.3/fantastic-probe_2.6.3_all.deb
+wget https://github.com/aydomini/fantastic-probe/releases/download/v2.6.4/fantastic-probe_2.6.4_all.deb
 
 # 安装
-sudo apt install ./fantastic-probe_2.6.3_all.deb
+sudo apt install ./fantastic-probe_2.6.4_all.deb
 ```
 
 安装后配置：
@@ -733,8 +733,9 @@ A: 不会。已配置 logrotate 自动管理：
 <details>
 <summary><b>📝 版本历史</b>（点击展开）</summary>
 
-- **v2.6.3** (2026-01-20) - 🐛 改进警告过滤方案：使用 grep 替代 sed 精确过滤 libbluray 警告，避免误删 JSON 输出
-- **v2.6.2** (2026-01-20) - 🐛 修复 libbluray 警告污染 JSON 输出：使用 -v error 和 sed 过滤确保纯净 JSON，解决 jq 解析失败问题
+- **v2.6.4** (2026-01-20) - 🐛 回滚到 2.6.0 之前的工作代码：恢复 -v quiet 和 2>/dev/null，移除导致问题的 grep 过滤（v2.6.2-2.6.3 的过滤方案反而导致 JSON 提取失败）
+- **v2.6.3** (2026-01-20) - 🐛 改进警告过滤方案：使用 grep 替代 sed 精确过滤 libbluray 警告，避免误删 JSON 输出（已回滚）
+- **v2.6.2** (2026-01-20) - 🐛 修复 libbluray 警告污染 JSON 输出：使用 -v error 和 sed 过滤确保纯净 JSON，解决 jq 解析失败问题（已回滚）
 - **v2.6.1** (2026-01-20) - 🐛 修复 jq 脚本错误和日志显示优化：修复 DisplayLanguage 字段引用错误导致 JSON 转换失败，优化日志顺序明确双步骤处理流程（ffprobe 提取基础信息 + MPLS 增强语言信息）
 - **v2.6.0** (2026-01-20) - 🎨 集成 7z+MPLS 语言提取功能：支持从蓝光 ISO 的 MPLS 文件中提取音轨和字幕语言信息，自动安装 parse_mpls.py 解析脚本，完整的回退机制确保稳定性
 - **v2.5.2** (2026-01-20) - 修复 ISO 文件大小显示问题：移除 bc 依赖，改用系统标准 awk 计算（解决部分系统 ISO 大小显示为 0 MB 的问题）
