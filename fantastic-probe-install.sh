@@ -222,6 +222,18 @@ cp "$MONITOR_SCRIPT" "$TARGET_SCRIPT"
 chmod +x "$TARGET_SCRIPT"
 echo "   ✅ 监控脚本已安装到: $TARGET_SCRIPT"
 
+# 安装 Python MPLS 解析脚本（蓝光语言提取必需）
+MPLS_SCRIPT="$SCRIPT_DIR/parse_mpls.py"
+TARGET_MPLS_SCRIPT="/usr/local/bin/fantastic-probe-parse-mpls"
+
+if [ -f "$MPLS_SCRIPT" ]; then
+    cp "$MPLS_SCRIPT" "$TARGET_MPLS_SCRIPT"
+    chmod +x "$TARGET_MPLS_SCRIPT"
+    echo "   ✅ MPLS 解析脚本已安装到: $TARGET_MPLS_SCRIPT"
+else
+    echo "   ⚠️  未找到 MPLS 解析脚本（跳过，蓝光语言提取功能将不可用）"
+fi
+
 # 安装自动更新助手
 AUTO_UPDATE_HELPER="$SCRIPT_DIR/auto-update-helper.sh"
 TARGET_HELPER="/usr/local/bin/fantastic-probe-auto-update"
