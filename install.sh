@@ -56,9 +56,13 @@ fi
 # 2. 检测系统环境
 info "检测系统环境..."
 if [ -f /etc/os-release ]; then
+    # 保存 VERSION 变量（防止被 os-release 覆盖）
+    INSTALL_VERSION="$VERSION"
     # shellcheck source=/dev/null
     source /etc/os-release
     echo "   发行版: $NAME"
+    # 恢复 VERSION 变量
+    VERSION="$INSTALL_VERSION"
 else
     warn "无法检测发行版信息"
 fi
