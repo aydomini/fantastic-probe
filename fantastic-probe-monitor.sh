@@ -331,10 +331,13 @@ find_main_playlist() {
 
     if command -v isoinfo &>/dev/null; then
         # 使用 isoinfo（推荐）
-        playlist_files=$(isoinfo -i "$iso_path" -f 2>/dev/null | grep -i "BDMV/PLAYLIST/.*\.mpls$" || true)
+        # 移除 $ 结尾匹配以兼容 ISO 版本号后缀（如 .mpls;1）
+        playlist_files=$(isoinfo -i "$iso_path" -f 2>/dev/null | grep -i "BDMV/PLAYLIST/.*\.mpls" || true)
     elif command -v 7z &>/dev/null; then
         # 使用 7z 作为备选
-        playlist_files=$(7z l "$iso_path" 2>/dev/null | grep -i "BDMV/PLAYLIST" | grep -i "\.mpls$" | awk '{print $NF}' || true)
+        # 7z 使用反斜杠路径分隔符，需要分步匹配
+        # 移除 $ 结尾匹配以兼容 ISO 版本号后缀
+        playlist_files=$(7z l "$iso_path" 2>/dev/null | grep -i "BDMV" | grep -i "PLAYLIST" | grep -i "\.mpls" | awk '{print $NF}' || true)
     else
         log_warn "未找到 isoinfo 或 7z 工具，无法查找 MPLS 播放列表"
         return 1
@@ -350,8 +353,8 @@ find_main_playlist() {
     local main_playlist=""
 
     while IFS= read -r playlist; do
-        # 清理路径（去除前导斜杠和空格）
-        playlist=$(echo "$playlist" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^\///')
+        # 清理路径（去除前导斜杠和空格，转换反斜杠为正斜杠，去除 ISO 版本号后缀）
+        playlist=$(echo "$playlist" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^\///' | tr '\\' '/' | sed 's/;[0-9]*$//')
 
         # 尝试获取该播放列表的时长
         local duration_json=$(timeout 30 "$FFPROBE" -v quiet -print_format json \
