@@ -115,10 +115,11 @@ else
     DOWNLOAD_URL="$REPO_URL/archive/refs/tags/$VERSION.tar.gz"
 fi
 
+echo "   正在下载，请稍候..."
 if command -v curl &> /dev/null; then
-    curl -fsSL "$DOWNLOAD_URL" -o fantastic-probe.tar.gz
+    curl -fL "$DOWNLOAD_URL" -o fantastic-probe.tar.gz --progress-bar
 elif command -v wget &> /dev/null; then
-    wget -q "$DOWNLOAD_URL" -O fantastic-probe.tar.gz
+    wget --show-progress "$DOWNLOAD_URL" -O fantastic-probe.tar.gz
 fi
 
 if [ ! -f fantastic-probe.tar.gz ]; then
