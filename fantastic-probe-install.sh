@@ -254,6 +254,31 @@ else
 fi
 echo ""
 
+# 3.5. 安装预编译包（如果存在）
+echo "3️⃣.5️⃣  安装预编译 FFprobe 包..."
+STATIC_DIR="$SCRIPT_DIR/static"
+TARGET_STATIC_DIR="/usr/share/fantastic-probe/static"
+
+if [ -d "$STATIC_DIR" ]; then
+    mkdir -p "$TARGET_STATIC_DIR"
+
+    # 复制预编译包
+    if [ -f "$STATIC_DIR/ffprobe_linux_x64.zip" ]; then
+        cp "$STATIC_DIR/ffprobe_linux_x64.zip" "$TARGET_STATIC_DIR/"
+        echo "   ✅ x86_64 预编译包已安装"
+    fi
+
+    if [ -f "$STATIC_DIR/ffprobe_linux_arm64.zip" ]; then
+        cp "$STATIC_DIR/ffprobe_linux_arm64.zip" "$TARGET_STATIC_DIR/"
+        echo "   ✅ ARM64 预编译包已安装"
+    fi
+
+    echo "   ✅ 预编译包已安装到: $TARGET_STATIC_DIR"
+else
+    echo "   ℹ️  未找到 static 目录（跳过预编译包安装）"
+fi
+echo ""
+
 # 4. 配置服务（交互式向导）
 echo "4️⃣  配置服务..."
 CONFIG_DIR="/etc/fantastic-probe"

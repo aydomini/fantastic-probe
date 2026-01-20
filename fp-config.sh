@@ -14,6 +14,7 @@ set -euo pipefail
 SERVICE_NAME="fantastic-probe-monitor"
 CONFIG_FILE="/etc/fantastic-probe/config"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATIC_DIR="/usr/share/fantastic-probe/static"  # 预编译包固定路径
 
 #==============================================================================
 # 工具函数
@@ -164,13 +165,13 @@ reconfigure_ffprobe() {
     PREBUILT_ZIP=""
     ARCH_NAME=""
 
-    if [ "$ARCH" = "x86_64" ] && [ -f "$SCRIPT_DIR/static/ffprobe_linux_x64.zip" ]; then
+    if [ "$ARCH" = "x86_64" ] && [ -f "$STATIC_DIR/ffprobe_linux_x64.zip" ]; then
         PREBUILT_AVAILABLE=true
-        PREBUILT_ZIP="$SCRIPT_DIR/static/ffprobe_linux_x64.zip"
+        PREBUILT_ZIP="$STATIC_DIR/ffprobe_linux_x64.zip"
         ARCH_NAME="x86_64"
-    elif [ "$ARCH" = "aarch64" ] && [ -f "$SCRIPT_DIR/static/ffprobe_linux_arm64.zip" ]; then
+    elif [ "$ARCH" = "aarch64" ] && [ -f "$STATIC_DIR/ffprobe_linux_arm64.zip" ]; then
         PREBUILT_AVAILABLE=true
-        PREBUILT_ZIP="$SCRIPT_DIR/static/ffprobe_linux_arm64.zip"
+        PREBUILT_ZIP="$STATIC_DIR/ffprobe_linux_arm64.zip"
         ARCH_NAME="ARM64"
     fi
 
@@ -648,6 +649,12 @@ uninstall_service() {
     rm -f /usr/local/bin/fp-config
     rm -f /usr/local/bin/fantastic-probe-config
     echo "      ✅ 所有脚本已删除"
+
+    # 5.5. 删除预编译包
+    if [ -d "/usr/share/fantastic-probe" ]; then
+        rm -rf /usr/share/fantastic-probe
+        echo "      ✅ 预编译包已删除"
+    fi
 
     # 6. 清理临时文件
     echo "   6️⃣  清理临时文件..."

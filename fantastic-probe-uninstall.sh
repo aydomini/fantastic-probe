@@ -83,6 +83,13 @@ if [ -L "/usr/local/bin/fantastic-probe-config" ] || [ -f "/usr/local/bin/fantas
     FILES_REMOVED=$((FILES_REMOVED + 1))
 fi
 
+# 删除预编译包
+if [ -d "/usr/share/fantastic-probe" ]; then
+    rm -rf /usr/share/fantastic-probe
+    echo "   ✅ 预编译包已删除"
+    FILES_REMOVED=$((FILES_REMOVED + 1))
+fi
+
 if [ $FILES_REMOVED -eq 0 ]; then
     echo "   ✅ 所有脚本均不存在"
 fi
