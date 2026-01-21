@@ -1,7 +1,7 @@
 {
-  "version": "2.7.11",
-  "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.11.tar.gz",
+  "version": "2.7.12",
+  "release_date": "2026-01-22",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.12.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "⚡ 架构优化：ffprobe 主提取 + MPLS 语言补充（速度与准确性兼得）"
+  "changelog": "🔍 增强日志诊断：捕获 ffprobe/7z/pympls 详细错误信息（10秒重试间隔）"
 }

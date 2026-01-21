@@ -378,6 +378,7 @@ extract_language_from_mpls() {
         log_warn "  pympls 未安装，跳过语言补充"
         return 1
     fi
+    log_debug "    ✅ pympls 已安装"
 
     # 检查解析脚本
     local pympls_script="/usr/local/bin/parse_mpls_pympls.py"
@@ -385,23 +386,49 @@ extract_language_from_mpls() {
         log_warn "  parse_mpls_pympls.py 未找到，跳过语言补充"
         return 1
     fi
+    log_debug "    ✅ 解析脚本就绪"
 
     # 创建临时目录
     local temp_dir=$(mktemp -d)
     trap "rm -rf '$temp_dir'" RETURN
 
     # 7z 快速检测（30 秒超时）
-    if ! timeout 30 7z l "$iso_path" >/dev/null 2>&1; then
-        log_warn "  7z 无法访问 ISO（30秒超时），跳过语言补充"
+    log_debug "    测试 ISO 可访问性（7z 快速检测，30秒超时）..."
+    local start_time=$(date +%s)
+    local z_stderr=$(mktemp)
+
+    if timeout 30 7z l "$iso_path" >/dev/null 2>"$z_stderr"; then
+        local duration=$(($(date +%s) - start_time))
+        log_debug "    ✅ 7z 检测通过（耗时 ${duration}秒）"
+    else
+        local duration=$(($(date +%s) - start_time))
+        log_warn "  7z 无法访问 ISO（耗时 ${duration}秒）"
+        if [ -s "$z_stderr" ]; then
+            log_debug "  7z 错误: $(head -2 "$z_stderr")"
+        fi
+        rm -f "$z_stderr"
         return 1
     fi
+    rm -f "$z_stderr"
 
     # 提取 PLAYLIST 目录（轻量级，仅几个 MPLS 文件）
-    log_info "    提取 PLAYLIST 目录（轻量级，约 5-30 秒）..."
-    if ! timeout 60 7z x "$iso_path" "BDMV/PLAYLIST/*" -o"$temp_dir" -y >/dev/null 2>&1; then
-        log_warn "    PLAYLIST 提取失败（60秒超时），跳过语言补充"
+    log_info "    提取 PLAYLIST 目录（轻量级，60秒超时）..."
+    start_time=$(date +%s)
+    local z_extract_stderr=$(mktemp)
+
+    if timeout 60 7z x "$iso_path" "BDMV/PLAYLIST/*" -o"$temp_dir" -y >/dev/null 2>"$z_extract_stderr"; then
+        local duration=$(($(date +%s) - start_time))
+        log_info "    ✅ PLAYLIST 提取成功（耗时 ${duration}秒）"
+    else
+        local duration=$(($(date +%s) - start_time))
+        log_warn "    PLAYLIST 提取失败（耗时 ${duration}秒）"
+        if [ -s "$z_extract_stderr" ]; then
+            log_debug "    7z 错误: $(head -2 "$z_extract_stderr")"
+        fi
+        rm -f "$z_extract_stderr"
         return 1
     fi
+    rm -f "$z_extract_stderr"
 
     # 查找主 MPLS（最大的文件）
     local main_mpls=$(find "$temp_dir/BDMV/PLAYLIST" -type f \( -name "*.mpls" -o -name "*.MPLS" \) 2>/dev/null | \
@@ -409,15 +436,26 @@ extract_language_from_mpls() {
 
     if [ -z "$main_mpls" ] || [ ! -f "$main_mpls" ]; then
         log_warn "    未找到主播放列表，跳过语言补充"
+        log_debug "    查找到的文件: $(find "$temp_dir" -type f 2>/dev/null | head -5)"
         return 1
     fi
 
-    log_info "    解析 MPLS: $(basename "$main_mpls")"
+    local mpls_size=$(stat -f%z "$main_mpls" 2>/dev/null || stat -c%s "$main_mpls" 2>/dev/null)
+    log_info "    解析 MPLS: $(basename "$main_mpls") (${mpls_size} bytes)"
 
     # pympls 解析
     local mpls_json=$(timeout 30 python3 "$pympls_script" "$main_mpls" 2>&1)
-    if [ $? -ne 0 ] || ! echo "$mpls_json" | jq -e '.success' >/dev/null 2>&1; then
-        log_warn "    pympls 解析失败，跳过语言补充"
+    local pympls_exit=$?
+
+    if [ $pympls_exit -ne 0 ]; then
+        log_warn "    pympls 解析失败（退出码 $pympls_exit）"
+        log_debug "    pympls 输出: $(echo "$mpls_json" | head -3)"
+        return 1
+    fi
+
+    if ! echo "$mpls_json" | jq -e '.success' >/dev/null 2>&1; then
+        log_warn "    pympls 解析失败（JSON 无效）"
+        log_debug "    pympls 输出: $(echo "$mpls_json" | head -3)"
         return 1
     fi
 
@@ -427,7 +465,9 @@ extract_language_from_mpls() {
         subtitle: [.MediaStreams[] | select(.Type=="Subtitle") | {Index, Language}]
     }')
 
-    log_info "    ✅ 语言信息提取成功"
+    local audio_count=$(echo "$language_map" | jq '.audio | length')
+    local subtitle_count=$(echo "$language_map" | jq '.subtitle | length')
+    log_info "    ✅ 语言信息提取成功（${audio_count}音轨, ${subtitle_count}字幕）"
     echo "$language_map"
     return 0
 }
@@ -527,11 +567,10 @@ extract_mediainfo() {
     local iso_path="$1"
     local iso_type="$2"
 
-    # v2.7.11 优化：智能回退 + 重试机制（应对 fuse 延迟）
-    #   1. 优先使用 detect_iso_type() 返回的类型（从文件名或统计判断）
-    #   2. 如果 ffprobe 失败，等待 5 秒后重试一次（应对 fuse 延迟）
-    #   3. 重试失败后，尝试另一种协议
-    #   4. 两种协议都失败才报错
+    # v2.7.12 优化：增强日志，捕获详细错误信息
+    #   1. 显示 ffprobe 真实错误信息
+    #   2. 显示每次尝试的耗时
+    #   3. 保留 stderr 用于调试
 
     log_debug "  准备提取媒体信息（协议: ${iso_type:-未知}）..."
 
@@ -549,17 +588,34 @@ extract_mediainfo() {
 
     while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
         if [ $retry_count -gt 0 ]; then
-            log_warn "  ${iso_type} 协议首次失败，等待 5 秒后重试（fuse 可能未就绪）..."
-            sleep 5
+            log_warn "  ${iso_type} 协议首次失败，等待 10 秒后重试（fuse 可能未就绪）..."
+            sleep 10
         fi
 
-        ffprobe_json=$(timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v quiet -print_format json \
+        local start_time=$(date +%s)
+        log_debug "  执行: ffprobe -i \"${iso_type}:${iso_path}\" (超时 ${FFPROBE_TIMEOUT}秒)"
+
+        # 捕获 stderr 用于调试
+        local ffprobe_stderr=$(mktemp)
+        ffprobe_json=$(timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v error -print_format json \
             -show_format -show_streams -show_chapters \
             -protocol_whitelist "file,${iso_type}" \
-            -i "${iso_type}:${iso_path}" 2>/dev/null)
+            -i "${iso_type}:${iso_path}" 2>"$ffprobe_stderr")
+        local ffprobe_exit=$?
+        local duration=$(($(date +%s) - start_time))
+
+        if [ $ffprobe_exit -eq 124 ]; then
+            log_error "  ❌ ffprobe 超时（>${FFPROBE_TIMEOUT}秒）"
+        elif [ $ffprobe_exit -ne 0 ]; then
+            log_debug "  ffprobe 失败（退出码 $ffprobe_exit，耗时 ${duration}秒）"
+            if [ -s "$ffprobe_stderr" ]; then
+                log_debug "  错误信息: $(head -3 "$ffprobe_stderr")"
+            fi
+        fi
+        rm -f "$ffprobe_stderr"
 
         if [ -n "$ffprobe_json" ] && echo "$ffprobe_json" | jq -e '.streams' >/dev/null 2>&1; then
-            log_info "  ✅ ${iso_type} 协议成功（尝试 $((retry_count + 1))/$max_retries）"
+            log_info "  ✅ ${iso_type} 协议成功（尝试 $((retry_count + 1))/$max_retries，耗时 ${duration}秒）"
             echo "$ffprobe_json"
             return 0
         fi
@@ -580,17 +636,34 @@ extract_mediainfo() {
 
     while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
         if [ $retry_count -gt 0 ]; then
-            log_warn "  ${fallback_type} 协议首次失败，等待 5 秒后重试..."
-            sleep 5
+            log_warn "  ${fallback_type} 协议首次失败，等待 10 秒后重试..."
+            sleep 10
         fi
 
-        ffprobe_json=$(timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v quiet -print_format json \
+        local start_time=$(date +%s)
+        log_debug "  执行: ffprobe -i \"${fallback_type}:${iso_path}\" (超时 ${FFPROBE_TIMEOUT}秒)"
+
+        # 捕获 stderr 用于调试
+        local ffprobe_stderr=$(mktemp)
+        ffprobe_json=$(timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v error -print_format json \
             -show_format -show_streams -show_chapters \
             -protocol_whitelist "file,${fallback_type}" \
-            -i "${fallback_type}:${iso_path}" 2>/dev/null)
+            -i "${fallback_type}:${iso_path}" 2>"$ffprobe_stderr")
+        local ffprobe_exit=$?
+        local duration=$(($(date +%s) - start_time))
+
+        if [ $ffprobe_exit -eq 124 ]; then
+            log_error "  ❌ ffprobe 超时（>${FFPROBE_TIMEOUT}秒）"
+        elif [ $ffprobe_exit -ne 0 ]; then
+            log_debug "  ffprobe 失败（退出码 $ffprobe_exit，耗时 ${duration}秒）"
+            if [ -s "$ffprobe_stderr" ]; then
+                log_debug "  错误信息: $(head -3 "$ffprobe_stderr")"
+            fi
+        fi
+        rm -f "$ffprobe_stderr"
 
         if [ -n "$ffprobe_json" ] && echo "$ffprobe_json" | jq -e '.streams' >/dev/null 2>&1; then
-            log_info "  ✅ ${fallback_type} 协议成功（fallback，尝试 $((retry_count + 1))/$max_retries）"
+            log_info "  ✅ ${fallback_type} 协议成功（fallback，尝试 $((retry_count + 1))/$max_retries，耗时 ${duration}秒）"
             echo "$ffprobe_json"
             return 0
         fi
@@ -601,6 +674,8 @@ extract_mediainfo() {
     # 两种协议都失败
     log_error "  ⚠️  bluray 和 dvd 协议均失败（各重试 $max_retries 次）"
     log_error "  可能原因: 文件损坏、非标准 ISO、网络问题、或 fuse 挂载异常"
+    log_error "  建议: 检查 ISO 文件是否可读，尝试手动运行："
+    log_error "        ffprobe -i \"bluray:${iso_path}\""
     return 1
 }
 
