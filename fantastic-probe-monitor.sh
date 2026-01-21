@@ -309,23 +309,39 @@ detect_iso_type() {
     # 原方案：ffprobe bluray: 协议需要读取 STREAM 目录（50GB+），在 fuse 网盘上不可靠
     # 新方案：7z 只列出目录结构（<1KB），快速且可靠
 
+    log_debug "  开始检测 ISO 类型: $iso_path"
+
     # 列出 ISO 内容（只显示顶层目录）
     local iso_content
-    iso_content=$(7z l "$iso_path" 2>/dev/null || true)
+    iso_content=$(7z l "$iso_path" 2>&1)
+    local exit_code=$?
+
+    if [ $exit_code -ne 0 ]; then
+        log_error "  ❌ 7z 列出 ISO 内容失败（退出码: $exit_code）"
+        log_debug "  7z 输出: $iso_content"
+        return 1
+    fi
+
+    log_debug "  7z 列出 ISO 成功，正在检查目录结构..."
 
     # 检查是否包含 BDMV 目录（蓝光 ISO）
-    if echo "$iso_content" | grep -q "BDMV"; then
+    if echo "$iso_content" | grep -qi "BDMV"; then
+        log_debug "  ✅ 检测到 BDMV 目录 → 蓝光 ISO"
         echo "bluray"
         return 0
     fi
 
     # 检查是否包含 VIDEO_TS 目录（DVD ISO）
-    if echo "$iso_content" | grep -q "VIDEO_TS"; then
+    if echo "$iso_content" | grep -qi "VIDEO_TS"; then
+        log_debug "  ✅ 检测到 VIDEO_TS 目录 → DVD ISO"
         echo "dvd"
         return 0
     fi
 
     # 都不是，返回失败
+    log_warn "  ⚠️  未检测到 BDMV 或 VIDEO_TS 目录"
+    log_debug "  ISO 内容前 20 行:"
+    log_debug "$(echo "$iso_content" | head -20)"
     return 1
 }
 
