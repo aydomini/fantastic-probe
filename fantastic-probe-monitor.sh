@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.6.10
+# 版本：v2.6.11
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.6.10"
+VERSION="2.6.11"
 
 set -euo pipefail
 
@@ -769,16 +769,23 @@ process_iso_strm() {
         return 1
     fi
 
-    # 从 ffprobe 输出中获取文件大小（避免 stat 触发 fuse 问题）
-    local iso_size=$(echo "$ffprobe_output" | jq -r '.format.size // "0"')
-    local iso_size_mb=$(awk -v size="$iso_size" 'BEGIN {printf "%.2f", size/1024/1024}')
-    local iso_size_gb=$(awk -v size="$iso_size" 'BEGIN {printf "%.2f", size/1024/1024/1024}')
+    # 获取 ISO 文件实际大小（使用 du 而非 stat，对 fuse 网盘更友好）
+    # 注意：不能从 ffprobe 的 .format.size 获取，因为 bluray:/dvd: 协议返回的是播放列表大小，而非 ISO 文件大小
+    local iso_size=$(du -b "$iso_path" 2>/dev/null | awk '{print $1}' || echo "0")
 
-    # 显示文件大小（仅用于日志）
-    if [ "$iso_size" != "0" ] && awk -v gb="$iso_size_gb" 'BEGIN {exit (gb >= 1) ? 0 : 1}'; then
-        log_info "  ISO 大小: ${iso_size_gb} GB (${iso_size} bytes)"
-    elif [ "$iso_size" != "0" ]; then
-        log_info "  ISO 大小: ${iso_size_mb} MB (${iso_size} bytes)"
+    if [ "$iso_size" != "0" ]; then
+        local iso_size_mb=$(awk -v size="$iso_size" 'BEGIN {printf "%.2f", size/1024/1024}')
+        local iso_size_gb=$(awk -v size="$iso_size" 'BEGIN {printf "%.2f", size/1024/1024/1024}')
+
+        # 显示文件大小（仅用于日志）
+        if awk -v gb="$iso_size_gb" 'BEGIN {exit (gb >= 1) ? 0 : 1}'; then
+            log_info "  ISO 大小: ${iso_size_gb} GB (${iso_size} bytes)"
+        else
+            log_info "  ISO 大小: ${iso_size_mb} MB (${iso_size} bytes)"
+        fi
+    else
+        log_warn "  ⚠️  无法获取 ISO 文件大小（可能是网盘挂载问题）"
+        iso_size="0"
     fi
 
     # 转换为 Emby 格式（传递 ISO 文件大小）
@@ -966,6 +973,8 @@ queue_processor() {
     while true; do
         # 从队列读取文件路径（阻塞读取）
         if read -r strm_file < "$QUEUE_FILE"; then
+            log_info "已从队列读取: $(basename "$strm_file")"
+
             # 等待文件写入完成 + 避免触发网盘频率限制
             sleep 10
 
@@ -999,54 +1008,22 @@ queue_processor() {
             log_info "从队列处理: $(basename "$strm_file")"
             log_info "=========================================="
 
-            # 后台执行任务，并手动监控超时
-            # 单个任务最长执行时间：使用配置的 MAX_FILE_PROCESSING_TIME
-            local task_timeout=$MAX_FILE_PROCESSING_TIME
-            local task_start=$(date +%s)
-
-            # 临时禁用 errexit，避免任务失败中断队列
+            # 关键修复：错误隔离，防止单个文件失败导致 queue_processor 退出
+            # 保持串行执行（一次只处理一个 ISO，避免网盘风控）
             set +e
-
-            # 后台执行任务
-            process_iso_strm "$strm_file" &
-            local task_pid=$!
-
-            # 监控任务状态
-            local task_finished=false
-            while true; do
-                # 检查进程是否还在运行
-                if ! kill -0 $task_pid 2>/dev/null; then
-                    # 任务已完成
-                    wait $task_pid
-                    local exit_code=$?
-                    task_finished=true
-
-                    if [ $exit_code -eq 0 ]; then
-                        log_success "✅ 文件处理成功"
-                    else
-                        log_error "❌ 文件处理失败（退出码: $exit_code）"
-                        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: 任务失败（退出码: $exit_code） - $strm_file" >> /var/log/fantastic_probe_errors.log
-                    fi
-                    break
-                fi
-
-                # 检查是否超时
-                local elapsed=$(($(date +%s) - task_start))
-                if [ $elapsed -ge $task_timeout ]; then
-                    log_error "❌ 文件处理超时（${task_timeout}秒），强制终止: $(basename "$strm_file")"
-                    kill -9 $task_pid 2>/dev/null || true
-                    wait $task_pid 2>/dev/null || true
-                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: 任务超时（${task_timeout}秒） - $strm_file" >> /var/log/fantastic_probe_errors.log
-                    break
-                fi
-
-                sleep 1
-            done
-
-            # 恢复 errexit
+            process_iso_strm "$strm_file"
+            local exit_code=$?
             set -e
 
+            if [ $exit_code -eq 0 ]; then
+                log_success "✅ 文件处理成功"
+            else
+                log_error "❌ 文件处理失败（退出码: $exit_code）"
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: 任务失败（退出码: $exit_code） - $strm_file" >> /var/log/fantastic_probe_errors.log
+            fi
+
             echo "" >&2
+            # 继续处理下一个任务（串行，避免网盘并发风控）
         fi
     done
 }
