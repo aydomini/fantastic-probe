@@ -1,7 +1,7 @@
 {
-  "version": "2.7.0",
+  "version": "2.7.1",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.0.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.1.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🚀 重大更新：实现混合方案完美解决蓝光 ISO 语言提取失败问题（pympls + 限制性 ffprobe，网盘请求从 50GB 降至 11MB，语言准确率从 0% 提升至 100%，支持 HDR 检测）"
+  "changelog": "🐛 修复 fuse 网盘上 ISO 类型检测失败问题（使用 7z 代替 ffprobe bluray: 协议，提高兼容性和可靠性）"
 }
