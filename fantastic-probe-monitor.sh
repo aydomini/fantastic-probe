@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.1
+# 版本：v2.7.2
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.7.1"
+VERSION="2.7.2"
 
 set -euo pipefail
 
@@ -312,7 +312,7 @@ detect_iso_type() {
     log_debug "  开始检测 ISO 类型: $iso_path"
 
     # fuse 网盘优化：重试机制（应对缓存未就绪）
-    local max_retries=3
+    local max_retries=5
     local retry_count=0
     local iso_content=""
     local exit_code=1
@@ -320,7 +320,7 @@ detect_iso_type() {
     while [ $retry_count -lt $max_retries ] && [ $exit_code -ne 0 ]; do
         if [ $retry_count -gt 0 ]; then
             log_debug "  等待 fuse 缓存就绪... (尝试 $((retry_count + 1))/$max_retries)"
-            sleep 3
+            sleep 10
         fi
 
         # 列出 ISO 内容（只显示顶层目录）

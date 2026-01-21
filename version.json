@@ -1,7 +1,7 @@
 {
-  "version": "2.7.1",
+  "version": "2.7.2",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.1.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.2.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🐛 修复 fuse 网盘上 ISO 类型检测失败问题（使用 7z 代替 ffprobe bluray: 协议，提高兼容性和可靠性）"
+  "changelog": "🔧 优化 fuse 网盘 ISO 检测：增加重试次数（5次）和等待时间（10秒），提高稳定性"
 }
