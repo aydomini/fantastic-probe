@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.2
+# 版本：v2.7.3
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.7.2"
+VERSION="2.7.3"
 
 set -euo pipefail
 
@@ -305,64 +305,77 @@ check_disk_space() {
 detect_iso_type() {
     local iso_path="$1"
 
-    # 方案改进：使用 7z 列出 ISO 目录结构（更适合 fuse 网盘）
-    # 原方案：ffprobe bluray: 协议需要读取 STREAM 目录（50GB+），在 fuse 网盘上不可靠
-    # 新方案：7z 只列出目录结构（<1KB），快速且可靠
+    # 方案改进：mount ISO 后直接检查目录结构（最可靠的 fuse 网盘方案）
+    # v2.7.1 方案：7z 列出目录结构 → 在 fuse 网盘上失败（7z 需要随机访问）
+    # v2.7.3 方案：mount ISO → 直接检查目录 → fuse 对 mount 支持更好
+    # 优势：
+    #   - mount 是内核级操作，比 7z 更可靠
+    #   - 直接用 test -d 检查目录，不需要读取 ISO 内容
+    #   - v2.7.0 已验证 mount 可在 fuse 网盘上工作（用于 HDR 检测）
 
     log_debug "  开始检测 ISO 类型: $iso_path"
+
+    # 创建临时挂载点
+    local mount_point="/tmp/iso_detect_mount_$$"
+    mkdir -p "$mount_point" 2>/dev/null
 
     # fuse 网盘优化：重试机制（应对缓存未就绪）
     local max_retries=5
     local retry_count=0
-    local iso_content=""
-    local exit_code=1
+    local mount_success=false
+    local iso_type=""
 
-    while [ $retry_count -lt $max_retries ] && [ $exit_code -ne 0 ]; do
+    while [ $retry_count -lt $max_retries ] && [ "$mount_success" = false ]; do
         if [ $retry_count -gt 0 ]; then
             log_debug "  等待 fuse 缓存就绪... (尝试 $((retry_count + 1))/$max_retries)"
             sleep 10
         fi
 
-        # 列出 ISO 内容（只显示顶层目录）
-        iso_content=$(7z l "$iso_path" 2>&1)
-        exit_code=$?
+        # 尝试挂载 ISO（只读）
+        if mount -o loop,ro "$iso_path" "$mount_point" 2>/dev/null; then
+            mount_success=true
+            log_debug "  ✅ ISO 已挂载到: $mount_point"
+
+            # 检查是否包含 BDMV 目录（蓝光 ISO）
+            if [ -d "$mount_point/BDMV" ]; then
+                log_debug "  ✅ 检测到 BDMV 目录 → 蓝光 ISO"
+                iso_type="bluray"
+            # 检查是否包含 VIDEO_TS 目录（DVD ISO）
+            elif [ -d "$mount_point/VIDEO_TS" ]; then
+                log_debug "  ✅ 检测到 VIDEO_TS 目录 → DVD ISO"
+                iso_type="dvd"
+            else
+                log_warn "  ⚠️  未检测到 BDMV 或 VIDEO_TS 目录"
+                log_debug "  挂载点内容:"
+                ls -la "$mount_point" 2>/dev/null | head -20 | while IFS= read -r line; do
+                    log_debug "    $line"
+                done
+            fi
+
+            # 卸载 ISO
+            umount "$mount_point" 2>/dev/null
+        else
+            log_debug "  ⚠️  mount 失败（尝试 $((retry_count + 1))/$max_retries）"
+        fi
 
         retry_count=$((retry_count + 1))
     done
 
-    if [ $exit_code -ne 0 ]; then
-        log_error "  ❌ 7z 列出 ISO 内容失败（退出码: $exit_code）"
-        log_error "  7z 错误输出:"
-        echo "$iso_content" | head -10 | while IFS= read -r line; do
-            log_error "    $line"
-        done
-        log_warn "  可能原因: fuse 网盘缓存未就绪、文件被占用、或路径过长"
+    # 清理挂载点
+    rmdir "$mount_point" 2>/dev/null
+
+    # 返回结果
+    if [ -n "$iso_type" ]; then
+        echo "$iso_type"
+        return 0
+    fi
+
+    if [ "$mount_success" = false ]; then
+        log_error "  ❌ mount ISO 失败（已重试 $max_retries 次）"
+        log_warn "  可能原因: fuse 网盘缓存未就绪、文件损坏、或权限不足"
         log_warn "  建议: 稍后重试或检查 fuse 挂载状态"
-        return 1
     fi
 
-    log_debug "  7z 列出 ISO 成功，正在检查目录结构..."
-
-    # 检查是否包含 BDMV 目录（蓝光 ISO）
-    if echo "$iso_content" | grep -qi "BDMV"; then
-        log_debug "  ✅ 检测到 BDMV 目录 → 蓝光 ISO"
-        echo "bluray"
-        return 0
-    fi
-
-    # 检查是否包含 VIDEO_TS 目录（DVD ISO）
-    if echo "$iso_content" | grep -qi "VIDEO_TS"; then
-        log_debug "  ✅ 检测到 VIDEO_TS 目录 → DVD ISO"
-        echo "dvd"
-        return 0
-    fi
-
-    # 都不是，返回失败
-    log_warn "  ⚠️  未检测到 BDMV 或 VIDEO_TS 目录"
-    log_debug "  ISO 内容前 20 行:"
-    echo "$iso_content" | head -20 | while IFS= read -r line; do
-        log_debug "    $line"
-    done
     return 1
 }
 
