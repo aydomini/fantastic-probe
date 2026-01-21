@@ -226,22 +226,26 @@ else
     echo "   正在安装 pympls..."
 
     # 优先使用 python3 -m pip（更可靠，不依赖 pip3 命令）
-    if python3 -m pip install pympls --quiet 2>/dev/null; then
+    # 使用 --break-system-packages 适配 Debian 12+ PEP 668 限制
+    if python3 -m pip install pympls --break-system-packages --quiet 2>/dev/null; then
         echo "   ✅ pympls 安装成功（使用 python3 -m pip）"
+    # 回退：尝试不带 --break-system-packages（兼容旧版本）
+    elif python3 -m pip install pympls --quiet 2>/dev/null; then
+        echo "   ✅ pympls 安装成功（使用 python3 -m pip，无需 --break-system-packages）"
     # 回退：尝试使用 pip3 命令
-    elif command -v pip3 &> /dev/null && pip3 install pympls --quiet 2>/dev/null; then
+    elif command -v pip3 &> /dev/null && pip3 install pympls --break-system-packages --quiet 2>/dev/null; then
         echo "   ✅ pympls 安装成功（使用 pip3）"
     # 回退：尝试使用 pip 命令
-    elif command -v pip &> /dev/null && pip install pympls --quiet 2>/dev/null; then
+    elif command -v pip &> /dev/null && pip install pympls --break-system-packages --quiet 2>/dev/null; then
         echo "   ✅ pympls 安装成功（使用 pip）"
     else
         echo "   ❌ pympls 安装失败"
         echo "   ⚠️  警告：MPLS 元数据提取可能无法正常工作"
         echo ""
-        echo "   请尝试手动安装："
-        echo "   方法1: python3 -m pip install pympls"
-        echo "   方法2: pip3 install pympls"
-        echo "   方法3: sudo apt-get install -y python3-pip && pip3 install pympls"
+        echo "   请尝试手动安装（适配 Debian 12+ PEP 668）："
+        echo "   方法1: python3 -m pip install pympls --break-system-packages"
+        echo "   方法2: pip3 install pympls --break-system-packages"
+        echo "   方法3: python3 -m venv /opt/fantastic-probe-venv && /opt/fantastic-probe-venv/bin/pip install pympls"
         echo ""
         echo "   如果仍然失败，请检查："
         echo "   - 是否有网络连接"

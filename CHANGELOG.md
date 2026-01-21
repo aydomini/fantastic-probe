@@ -7,6 +7,87 @@
 
 ---
 
+## [2.7.8] - 2026-01-21
+
+### 🐛 核心修复
+
+**适配 Debian 12+ PEP 668 限制（pympls 自动安装失败）**
+
+- **用户问题**：Debian 12 (Bookworm) 及更新版本中，直接使用 `pip3 install` 会报错：
+  ```
+  error: externally-managed-environment
+  × This environment is externally managed
+  ```
+  导致 pympls 自动安装失败，MPLS 元数据提取无法工作。
+
+- **根本原因**：Debian 12+ 引入 PEP 668 保护机制，阻止用户直接修改系统 Python 环境，防止破坏系统包。
+
+- **解决方案**：在 `fantastic-probe-install.sh` 中添加 `--break-system-packages` 标志：
+  ```bash
+  # v2.7.7（❌ 失败）
+  python3 -m pip install pympls
+
+  # v2.7.8（✅ 成功）
+  python3 -m pip install pympls --break-system-packages
+  ```
+
+  **多层回退策略**：
+  1. 优先：`python3 -m pip install pympls --break-system-packages`（Debian 12+）
+  2. 回退：`python3 -m pip install pympls`（兼容旧版本）
+  3. 回退：`pip3 install pympls --break-system-packages`
+  4. 回退：`pip install pympls --break-system-packages`
+
+- **为什么使用 `--break-system-packages`**：
+  - ✅ fantastic-probe 是系统级 systemd 服务，需要系统级 Python 包
+  - ✅ pympls 是专用库，不会与系统包冲突
+  - ✅ 虚拟环境不适合 systemd 服务（需要固定路径）
+  - ✅ Debian 官方文档推荐这种场景使用此标志
+
+### 📋 技术细节
+
+**错误信息**：
+```
+error: externally-managed-environment
+
+× This environment is externally managed
+╰─> To install Python packages system-wide, try apt install
+    python3-xyz, where xyz is the package you are trying to
+    install.
+
+    If you wish to install a non-Debian-packaged Python package,
+    create a virtual environment using python3 -m venv path/to/venv.
+
+    See /usr/share/doc/python3.11/README.venv for more information.
+
+note: If you believe this is a mistake, please contact your Python
+installation or OS distribution provider. You can override this, at
+the risk of breaking your Python installation or OS, by passing
+--break-system-packages.
+```
+
+**修改的文件**：
+- `fantastic-probe-install.sh`: 第 230-240 行，添加 `--break-system-packages` 标志
+
+### 🎯 用户影响
+
+- ✅ **Debian 12+ 用户可自动安装 pympls**（不再报错）
+- ✅ **兼容旧版本系统**（多层回退策略）
+- ✅ **MPLS 元数据提取恢复正常**（蓝光 ISO 语言信息）
+
+### 🔧 手动修复方法（如果已安装 v2.7.7）
+
+如果您已经在 Debian 12+ 上安装了 v2.7.7，可以手动安装 pympls：
+```bash
+python3 -m pip install pympls --break-system-packages
+```
+
+然后验证安装：
+```bash
+python3 -c "import pympls; print('pympls 已安装')"
+```
+
+---
+
 ## [2.7.7] - 2026-01-21
 
 ### 🐛 核心修复

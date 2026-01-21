@@ -1,7 +1,7 @@
 {
-  "version": "2.7.7",
+  "version": "2.7.8",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.7.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.8.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🐛 修复：mount 超时增至 120 秒 + fallback ffprobe 智能猜测类型"
+  "changelog": "🐛 修复：适配 Debian 12+ PEP 668 限制（pympls 自动安装）"
 }
