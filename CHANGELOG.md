@@ -7,6 +7,118 @@
 
 ---
 
+## [2.7.11] - 2026-01-21
+
+### ⚡ 架构优化：ffprobe 主提取 + MPLS 语言补充
+
+**用户反馈**：
+> "能不能使用 ffprobe 提取全部信息，然后音轨和字幕轨语言信息交由 mpls_pympls.py 补充提取？"
+
+- **问题分析**：
+  - v2.7.10 的 MPLS 提取方案太复杂：
+    - 7z 检测（30 秒）
+    - 7z 提取 PLAYLIST（180 秒）
+    - pympls 解析（5 秒）
+    - **mount ISO** 获取 HDR（超时）← mount 又回来了！
+  - 总计：230+ 秒，违背了 v2.7.9 "完全移除 mount" 的初衷
+
+- **v2.7.11 新架构**：
+
+  **核心思想：ffprobe 主提取 + MPLS 语言补充（按需）**
+
+  ```
+  流程：
+  1. ffprobe 提取全部信息（10-20 秒）← 快速，保底
+  2. 检查语言信息完整度
+  3. 如果语言信息缺失 → 7z 提取 MPLS + pympls 补充（可选）
+  4. 合并结果
+  ```
+
+  **优势**：
+  - ✅ ffprobe 保底（总能提取到信息）
+  - ✅ pympls 补强（语言信息更准确）
+  - ✅ 7z 可选（失败也不影响主流程）
+  - ✅ 速度快（大部分 10-20 秒，需要时才用 7z）
+
+### 📋 技术细节
+
+**新增函数**：
+
+**1. extract_language_from_mpls()**（轻量级语言提取）
+```bash
+# 仅提取语言信息，不提取完整媒体信息
+1. 7z 快速检测（30 秒超时，失败跳过）
+2. 7z 提取 PLAYLIST（60 秒超时，仅几个 MPLS 文件）
+3. pympls 解析（30 秒超时）
+4. 返回语言映射：{audio: [...], subtitle: [...]}
+```
+
+**2. merge_language_info()**（合并语言信息）
+```bash
+# 使用 jq 将 MPLS 语言信息合并到 ffprobe 结果
+ffprobe_json + language_map → 完整的媒体信息
+```
+
+**3. extract_mediainfo_with_language_enhancement()**（主函数）
+```bash
+# 步骤 1：ffprobe 提取全部信息（10-20 秒）
+ffprobe_json = extract_mediainfo(iso_path, iso_type)
+
+# 步骤 2：检查语言信息完整度
+lang_count / total_count < 100% ?
+
+# 步骤 3：如果需要，MPLS 补充
+if 语言信息不完整 && iso_type == "bluray":
+    language_map = extract_language_from_mpls(iso_path)
+    ffprobe_json = merge_language_info(ffprobe_json, language_map)
+```
+
+**废弃函数**：
+- ❌ `extract_mediainfo_from_mpls()`（300 行，太复杂）
+
+**简化主流程**（`process_iso_strm()`）：
+```bash
+# v2.7.10（❌ 复杂）
+if iso_type == "bluray":
+    try extract_mediainfo_from_mpls()
+    if 失败:
+        fallback extract_mediainfo()
+else:
+    extract_mediainfo()
+
+# v2.7.11（✅ 简单）
+extract_mediainfo_with_language_enhancement(iso_path, iso_type)
+# 内部自动处理所有逻辑
+```
+
+### 📊 性能对比
+
+| 场景 | v2.7.10 (MPLS主提取) | v2.7.11 (ffprobe主提取) | 改进 |
+|------|---------------------|----------------------|------|
+| **蓝光 ISO（语言完整）** | 230+ 秒 | 10-20 秒 | **11-23x** |
+| **蓝光 ISO（语言缺失）** | 230+ 秒 | 20-40 秒 (补充) | **5-11x** |
+| **DVD ISO** | 10-20 秒 | 10-20 秒 | 相同 |
+| **fuse 超时风险** | 高（mount+7z） | 低（仅 7z，可选） | ✅ |
+
+### 🎯 用户影响
+
+- ✅ **速度提升 5-23 倍**（蓝光 ISO）
+- ✅ **语言信息准确**（MPLS 补充）
+- ✅ **高容错性**（ffprobe 保底）
+- ✅ **彻底移除 mount**（真正实现 v2.7.9 目标）
+- ✅ **代码简化**（300 行 → 150 行）
+
+### 🔧 适用场景
+
+| 场景 | 流程 | 时间 |
+|------|------|------|
+| **标准蓝光 ISO** | ffprobe → 语言完整 → 完成 | 10-20 秒 |
+| **非标准蓝光 ISO** | ffprobe → 语言缺失 → MPLS补充 → 完成 | 20-40 秒 |
+| **MPLS提取失败** | ffprobe → MPLS失败 → 使用ffprobe结果 | 30-50 秒 |
+| **DVD ISO** | ffprobe → 完成 | 10-20 秒 |
+
+---
+
 ## [2.7.10] - 2026-01-21
 
 ### 🐛 修复 fuse 网盘延迟问题

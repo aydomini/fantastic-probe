@@ -1,7 +1,7 @@
 {
-  "version": "2.7.10",
+  "version": "2.7.11",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.10.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.11.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🐛 修复 fuse 延迟问题：增加等待时间 + ffprobe 重试机制"
+  "changelog": "⚡ 架构优化：ffprobe 主提取 + MPLS 语言补充（速度与准确性兼得）"
 }

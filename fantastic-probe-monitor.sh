@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.10
+# 版本：v2.7.11
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.7.10"
+VERSION="2.7.11"
 
 set -euo pipefail
 
@@ -299,14 +299,14 @@ check_disk_space() {
 }
 
 #==============================================================================
-# 智能检测 ISO 类型（v2.7.10 优化：完全移除 mount，改用智能判断）
+# 智能检测 ISO 类型（v2.7.11 优化：完全移除 mount，改用智能判断）
 #==============================================================================
 
 detect_iso_type() {
     local iso_path="$1"
     local strm_file="${2:-}"  # 可选：.strm 文件路径，用于文件名判断
 
-    # v2.7.10 终极优化：完全移除 mount 检测
+    # v2.7.11 终极优化：完全移除 mount 检测
     #
     # 为什么移除 mount？
     #   - fuse 网盘 mount ISO 需要 2-4 分钟（下载索引数据）
@@ -364,322 +364,172 @@ detect_iso_type() {
 }
 
 #==============================================================================
-# 从 MPLS 提取媒体信息（混合方案：pympls + 限制性 ffprobe）
-# 使用 pympls 直接解析 MPLS 文件获取核心元数据，避免提取 STREAM 目录
-# 使用限制性 ffprobe 获取 HDR 和 disposition 信息（仅读取 ~10MB）
+# 从 MPLS 补充语言信息（轻量级方案）
+# v2.7.11 新增：仅提取语言信息，不提取完整媒体信息
 #==============================================================================
 
-extract_mediainfo_from_mpls() {
+extract_language_from_mpls() {
     local iso_path="$1"
 
-    log_info "  [混合方案] 从 MPLS 提取元数据（pympls + ffprobe）..."
+    log_info "  [语言补充] 尝试从 MPLS 获取语言信息..."
+
+    # 检查 pympls
+    if ! python3 -c "import pympls" 2>/dev/null; then
+        log_warn "  pympls 未安装，跳过语言补充"
+        return 1
+    fi
+
+    # 检查解析脚本
+    local pympls_script="/usr/local/bin/parse_mpls_pympls.py"
+    if [ ! -f "$pympls_script" ]; then
+        log_warn "  parse_mpls_pympls.py 未找到，跳过语言补充"
+        return 1
+    fi
 
     # 创建临时目录
     local temp_dir=$(mktemp -d)
     trap "rm -rf '$temp_dir'" RETURN
 
-    #--------------------------------------------------------------------------
-    # 阶段 1：检查依赖
-    #--------------------------------------------------------------------------
-    log_info "  [阶段1/5] 检查依赖..."
-
-    # 检查 pympls
-    if ! python3 -c "import pympls" 2>/dev/null; then
-        log_error "  ❌ pympls 未安装"
-        log_error "  请运行: pip3 install pympls"
-        log_error "  或重新运行安装脚本: sudo bash fantastic-probe-install.sh"
+    # 7z 快速检测（30 秒超时）
+    if ! timeout 30 7z l "$iso_path" >/dev/null 2>&1; then
+        log_warn "  7z 无法访问 ISO（30秒超时），跳过语言补充"
         return 1
     fi
-    log_debug "    ✅ pympls 已安装"
 
-    # 检查解析脚本
-    local pympls_script="/usr/local/bin/parse_mpls_pympls.py"
-    if [ ! -f "$pympls_script" ]; then
-        log_error "  ❌ 未找到 parse_mpls_pympls.py: $pympls_script"
-        log_error "  请重新运行安装脚本: sudo bash fantastic-probe-install.sh"
+    # 提取 PLAYLIST 目录（轻量级，仅几个 MPLS 文件）
+    log_info "    提取 PLAYLIST 目录（轻量级，约 5-30 秒）..."
+    if ! timeout 60 7z x "$iso_path" "BDMV/PLAYLIST/*" -o"$temp_dir" -y >/dev/null 2>&1; then
+        log_warn "    PLAYLIST 提取失败（60秒超时），跳过语言补充"
         return 1
     fi
-    log_debug "    ✅ 解析脚本就绪"
 
-    # 测试 ISO 可访问性（v2.7.10：添加 timeout，7z 失败时跳过 MPLS 提取）
-    log_debug "    测试 ISO 可访问性（7z 快速检测，30秒超时）..."
-    if timeout 30 7z l "$iso_path" >/dev/null 2>&1; then
-        log_debug "    ✅ ISO 文件可访问（7z 检测通过）"
-    else
-        log_warn "  ⚠️  7z 无法快速访问 ISO（超时或失败）"
-        log_warn "  跳过 MPLS 提取，fallback 到标准 ffprobe"
-        log_warn "  （fuse 网盘可能需要更长时间初始化，ffprobe 可能成功）"
-        return 1  # 返回失败，让主流程 fallback 到 extract_mediainfo()
-    fi
-
-    sleep 2  # 等待 fuse 缓存稳定
-
-    #--------------------------------------------------------------------------
-    # 阶段 2：提取 MPLS 并使用 pympls 解析
-    #--------------------------------------------------------------------------
-    log_info "  [阶段2/5] 使用 pympls 提取核心信息..."
-
-    local extract_start=$(date +%s)
-    local retry_count=0
-    local max_retries=3
-
-    # 提取 PLAYLIST（可能需要 30秒 - 2分钟，取决于 fuse 网盘速度）
-    log_info "    正在从 ISO 提取 PLAYLIST 目录（fuse 网盘可能较慢，请稍候）..."
-    while [ $retry_count -lt $max_retries ]; do
-        # 使用 timeout 限制最长 3 分钟
-        if timeout 180 7z x "$iso_path" "BDMV/PLAYLIST/*" -o"$temp_dir" -y >/dev/null 2>&1; then
-            log_debug "    ✅ PLAYLIST 提取完成"
-            break
-        else
-            retry_count=$((retry_count + 1))
-            if [ $retry_count -lt $max_retries ]; then
-                log_warn "    ⚠️  提取失败（第 $retry_count 次），重试..."
-                sleep 3
-            else
-                log_warn "    ❌ PLAYLIST 提取失败（已超时或出错）"
-                log_warn "    可能原因: fuse 网盘速度慢、7z 超时（>3分钟）、或 ISO 损坏"
-                return 1
-            fi
-        fi
-    done
-
-    local extract_duration=$(($(date +%s) - extract_start))
-    log_info "    PLAYLIST 提取耗时: ${extract_duration}秒"
-
-    # 查找主 MPLS
-    local main_mpls=$(find "$temp_dir/BDMV/PLAYLIST" -type f -name "*.mpls" -o -name "*.MPLS" 2>/dev/null | \
+    # 查找主 MPLS（最大的文件）
+    local main_mpls=$(find "$temp_dir/BDMV/PLAYLIST" -type f \( -name "*.mpls" -o -name "*.MPLS" \) 2>/dev/null | \
         xargs ls -lS 2>/dev/null | head -1 | awk '{print $NF}')
 
     if [ -z "$main_mpls" ] || [ ! -f "$main_mpls" ]; then
-        log_warn "    ❌ 未找到主播放列表"
+        log_warn "    未找到主播放列表，跳过语言补充"
         return 1
     fi
 
-    local mpls_size=$(stat -f%z "$main_mpls" 2>/dev/null || stat -c%s "$main_mpls" 2>/dev/null)
-    log_info "    主播放列表: $(basename "$main_mpls") (${mpls_size} bytes)"
+    log_info "    解析 MPLS: $(basename "$main_mpls")"
 
-    # pympls 解析（应该很快，<1秒）
-    log_info "    解析 MPLS 文件（pympls）..."
-    local pympls_start=$(date +%s)
-    # 使用 timeout 限制最长 30 秒（MPLS 文件很小，解析应该秒级完成）
+    # pympls 解析
     local mpls_json=$(timeout 30 python3 "$pympls_script" "$main_mpls" 2>&1)
-    local pympls_exit=$?
-    local pympls_duration=$(($(date +%s) - pympls_start))
-
-    if [ $pympls_exit -eq 124 ]; then
-        log_warn "    ❌ pympls 解析超时（>30秒）"
-        log_warn "    可能原因: Python 脚本卡住、pympls 库问题、或 MPLS 文件损坏"
-        return 1
-    elif [ $pympls_exit -ne 0 ] || ! echo "$mpls_json" | jq -e '.success' >/dev/null 2>&1; then
-        log_warn "    ❌ pympls 解析失败（退出码: $pympls_exit）"
-        log_debug "    错误: $(echo "$mpls_json" | jq -r '.error // "未知错误"' 2>/dev/null || echo "$mpls_json" | head -3)"
+    if [ $? -ne 0 ] || ! echo "$mpls_json" | jq -e '.success' >/dev/null 2>&1; then
+        log_warn "    pympls 解析失败，跳过语言补充"
         return 1
     fi
 
-    log_info "    ✅ pympls 解析成功（${pympls_duration}秒）"
+    # 提取语言映射（音轨和字幕）
+    local language_map=$(echo "$mpls_json" | jq -c '{
+        audio: [.MediaStreams[] | select(.Type=="Audio") | {Index, Language}],
+        subtitle: [.MediaStreams[] | select(.Type=="Subtitle") | {Index, Language}]
+    }')
 
-    # 提取关键信息用于日志
-    local audio_count=$(echo "$mpls_json" | jq '[.MediaStreams[] | select(.Type=="Audio")] | length' 2>/dev/null || echo "0")
-    local subtitle_count=$(echo "$mpls_json" | jq '[.MediaStreams[] | select(.Type=="Subtitle")] | length' 2>/dev/null || echo "0")
-    local duration_min=$(echo "$mpls_json" | jq -r '.DurationSeconds // 0' 2>/dev/null | awk '{printf "%.1f", $1/60}')
-
-    log_info "    提取信息: ${audio_count}音轨, ${subtitle_count}字幕, 时长${duration_min}分钟"
-
-    #--------------------------------------------------------------------------
-    # 阶段 3：使用限制性 ffprobe 获取 HDR 信息
-    #--------------------------------------------------------------------------
-    log_info "  [阶段3/5] 使用 ffprobe 获取 HDR 信息..."
-
-    local hdr_json="{}"
-    local mount_point="/tmp/bluray_mount_$$"
-    local mount_success=false
-
-    # 创建挂载点
-    mkdir -p "$mount_point" 2>/dev/null
-
-    # 尝试挂载 ISO
-    if mount -o loop,ro "$iso_path" "$mount_point" 2>/dev/null; then
-        mount_success=true
-        log_debug "    ✅ ISO 已挂载到: $mount_point"
-
-        # 确保卸载（即使后续失败）
-        trap "umount '$mount_point' 2>/dev/null; rmdir '$mount_point' 2>/dev/null; rm -rf '$temp_dir'" RETURN
-
-        # 查找主视频文件（最大的 m2ts）
-        local main_m2ts=$(find "$mount_point/BDMV/STREAM" -name "*.m2ts" -type f 2>/dev/null | \
-            xargs ls -lS 2>/dev/null | head -1 | awk '{print $NF}')
-
-        if [ -n "$main_m2ts" ] && [ -f "$main_m2ts" ]; then
-            log_info "    分析视频流: $(basename "$main_m2ts")"
-            log_debug "    使用限制: analyzeduration=5M, probesize=10M"
-
-            local ffprobe_start=$(date +%s)
-
-            # 限制性 ffprobe（只读取前 10MB）
-            hdr_json=$(timeout 30 "$FFPROBE" -analyzeduration 5M -probesize 10M \
-                -v error -print_format json -show_streams \
-                "$main_m2ts" 2>&1 | jq '{
-                    video_stream: (.streams[] | select(.codec_type=="video") | {
-                        color_transfer,
-                        color_primaries,
-                        color_space,
-                        side_data_list,
-                        profile,
-                        level,
-                        bit_rate
-                    }),
-                    audio_streams: [.streams[] | select(.codec_type=="audio") | {
-                        index,
-                        disposition: .disposition
-                    }],
-                    subtitle_streams: [.streams[] | select(.codec_type=="subtitle") | {
-                        index,
-                        disposition: .disposition
-                    }]
-                }' 2>/dev/null)
-
-            local ffprobe_duration=$(($(date +%s) - ffprobe_start))
-
-            if [ -n "$hdr_json" ] && echo "$hdr_json" | jq -e '.video_stream' >/dev/null 2>&1; then
-                # 提取 HDR 类型
-                local color_transfer=$(echo "$hdr_json" | jq -r '.video_stream.color_transfer // "unknown"')
-                local hdr_type="SDR"
-
-                if [ "$color_transfer" = "smpte2084" ]; then
-                    # 检查是否有 Dolby Vision
-                    if echo "$hdr_json" | jq -e '.video_stream.side_data_list[]? | select(.side_data_type=="DOVI configuration record")' >/dev/null 2>&1; then
-                        hdr_type="Dolby Vision"
-                    else
-                        hdr_type="HDR10"
-                    fi
-                elif [ "$color_transfer" = "arib-std-b67" ]; then
-                    hdr_type="HLG"
-                fi
-
-                log_info "    ✅ HDR 检测完成: $hdr_type（${ffprobe_duration}秒）"
-                log_debug "    网盘请求: ~10MB（99.98% 减少）"
-            else
-                log_warn "    ⚠️  ffprobe 解析失败，HDR 信息缺失"
-                hdr_json="{}"
-            fi
-        else
-            log_warn "    ⚠️  未找到视频文件，跳过 HDR 检测"
-        fi
-
-        # 卸载 ISO
-        umount "$mount_point" 2>/dev/null
-        rmdir "$mount_point" 2>/dev/null
-    else
-        log_warn "    ⚠️  无法挂载 ISO（可能需要 root 权限），跳过 HDR 检测"
-        log_debug "    将在后续使用启发式规则推断 HDR 类型"
-    fi
-
-    #--------------------------------------------------------------------------
-    # 阶段 4：转换为 ffprobe 兼容格式
-    #--------------------------------------------------------------------------
-    log_info "  [阶段4/5] 转换元数据格式..."
-
-    # 转换 pympls 输出为 ffprobe 兼容格式（用于后续处理）
-    # pympls 输出的是自定义格式，需要转换为 ffprobe 的 format+streams 格式
-    local converted_json=$(echo "$mpls_json" | jq --argjson hdr "$hdr_json" '{
-        format: {
-            format_name: .Container,
-            duration: (.DurationSeconds | tostring)
-        },
-        streams: [
-            .MediaStreams[] | {
-                codec_type: (.Type | ascii_downcase),
-                codec_name: (
-                    if .Type == "Video" then
-                        (if .Codec == "H.264/AVC" then "h264"
-                         elif .Codec == "H.265/HEVC" then "hevc"
-                         elif .Codec == "MPEG-2" then "mpeg2video"
-                         else (.Codec | ascii_downcase) end)
-                    elif .Type == "Audio" then
-                        (if .Codec == "LPCM" then "pcm_bluray"
-                         elif .Codec == "AC3" then "ac3"
-                         elif .Codec == "DTS" then "dts"
-                         elif .Codec == "TrueHD" then "truehd"
-                         elif .Codec == "DTS-HD MA" then "dts"
-                         else (.Codec | ascii_downcase) end)
-                    elif .Type == "Subtitle" then "hdmv_pgs_subtitle"
-                    else (.Codec | ascii_downcase) end
-                ),
-                index: .Index,
-                width: .Width,
-                height: .Height,
-                r_frame_rate: (if .FrameRate then ((.FrameRate * 1000 | floor | tostring) + "/1000") else null end),
-                channels: .Channels,
-                sample_rate: .SampleRate,
-                tags: {
-                    language: .Language,
-                    title: .Title
-                },
-                disposition: (
-                    if .Type == "Audio" then
-                        ($hdr.audio_streams[.Index].disposition // {default: 0, forced: 0})
-                    elif .Type == "Subtitle" then
-                        ($hdr.subtitle_streams[.Index].disposition // {default: 0, forced: 0})
-                    else
-                        {default: 0, forced: 0}
-                    end
-                )
-            } + (
-                if .Type == "Video" then
-                    {
-                        color_transfer: ($hdr.video_stream.color_transfer // null),
-                        color_primaries: ($hdr.video_stream.color_primaries // null),
-                        color_space: ($hdr.video_stream.color_space // null),
-                        profile: ($hdr.video_stream.profile // null),
-                        level: ($hdr.video_stream.level // null),
-                        bit_rate: ($hdr.video_stream.bit_rate // null),
-                        side_data_list: ($hdr.video_stream.side_data_list // [])
-                    }
-                else {} end
-            )
-        ],
-        chapters: [
-            .Chapters[]? | {
-                id: .Index,
-                start_time: (.StartPositionTicks / 10000000 | tostring),
-                tags: {
-                    title: .Name
-                }
-            }
-        ]
-    }' 2>/dev/null)
-
-    #--------------------------------------------------------------------------
-    # 阶段 5：验证和输出
-    #--------------------------------------------------------------------------
-    log_info "  [阶段5/5] 验证元数据完整性..."
-
-    if [ -z "$converted_json" ] || ! echo "$converted_json" | jq -e . >/dev/null 2>&1; then
-        log_warn "    ⚠️  JSON 转换失败"
-        return 1
-    fi
-
-    # 统计最终结果
-    local video_has_hdr=$(echo "$converted_json" | jq -r '.streams[] | select(.codec_type=="video") | .color_transfer // "null"')
-    if [ "$video_has_hdr" != "null" ] && [ -n "$video_has_hdr" ]; then
-        log_info "    ✅ 完整元数据已提取（含 HDR 信息）"
-    else
-        log_info "    ✅ 核心元数据已提取（无 HDR 信息）"
-    fi
-
-    # 输出最终 JSON（ffprobe 兼容格式）
-    echo "$converted_json"
+    log_info "    ✅ 语言信息提取成功"
+    echo "$language_map"
+    return 0
 }
 
 #==============================================================================
-# 提取媒体信息（v2.7.10 优化：智能回退 + 重试机制）
+# 合并 ffprobe 和 MPLS 语言信息
+# v2.7.11 新增：将 MPLS 的语言信息合并到 ffprobe 结果
+#==============================================================================
+
+merge_language_info() {
+    local ffprobe_json="$1"
+    local language_map="$2"
+
+    # 使用 jq 合并语言信息
+    echo "$ffprobe_json" | jq --argjson langmap "$language_map" '
+        .streams |= map(
+            if .codec_type == "audio" then
+                . + {
+                    tags: (.tags // {} |
+                        .language = ($langmap.audio[.index].Language // .tags.language // "und")
+                    )
+                }
+            elif .codec_type == "subtitle" then
+                . + {
+                    tags: (.tags // {} |
+                        .language = ($langmap.subtitle[.index].Language // .tags.language // "und")
+                    )
+                }
+            else
+                .
+            end
+        )
+    '
+}
+
+#==============================================================================
+# 提取媒体信息（v2.7.11：ffprobe 主提取 + 可选 MPLS 语言补充）
+#==============================================================================
+
+extract_mediainfo_with_language_enhancement() {
+    local iso_path="$1"
+    local iso_type="$2"
+
+    log_info "  [新方案] ffprobe 主提取 + MPLS 语言补充..."
+
+    # 步骤 1：ffprobe 提取全部信息（快速，10-20 秒）
+    log_info "  [步骤1/2] 使用 ffprobe 提取完整媒体信息..."
+    local ffprobe_json
+    ffprobe_json=$(extract_mediainfo "$iso_path" "$iso_type")
+
+    if [ -z "$ffprobe_json" ] || ! echo "$ffprobe_json" | jq -e '.streams' >/dev/null 2>&1; then
+        log_error "  ❌ ffprobe 提取失败"
+        return 1
+    fi
+
+    log_info "  ✅ ffprobe 提取成功"
+
+    # 步骤 2：检查语言信息是否需要补充
+    local lang_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="audio" or .codec_type=="subtitle") | select(.tags.language != "und" and .tags.language != null)] | length')
+    local total_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="audio" or .codec_type=="subtitle")] | length')
+
+    log_debug "  语言信息完整度: $lang_count/$total_count"
+
+    # 如果语言信息不完整，尝试 MPLS 补充
+    if [ "$lang_count" -lt "$total_count" ] && [ "$iso_type" = "bluray" ]; then
+        log_info "  [步骤2/2] 语言信息不完整，尝试 MPLS 补充..."
+
+        local language_map
+        language_map=$(extract_language_from_mpls "$iso_path")
+
+        if [ -n "$language_map" ]; then
+            log_info "  ✅ 正在合并语言信息..."
+            ffprobe_json=$(merge_language_info "$ffprobe_json" "$language_map")
+            log_info "  ✅ 语言信息已补充"
+        else
+            log_warn "  ⚠️  MPLS 语言补充失败，使用 ffprobe 原始结果"
+        fi
+    else
+        log_info "  [步骤2/2] 语言信息完整，跳过 MPLS 补充"
+    fi
+
+    echo "$ffprobe_json"
+    return 0
+}
+
+# v2.7.11 已废弃：此函数太复杂，已被 extract_mediainfo_with_language_enhancement() 替代
+extract_mediainfo_from_mpls() {
+    log_warn "  extract_mediainfo_from_mpls() 已废弃，请使用新方案"
+    return 1
+}
+
+}
+
+#==============================================================================
+# 提取媒体信息（v2.7.11 优化：智能回退 + 重试机制）
 #==============================================================================
 
 extract_mediainfo() {
     local iso_path="$1"
     local iso_type="$2"
 
-    # v2.7.10 优化：智能回退 + 重试机制（应对 fuse 延迟）
+    # v2.7.11 优化：智能回退 + 重试机制（应对 fuse 延迟）
     #   1. 优先使用 detect_iso_type() 返回的类型（从文件名或统计判断）
     #   2. 如果 ffprobe 失败，等待 5 秒后重试一次（应对 fuse 延迟）
     #   3. 重试失败后，尝试另一种协议
@@ -1013,7 +863,7 @@ process_iso_strm() {
     fi
 
     # 等待文件系统稳定（对于 fuse 网盘挂载尤其重要）
-    # v2.7.10: 增加到 10 秒，给 fuse 网盘更多准备时间
+    # v2.7.11: 增加到 10 秒，给 fuse 网盘更多准备时间
     log_info "  等待文件系统稳定（fuse 网盘准备中）..."
     sleep 10
 
@@ -1030,44 +880,20 @@ process_iso_strm() {
 
     log_info "  ISO 路径: $iso_path"
 
-    # 智能检测 ISO 类型（v2.7.10：无需重试，总是成功）
+    # 智能检测 ISO 类型（v2.7.11：无需重试，总是成功）
     log_info "  智能检测 ISO 类型..."
     local iso_type
     iso_type=$(detect_iso_type "$iso_path" "$strm_file")
 
     log_info "  ISO 类型: ${iso_type^^}"
 
-    # 提取媒体信息
+    # 提取媒体信息（v2.7.11 新方案：ffprobe 主提取 + MPLS 语言补充）
     local ffprobe_output
+    log_info "  开始提取媒体信息..."
+    ffprobe_output=$(extract_mediainfo_with_language_enhancement "$iso_path" "$iso_type")
 
-    # 蓝光 ISO：优先尝试 MPLS 提取（更准确的语言信息）
-    if [ "$iso_type" = "bluray" ]; then
-        log_info "  尝试从 MPLS 提取语言信息..."
-        # 直接提取，内部会查找 MPLS（比 7z l 列出文件更可靠，尤其是 fuse 网盘）
-        ffprobe_output=$(extract_mediainfo_from_mpls "$iso_path" 2>/dev/null || true)
-        if [ -n "$ffprobe_output" ] && echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
-            log_success "  ✅ MPLS 提取成功，已获取准确的语言信息"
-        else
-            log_warn "  ⚠️  MPLS 提取失败（查看上方日志了解详情）"
-            log_info "  尝试使用标准 ffprobe 提取（可能无法获取语言信息）..."
-            ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
-
-            # 如果标准 ffprobe 也失败，记录详细错误
-            if [ -z "$ffprobe_output" ] || ! echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
-                log_error "  ❌ 标准 ffprobe 也失败，ISO 可能损坏或不兼容"
-                log_error "  建议：1) 检查 ISO 文件完整性；2) 尝试重新下载 ISO"
-            else
-                log_warn "  ⚠️  已使用标准 ffprobe，但语言信息可能不准确"
-            fi
-        fi
-    else
-        # DVD ISO 或其他类型：直接使用标准 ffprobe
-        log_info "  使用标准 ffprobe 提取（DVD 或其他格式）..."
-        ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
-    fi
-
-    if [ -z "$ffprobe_output" ] || ! echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
-        log_error "ffprobe 提取失败: $iso_path"
+    if [ -z "$ffprobe_output" ] || ! echo "$ffprobe_output" | jq -e '.streams' >/dev/null 2>&1; then
+        log_error "媒体信息提取失败: $iso_path"
         return 1
     fi
 
