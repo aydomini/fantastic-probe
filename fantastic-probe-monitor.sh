@@ -311,14 +311,33 @@ detect_iso_type() {
 
     log_debug "  开始检测 ISO 类型: $iso_path"
 
-    # 列出 ISO 内容（只显示顶层目录）
-    local iso_content
-    iso_content=$(7z l "$iso_path" 2>&1)
-    local exit_code=$?
+    # fuse 网盘优化：重试机制（应对缓存未就绪）
+    local max_retries=3
+    local retry_count=0
+    local iso_content=""
+    local exit_code=1
+
+    while [ $retry_count -lt $max_retries ] && [ $exit_code -ne 0 ]; do
+        if [ $retry_count -gt 0 ]; then
+            log_debug "  等待 fuse 缓存就绪... (尝试 $((retry_count + 1))/$max_retries)"
+            sleep 3
+        fi
+
+        # 列出 ISO 内容（只显示顶层目录）
+        iso_content=$(7z l "$iso_path" 2>&1)
+        exit_code=$?
+
+        retry_count=$((retry_count + 1))
+    done
 
     if [ $exit_code -ne 0 ]; then
         log_error "  ❌ 7z 列出 ISO 内容失败（退出码: $exit_code）"
-        log_debug "  7z 输出: $iso_content"
+        log_error "  7z 错误输出:"
+        echo "$iso_content" | head -10 | while IFS= read -r line; do
+            log_error "    $line"
+        done
+        log_warn "  可能原因: fuse 网盘缓存未就绪、文件被占用、或路径过长"
+        log_warn "  建议: 稍后重试或检查 fuse 挂载状态"
         return 1
     fi
 
@@ -341,7 +360,9 @@ detect_iso_type() {
     # 都不是，返回失败
     log_warn "  ⚠️  未检测到 BDMV 或 VIDEO_TS 目录"
     log_debug "  ISO 内容前 20 行:"
-    log_debug "$(echo "$iso_content" | head -20)"
+    echo "$iso_content" | head -20 | while IFS= read -r line; do
+        log_debug "    $line"
+    done
     return 1
 }
 
