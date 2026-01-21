@@ -373,6 +373,8 @@ extract_language_from_mpls() {
 
     log_info "  [语言补充] 尝试从 MPLS 获取语言信息..."
 
+    # v2.7.13 新方案：mount + pympls（放弃 7z，支持 UDF 格式）
+
     # 检查 pympls
     if ! python3 -c "import pympls" 2>/dev/null; then
         log_warn "  pympls 未安装，跳过语言补充"
@@ -380,94 +382,103 @@ extract_language_from_mpls() {
     fi
     log_debug "    ✅ pympls 已安装"
 
-    # 检查解析脚本
-    local pympls_script="/usr/local/bin/parse_mpls_pympls.py"
-    if [ ! -f "$pympls_script" ]; then
-        log_warn "  parse_mpls_pympls.py 未找到，跳过语言补充"
-        return 1
-    fi
-    log_debug "    ✅ 解析脚本就绪"
+    # 创建临时挂载点
+    local mount_point=$(mktemp -d)
+    trap "umount '$mount_point' 2>/dev/null; rmdir '$mount_point' 2>/dev/null" RETURN
 
-    # 创建临时目录
-    local temp_dir=$(mktemp -d)
-    trap "rm -rf '$temp_dir'" RETURN
-
-    # 7z 快速检测（30 秒超时）
-    log_debug "    测试 ISO 可访问性（7z 快速检测，30秒超时）..."
+    # 挂载 ISO（使用 Linux 原生 mount，支持 UDF）
+    log_debug "    挂载 ISO（mount -o ro,loop）..."
     local start_time=$(date +%s)
-    local z_stderr=$(mktemp)
 
-    if timeout 30 7z l "$iso_path" >/dev/null 2>"$z_stderr"; then
+    if ! mount -o ro,loop "$iso_path" "$mount_point" 2>/dev/null; then
         local duration=$(($(date +%s) - start_time))
-        log_debug "    ✅ 7z 检测通过（耗时 ${duration}秒）"
-    else
-        local duration=$(($(date +%s) - start_time))
-        log_warn "  7z 无法访问 ISO（耗时 ${duration}秒）"
-        if [ -s "$z_stderr" ]; then
-            log_debug "  7z 错误: $(head -2 "$z_stderr")"
-        fi
-        rm -f "$z_stderr"
+        log_warn "  mount 失败（耗时 ${duration}秒），跳过语言补充"
         return 1
     fi
-    rm -f "$z_stderr"
 
-    # 提取 PLAYLIST 目录（轻量级，仅几个 MPLS 文件）
-    log_info "    提取 PLAYLIST 目录（轻量级，60秒超时）..."
-    start_time=$(date +%s)
-    local z_extract_stderr=$(mktemp)
-
-    if timeout 60 7z x "$iso_path" "BDMV/PLAYLIST/*" -o"$temp_dir" -y >/dev/null 2>"$z_extract_stderr"; then
-        local duration=$(($(date +%s) - start_time))
-        log_info "    ✅ PLAYLIST 提取成功（耗时 ${duration}秒）"
-    else
-        local duration=$(($(date +%s) - start_time))
-        log_warn "    PLAYLIST 提取失败（耗时 ${duration}秒）"
-        if [ -s "$z_extract_stderr" ]; then
-            log_debug "    7z 错误: $(head -2 "$z_extract_stderr")"
-        fi
-        rm -f "$z_extract_stderr"
-        return 1
-    fi
-    rm -f "$z_extract_stderr"
+    local duration=$(($(date +%s) - start_time))
+    log_debug "    ✅ mount 成功（耗时 ${duration}秒）"
 
     # 查找主 MPLS（最大的文件）
-    local main_mpls=$(find "$temp_dir/BDMV/PLAYLIST" -type f \( -name "*.mpls" -o -name "*.MPLS" \) 2>/dev/null | \
-        xargs ls -lS 2>/dev/null | head -1 | awk '{print $NF}')
-
-    if [ -z "$main_mpls" ] || [ ! -f "$main_mpls" ]; then
-        log_warn "    未找到主播放列表，跳过语言补充"
-        log_debug "    查找到的文件: $(find "$temp_dir" -type f 2>/dev/null | head -5)"
+    local playlist_dir="$mount_point/BDMV/PLAYLIST"
+    if [ ! -d "$playlist_dir" ]; then
+        log_warn "    未找到 BDMV/PLAYLIST 目录"
         return 1
     fi
 
-    local mpls_size=$(stat -f%z "$main_mpls" 2>/dev/null || stat -c%s "$main_mpls" 2>/dev/null)
+    local main_mpls=$(find "$playlist_dir" -type f \( -name "*.mpls" -o -name "*.MPLS" \) -printf '%s %p\n' 2>/dev/null | \
+        sort -rn | head -1 | cut -d' ' -f2-)
+
+    if [ -z "$main_mpls" ] || [ ! -f "$main_mpls" ]; then
+        log_warn "    未找到 MPLS 文件"
+        return 1
+    fi
+
+    local mpls_size=$(stat -c%s "$main_mpls" 2>/dev/null || stat -f%z "$main_mpls" 2>/dev/null)
     log_info "    解析 MPLS: $(basename "$main_mpls") (${mpls_size} bytes)"
 
-    # pympls 解析
-    local mpls_json=$(timeout 30 python3 "$pympls_script" "$main_mpls" 2>&1)
+    # 使用 pympls 解析（内嵌 Python 代码，无需外部脚本）
+    local language_map=$(python3 <<PYEOF 2>&1
+import sys
+import json
+import pympls
+
+def bytes_to_str(data):
+    """转换 bytes 为字符串"""
+    if isinstance(data, bytes):
+        try:
+            return data.decode('utf-8').strip('\x00')
+        except:
+            return data.decode('latin1', errors='ignore').strip('\x00')
+    return data
+
+try:
+    mpls = pympls.MPLS("$main_mpls")
+
+    play_item = mpls.PlayList['PlayItems'][0]
+    stn_table = play_item['STNTable']
+
+    language_map = {'audio': [], 'subtitle': []}
+
+    # 提取音轨语言
+    for i, audio in enumerate(stn_table.get('PrimaryAudioStreamEntries', [])):
+        attrs = audio.get('StreamAttributes', {})
+        lang = bytes_to_str(attrs.get('LanguageCode', b'und'))
+        language_map['audio'].append({'Index': i, 'Language': lang})
+
+    # 提取字幕语言
+    for i, subtitle in enumerate(stn_table.get('PrimaryPGStreamEntries', [])):
+        attrs = subtitle.get('StreamAttributes', {})
+        lang = bytes_to_str(attrs.get('LanguageCode', b'und'))
+        language_map['subtitle'].append({'Index': i, 'Language': lang})
+
+    print(json.dumps(language_map))
+    sys.exit(0)
+
+except Exception as e:
+    print(json.dumps({'error': str(e)}), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+)
     local pympls_exit=$?
 
     if [ $pympls_exit -ne 0 ]; then
         log_warn "    pympls 解析失败（退出码 $pympls_exit）"
-        log_debug "    pympls 输出: $(echo "$mpls_json" | head -3)"
+        log_debug "    错误: $(echo "$language_map" | head -3)"
         return 1
     fi
 
-    if ! echo "$mpls_json" | jq -e '.success' >/dev/null 2>&1; then
-        log_warn "    pympls 解析失败（JSON 无效）"
-        log_debug "    pympls 输出: $(echo "$mpls_json" | head -3)"
+    # 验证 JSON 格式
+    if ! echo "$language_map" | jq -e '.audio' >/dev/null 2>&1; then
+        log_warn "    语言映射 JSON 无效"
+        log_debug "    输出: $(echo "$language_map" | head -3)"
         return 1
     fi
-
-    # 提取语言映射（音轨和字幕）
-    local language_map=$(echo "$mpls_json" | jq -c '{
-        audio: [.MediaStreams[] | select(.Type=="Audio") | {Index, Language}],
-        subtitle: [.MediaStreams[] | select(.Type=="Subtitle") | {Index, Language}]
-    }')
 
     local audio_count=$(echo "$language_map" | jq '.audio | length')
     local subtitle_count=$(echo "$language_map" | jq '.subtitle | length')
     log_info "    ✅ 语言信息提取成功（${audio_count}音轨, ${subtitle_count}字幕）"
+
     echo "$language_map"
     return 0
 }
