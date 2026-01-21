@@ -76,6 +76,13 @@ if [ -f "/usr/local/bin/fp-config" ]; then
     FILES_REMOVED=$((FILES_REMOVED + 1))
 fi
 
+# 删除 MPLS 解析脚本
+if [ -f "/usr/local/bin/parse_mpls_pympls.py" ]; then
+    rm -f /usr/local/bin/parse_mpls_pympls.py
+    echo "   ✅ MPLS 解析脚本已删除"
+    FILES_REMOVED=$((FILES_REMOVED + 1))
+fi
+
 # 删除兼容性软链接
 if [ -L "/usr/local/bin/fantastic-probe-config" ] || [ -f "/usr/local/bin/fantastic-probe-config" ]; then
     rm -f /usr/local/bin/fantastic-probe-config

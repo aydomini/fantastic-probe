@@ -187,6 +187,23 @@ if ! command -v 7z &> /dev/null; then
     PACKAGES_TO_INSTALL+=($pkg_name)
 fi
 
+# 检查 Python 3（pympls 依赖）
+if ! command -v python3 &> /dev/null; then
+    echo "   需要安装: python3 (pympls MPLS 解析器依赖)"
+    PACKAGES_TO_INSTALL+=("python3")
+fi
+
+# 检查 pip3（用于安装 pympls）
+if ! command -v pip3 &> /dev/null; then
+    if [ "$PKG_MANAGER" = "apt" ]; then
+        echo "   需要安装: python3-pip (用于安装 pympls)"
+        PACKAGES_TO_INSTALL+=("python3-pip")
+    else
+        echo "   需要安装: python3-pip (用于安装 pympls)"
+        PACKAGES_TO_INSTALL+=("python3-pip")
+    fi
+fi
+
 # 安装依赖
 if [ ${#PACKAGES_TO_INSTALL[@]} -gt 0 ]; then
     echo ""
@@ -194,6 +211,30 @@ if [ ${#PACKAGES_TO_INSTALL[@]} -gt 0 ]; then
     echo "   ✅ 依赖安装完成"
 else
     echo "   ✅ 所有依赖已安装"
+fi
+echo ""
+
+# 安装 pympls（Python MPLS 解析库）
+echo "1️⃣.5️⃣  安装 pympls（MPLS 直接解析库）..."
+echo ""
+
+if command -v pip3 &> /dev/null; then
+    echo "   检查 pympls 是否已安装..."
+    if python3 -c "import pympls" 2>/dev/null; then
+        echo "   ✅ pympls 已安装"
+    else
+        echo "   正在安装 pympls..."
+        if pip3 install pympls --quiet; then
+            echo "   ✅ pympls 安装成功"
+        else
+            echo "   ❌ pympls 安装失败"
+            echo "   ⚠️  警告：MPLS 元数据提取可能无法正常工作"
+            echo "   请手动安装: pip3 install pympls"
+        fi
+    fi
+else
+    echo "   ❌ 错误: pip3 未安装，无法安装 pympls"
+    echo "   请先安装: apt-get install -y python3-pip"
 fi
 echo ""
 
@@ -221,6 +262,19 @@ fi
 cp "$MONITOR_SCRIPT" "$TARGET_SCRIPT"
 chmod +x "$TARGET_SCRIPT"
 echo "   ✅ 监控脚本已安装到: $TARGET_SCRIPT"
+
+# 复制 MPLS 解析脚本
+MPLS_PARSER="$SCRIPT_DIR/parse_mpls_pympls.py"
+TARGET_PARSER="/usr/local/bin/parse_mpls_pympls.py"
+
+if [ -f "$MPLS_PARSER" ]; then
+    cp "$MPLS_PARSER" "$TARGET_PARSER"
+    chmod +x "$TARGET_PARSER"
+    echo "   ✅ MPLS 解析脚本已安装到: $TARGET_PARSER"
+else
+    echo "   ⚠️  未找到 MPLS 解析脚本: $MPLS_PARSER"
+    echo "   ⚠️  警告：MPLS 元数据提取可能无法正常工作"
+fi
 
 # 安装自动更新助手
 AUTO_UPDATE_HELPER="$SCRIPT_DIR/auto-update-helper.sh"

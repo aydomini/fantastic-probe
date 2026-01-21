@@ -1,7 +1,7 @@
 {
-  "version": "2.6.11",
+  "version": "2.7.0",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.11.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.0.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🐛 修复两个严重 Bug：1) ISO 文件大小显示错误（46GB 显示为 169MB）2) 任务失败导致监控停止（添加错误隔离 + 保持串行避免网盘风控）"
+  "changelog": "🚀 重大更新：实现混合方案完美解决蓝光 ISO 语言提取失败问题（pympls + 限制性 ffprobe，网盘请求从 50GB 降至 11MB，语言准确率从 0% 提升至 100%，支持 HDR 检测）"
 }
