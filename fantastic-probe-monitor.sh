@@ -305,25 +305,27 @@ check_disk_space() {
 detect_iso_type() {
     local iso_path="$1"
 
-    set +o pipefail
+    # 方案改进：使用 7z 列出 ISO 目录结构（更适合 fuse 网盘）
+    # 原方案：ffprobe bluray: 协议需要读取 STREAM 目录（50GB+），在 fuse 网盘上不可靠
+    # 新方案：7z 只列出目录结构（<1KB），快速且可靠
 
-    if timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v error -print_format json -show_streams \
-        -protocol_whitelist "file,bluray,dvd" \
-        -i "bluray:$iso_path" 2>/dev/null | grep -q '"streams"'; then
-        set -o pipefail
+    # 列出 ISO 内容（只显示顶层目录）
+    local iso_content
+    iso_content=$(7z l "$iso_path" 2>/dev/null || true)
+
+    # 检查是否包含 BDMV 目录（蓝光 ISO）
+    if echo "$iso_content" | grep -q "BDMV"; then
         echo "bluray"
         return 0
     fi
 
-    if timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v error -print_format json -show_streams \
-        -protocol_whitelist "file,bluray,dvd" \
-        -i "dvd:$iso_path" 2>/dev/null | grep -q '"streams"'; then
-        set -o pipefail
+    # 检查是否包含 VIDEO_TS 目录（DVD ISO）
+    if echo "$iso_content" | grep -q "VIDEO_TS"; then
         echo "dvd"
         return 0
     fi
 
-    set -o pipefail
+    # 都不是，返回失败
     return 1
 }
 
