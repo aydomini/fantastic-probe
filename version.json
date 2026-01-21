@@ -1,7 +1,7 @@
 {
-  "version": "2.6.6",
+  "version": "2.6.7",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.6.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.7.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "✨ 启用 7z + ffprobe MPLS 语言提取（基于 v2.5.2 方案）：蓝光 ISO 自动提取准确的音轨/字幕语言信息，移除所有 Python 依赖，完整的托底策略"
+  "changelog": "🐛 Hotfix：修复 MPLS 提取在 fuse 网盘 ISO 上失败的问题，移除不可靠的预检查，直接提取后查找（更稳定）"
 }
