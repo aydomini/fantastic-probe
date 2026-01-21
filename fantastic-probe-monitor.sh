@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：2.6.5 - 稳定版（回滚到 2.5.2 的工作代码）
+# 版本：v2.6.10
 #==============================================================================
 
-# 版本号（用于更新检查）
-VERSION="2.6.5"
+# 版本号（用于更新检查和版本显示）
+VERSION="2.6.10"
 
 set -euo pipefail
 
@@ -195,7 +195,6 @@ validate_config() {
 # 版本检查和自动更新
 #==============================================================================
 
-CURRENT_VERSION="2.6.9"
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
 VERSION_CHECK_CACHE="/var/cache/fantastic-probe-last-check"
 VERSION_CHECK_INTERVAL=86400  # 24小时检查一次
@@ -239,8 +238,8 @@ check_for_updates() {
         local latest_version
         latest_version=$(echo "$version_info" | jq -r '.version' 2>/dev/null || echo "")
 
-        if [ -n "$latest_version" ] && [ "$latest_version" != "$CURRENT_VERSION" ]; then
-            log_warn "检测到新版本: $latest_version（当前: $CURRENT_VERSION）"
+        if [ -n "$latest_version" ] && [ "$latest_version" != "$VERSION" ]; then
+            log_warn "检测到新版本: $latest_version（当前: $VERSION）"
             log_info "运行以下命令更新:"
             log_info "  sudo bash /usr/local/bin/fantastic-probe-update"
             log_info "  或: curl -fsSL https://raw.githubusercontent.com/aydomini/fantastic-probe/main/update.sh | sudo bash"
@@ -1067,7 +1066,7 @@ main() {
 
     log_info "=========================================="
     log_info "ISO 媒体信息提取服务启动（实时监控模式）"
-    log_info "版本: $CURRENT_VERSION"
+    log_info "版本: $VERSION"
     log_info "=========================================="
 
     # 检查锁文件

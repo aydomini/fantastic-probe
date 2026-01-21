@@ -1,7 +1,7 @@
 {
-  "version": "2.6.9",
+  "version": "2.6.10",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.9.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.10.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🐛 修复 ISO 类型检测在 fuse 网盘上频繁失败：移除 stat 循环 + 添加重试机制，提高网盘环境下的成功率"
+  "changelog": "🐛 修复 fp-config 版本显示错误：统一版本变量，现在能正确显示当前安装的版本号"
 }
