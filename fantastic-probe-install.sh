@@ -218,23 +218,36 @@ echo ""
 echo "1️⃣.5️⃣  安装 pympls（MPLS 直接解析库）..."
 echo ""
 
-if command -v pip3 &> /dev/null; then
-    echo "   检查 pympls 是否已安装..."
-    if python3 -c "import pympls" 2>/dev/null; then
-        echo "   ✅ pympls 已安装"
-    else
-        echo "   正在安装 pympls..."
-        if pip3 install pympls --quiet; then
-            echo "   ✅ pympls 安装成功"
-        else
-            echo "   ❌ pympls 安装失败"
-            echo "   ⚠️  警告：MPLS 元数据提取可能无法正常工作"
-            echo "   请手动安装: pip3 install pympls"
-        fi
-    fi
+# 检查 pympls 是否已安装
+echo "   检查 pympls 是否已安装..."
+if python3 -c "import pympls" 2>/dev/null; then
+    echo "   ✅ pympls 已安装"
 else
-    echo "   ❌ 错误: pip3 未安装，无法安装 pympls"
-    echo "   请先安装: apt-get install -y python3-pip"
+    echo "   正在安装 pympls..."
+
+    # 优先使用 python3 -m pip（更可靠，不依赖 pip3 命令）
+    if python3 -m pip install pympls --quiet 2>/dev/null; then
+        echo "   ✅ pympls 安装成功（使用 python3 -m pip）"
+    # 回退：尝试使用 pip3 命令
+    elif command -v pip3 &> /dev/null && pip3 install pympls --quiet 2>/dev/null; then
+        echo "   ✅ pympls 安装成功（使用 pip3）"
+    # 回退：尝试使用 pip 命令
+    elif command -v pip &> /dev/null && pip install pympls --quiet 2>/dev/null; then
+        echo "   ✅ pympls 安装成功（使用 pip）"
+    else
+        echo "   ❌ pympls 安装失败"
+        echo "   ⚠️  警告：MPLS 元数据提取可能无法正常工作"
+        echo ""
+        echo "   请尝试手动安装："
+        echo "   方法1: python3 -m pip install pympls"
+        echo "   方法2: pip3 install pympls"
+        echo "   方法3: sudo apt-get install -y python3-pip && pip3 install pympls"
+        echo ""
+        echo "   如果仍然失败，请检查："
+        echo "   - 是否有网络连接"
+        echo "   - 是否有足够的磁盘空间"
+        echo "   - pip 配置是否正确"
+    fi
 fi
 echo ""
 

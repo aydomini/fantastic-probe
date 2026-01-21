@@ -7,6 +7,45 @@
 
 ---
 
+## [2.7.4] - 2026-01-21
+
+### 🔧 修复
+
+- **修复安装脚本中 pympls 自动安装失败的问题**
+  - 问题：安装 `python3-pip` 后，`pip3` 命令可能还没在当前 shell 中生效
+  - 影响：导致 pympls 安装被跳过，用户需要手动安装
+  - 解决方案：改用多层级回退策略
+    1. 优先使用 `python3 -m pip install pympls`（不依赖 pip3 命令路径）
+    2. 回退到 `pip3 install pympls`
+    3. 回退到 `pip install pympls`
+  - 效果：确保 pympls 在任何情况下都能自动安装成功
+
+### 📋 技术细节
+
+**问题根源**：
+```bash
+# 旧逻辑（有问题）
+apt-get install python3-pip  # 安装 pip
+if command -v pip3; then     # 检查 pip3 命令
+    pip3 install pympls      # 可能找不到 pip3
+fi
+```
+
+**新逻辑（已修复）**：
+```bash
+# 新逻辑（健壮）
+python3 -m pip install pympls  # 不依赖 pip3 命令，直接调用 Python 模块
+# 或回退到 pip3/pip
+```
+
+### 🎯 用户影响
+
+- ✅ 使用 config 面板更新时，pympls 会自动安装
+- ✅ 使用 `install.sh` 或 `update.sh` 时，pympls 会自动安装
+- ✅ 无需手动执行 `pip3 install pympls`
+
+---
+
 ## [2.7.3] - 2026-01-21
 
 ### 🐛 修复
