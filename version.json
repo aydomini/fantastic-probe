@@ -1,7 +1,7 @@
 {
-  "version": "2.7.5",
+  "version": "2.7.6",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.5.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.6.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "⚡ 性能优化：ISO 检测添加超时机制，避免 fuse 网盘 mount 卡住"
+  "changelog": "⚡ 适配 fuse 60 秒缓存：mount 超时调整为 70 秒，首次即可成功"
 }

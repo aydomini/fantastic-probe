@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.5
+# 版本：v2.7.6
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.7.5"
+VERSION="2.7.6"
 
 set -euo pipefail
 
@@ -307,10 +307,10 @@ detect_iso_type() {
 
     # 方案改进：mount ISO 后直接检查目录结构（最可靠的 fuse 网盘方案）
     # v2.7.1 方案：7z 列出目录结构 → 在 fuse 网盘上失败（7z 需要随机访问）
-    # v2.7.5 方案：mount ISO + 超时控制 → 避免 fuse 网盘 mount 卡住
+    # v2.7.6 方案：mount ISO + 70 秒超时 → 适配 fuse 60 秒缓存机制
     # 优势：
     #   - mount 是内核级操作，比 7z 更可靠
-    #   - 添加 30 秒超时，避免无限等待
+    #   - 70 秒超时适配 fuse 60 秒缓存（用户反馈）
     #   - 直接用 test -d 检查目录，不需要读取 ISO 内容
     #   - v2.7.0 已验证 mount 可在 fuse 网盘上工作（用于 HDR 检测）
 
@@ -321,23 +321,23 @@ detect_iso_type() {
     local mount_point="/tmp/iso_detect_mount_$$"
     mkdir -p "$mount_point" 2>/dev/null
 
-    # fuse 网盘优化：重试机制（应对缓存未就绪）
-    local max_retries=3  # 减少到 3 次（配合超时机制）
+    # fuse 网盘优化：适配 60 秒缓存机制
+    local max_retries=2  # 减少到 2 次（70 秒超时通常首次就能成功）
     local retry_count=0
     local mount_success=false
     local iso_type=""
 
     while [ $retry_count -lt $max_retries ] && [ "$mount_success" = false ]; do
         if [ $retry_count -gt 0 ]; then
-            log_info "  等待 fuse 缓存就绪... (尝试 $((retry_count + 1))/$max_retries)"
-            sleep 5  # 减少等待时间到 5 秒
+            log_info "  fuse 缓存未就绪，等待后重试... (尝试 $((retry_count + 1))/$max_retries)"
+            sleep 10  # 第二次尝试前等待 10 秒
         fi
 
-        log_debug "  尝试挂载 ISO（超时 30 秒）..."
+        log_info "  尝试挂载 ISO（超时 70 秒，适配 fuse 60 秒缓存）..."
         local mount_start=$(date +%s)
 
-        # 使用 timeout 限制 mount 命令最长 30 秒
-        if timeout 30 mount -o loop,ro "$iso_path" "$mount_point" 2>/dev/null; then
+        # 使用 timeout 限制 mount 命令最长 70 秒（适配 fuse 60 秒缓存 + 10 秒余量）
+        if timeout 70 mount -o loop,ro "$iso_path" "$mount_point" 2>/dev/null; then
             local mount_duration=$(($(date +%s) - mount_start))
             mount_success=true
             log_info "  ✅ ISO 已挂载（耗时 ${mount_duration} 秒）"
@@ -363,7 +363,8 @@ detect_iso_type() {
         else
             local mount_exit=$?
             if [ $mount_exit -eq 124 ]; then
-                log_warn "  ⚠️  mount 超时（>30秒，尝试 $((retry_count + 1))/$max_retries）"
+                log_warn "  ⚠️  mount 超时（>70秒，尝试 $((retry_count + 1))/$max_retries）"
+                log_warn "  可能原因：fuse 缓存准备时间超过 70 秒，或网盘速度极慢"
             else
                 log_debug "  ⚠️  mount 失败（退出码: $mount_exit，尝试 $((retry_count + 1))/$max_retries）"
             fi
@@ -383,7 +384,7 @@ detect_iso_type() {
 
     if [ "$mount_success" = false ]; then
         log_error "  ❌ mount ISO 失败（已重试 $max_retries 次）"
-        log_warn "  可能原因: fuse 网盘缓存未就绪、mount 超时、文件损坏、或权限不足"
+        log_warn "  可能原因: fuse 网盘缓存准备超时（>70秒）、文件损坏、或权限不足"
         log_warn "  建议: 稍后重试或检查 fuse 挂载状态"
     fi
 
