@@ -7,7 +7,7 @@
 set -e
 
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
-CURRENT_VERSION="2.7.4"
+CURRENT_VERSION="2.7.5"
 INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh"
 
 #==============================================================================

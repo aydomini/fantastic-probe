@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.4
+# 版本：v2.7.5
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.7.4"
+VERSION="2.7.5"
 
 set -euo pipefail
 
@@ -307,34 +307,40 @@ detect_iso_type() {
 
     # 方案改进：mount ISO 后直接检查目录结构（最可靠的 fuse 网盘方案）
     # v2.7.1 方案：7z 列出目录结构 → 在 fuse 网盘上失败（7z 需要随机访问）
-    # v2.7.4 方案：mount ISO → 直接检查目录 → fuse 对 mount 支持更好
+    # v2.7.5 方案：mount ISO + 超时控制 → 避免 fuse 网盘 mount 卡住
     # 优势：
     #   - mount 是内核级操作，比 7z 更可靠
+    #   - 添加 30 秒超时，避免无限等待
     #   - 直接用 test -d 检查目录，不需要读取 ISO 内容
     #   - v2.7.0 已验证 mount 可在 fuse 网盘上工作（用于 HDR 检测）
 
-    log_debug "  开始检测 ISO 类型: $iso_path"
+    log_info "  开始检测 ISO 类型..."
+    log_debug "  ISO 路径: $iso_path"
 
     # 创建临时挂载点
     local mount_point="/tmp/iso_detect_mount_$$"
     mkdir -p "$mount_point" 2>/dev/null
 
     # fuse 网盘优化：重试机制（应对缓存未就绪）
-    local max_retries=5
+    local max_retries=3  # 减少到 3 次（配合超时机制）
     local retry_count=0
     local mount_success=false
     local iso_type=""
 
     while [ $retry_count -lt $max_retries ] && [ "$mount_success" = false ]; do
         if [ $retry_count -gt 0 ]; then
-            log_debug "  等待 fuse 缓存就绪... (尝试 $((retry_count + 1))/$max_retries)"
-            sleep 10
+            log_info "  等待 fuse 缓存就绪... (尝试 $((retry_count + 1))/$max_retries)"
+            sleep 5  # 减少等待时间到 5 秒
         fi
 
-        # 尝试挂载 ISO（只读）
-        if mount -o loop,ro "$iso_path" "$mount_point" 2>/dev/null; then
+        log_debug "  尝试挂载 ISO（超时 30 秒）..."
+        local mount_start=$(date +%s)
+
+        # 使用 timeout 限制 mount 命令最长 30 秒
+        if timeout 30 mount -o loop,ro "$iso_path" "$mount_point" 2>/dev/null; then
+            local mount_duration=$(($(date +%s) - mount_start))
             mount_success=true
-            log_debug "  ✅ ISO 已挂载到: $mount_point"
+            log_info "  ✅ ISO 已挂载（耗时 ${mount_duration} 秒）"
 
             # 检查是否包含 BDMV 目录（蓝光 ISO）
             if [ -d "$mount_point/BDMV" ]; then
@@ -355,7 +361,12 @@ detect_iso_type() {
             # 卸载 ISO
             umount "$mount_point" 2>/dev/null
         else
-            log_debug "  ⚠️  mount 失败（尝试 $((retry_count + 1))/$max_retries）"
+            local mount_exit=$?
+            if [ $mount_exit -eq 124 ]; then
+                log_warn "  ⚠️  mount 超时（>30秒，尝试 $((retry_count + 1))/$max_retries）"
+            else
+                log_debug "  ⚠️  mount 失败（退出码: $mount_exit，尝试 $((retry_count + 1))/$max_retries）"
+            fi
         fi
 
         retry_count=$((retry_count + 1))
@@ -372,7 +383,7 @@ detect_iso_type() {
 
     if [ "$mount_success" = false ]; then
         log_error "  ❌ mount ISO 失败（已重试 $max_retries 次）"
-        log_warn "  可能原因: fuse 网盘缓存未就绪、文件损坏、或权限不足"
+        log_warn "  可能原因: fuse 网盘缓存未就绪、mount 超时、文件损坏、或权限不足"
         log_warn "  建议: 稍后重试或检查 fuse 挂载状态"
     fi
 
@@ -436,9 +447,11 @@ extract_mediainfo_from_mpls() {
     local retry_count=0
     local max_retries=3
 
-    # 提取 PLAYLIST
+    # 提取 PLAYLIST（可能需要 30秒 - 2分钟，取决于 fuse 网盘速度）
+    log_info "    正在从 ISO 提取 PLAYLIST 目录（fuse 网盘可能较慢，请稍候）..."
     while [ $retry_count -lt $max_retries ]; do
-        if 7z x "$iso_path" "BDMV/PLAYLIST/*" -o"$temp_dir" -y >/dev/null 2>&1; then
+        # 使用 timeout 限制最长 3 分钟
+        if timeout 180 7z x "$iso_path" "BDMV/PLAYLIST/*" -o"$temp_dir" -y >/dev/null 2>&1; then
             log_debug "    ✅ PLAYLIST 提取完成"
             break
         else
@@ -447,14 +460,15 @@ extract_mediainfo_from_mpls() {
                 log_warn "    ⚠️  提取失败（第 $retry_count 次），重试..."
                 sleep 3
             else
-                log_warn "    ❌ PLAYLIST 提取失败"
+                log_warn "    ❌ PLAYLIST 提取失败（已超时或出错）"
+                log_warn "    可能原因: fuse 网盘速度慢、7z 超时（>3分钟）、或 ISO 损坏"
                 return 1
             fi
         fi
     done
 
     local extract_duration=$(($(date +%s) - extract_start))
-    log_debug "    耗时: ${extract_duration}秒"
+    log_info "    PLAYLIST 提取耗时: ${extract_duration}秒"
 
     # 查找主 MPLS
     local main_mpls=$(find "$temp_dir/BDMV/PLAYLIST" -type f -name "*.mpls" -o -name "*.MPLS" 2>/dev/null | \
@@ -468,16 +482,21 @@ extract_mediainfo_from_mpls() {
     local mpls_size=$(stat -f%z "$main_mpls" 2>/dev/null || stat -c%s "$main_mpls" 2>/dev/null)
     log_info "    主播放列表: $(basename "$main_mpls") (${mpls_size} bytes)"
 
-    # pympls 解析
+    # pympls 解析（应该很快，<1秒）
     log_info "    解析 MPLS 文件（pympls）..."
     local pympls_start=$(date +%s)
-    local mpls_json=$(python3 "$pympls_script" "$main_mpls" 2>&1)
+    # 使用 timeout 限制最长 30 秒（MPLS 文件很小，解析应该秒级完成）
+    local mpls_json=$(timeout 30 python3 "$pympls_script" "$main_mpls" 2>&1)
     local pympls_exit=$?
     local pympls_duration=$(($(date +%s) - pympls_start))
 
-    if [ $pympls_exit -ne 0 ] || ! echo "$mpls_json" | jq -e '.success' >/dev/null 2>&1; then
-        log_warn "    ❌ pympls 解析失败"
-        log_debug "    错误: $(echo "$mpls_json" | jq -r '.error // "未知错误"' 2>/dev/null)"
+    if [ $pympls_exit -eq 124 ]; then
+        log_warn "    ❌ pympls 解析超时（>30秒）"
+        log_warn "    可能原因: Python 脚本卡住、pympls 库问题、或 MPLS 文件损坏"
+        return 1
+    elif [ $pympls_exit -ne 0 ] || ! echo "$mpls_json" | jq -e '.success' >/dev/null 2>&1; then
+        log_warn "    ❌ pympls 解析失败（退出码: $pympls_exit）"
+        log_debug "    错误: $(echo "$mpls_json" | jq -r '.error // "未知错误"' 2>/dev/null || echo "$mpls_json" | head -3)"
         return 1
     fi
 
