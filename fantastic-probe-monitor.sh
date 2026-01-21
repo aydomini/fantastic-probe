@@ -195,7 +195,7 @@ validate_config() {
 # 版本检查和自动更新
 #==============================================================================
 
-CURRENT_VERSION="2.6.8"
+CURRENT_VERSION="2.6.9"
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
 VERSION_CHECK_CACHE="/var/cache/fantastic-probe-last-check"
 VERSION_CHECK_INTERVAL=86400  # 24小时检查一次
@@ -706,24 +706,10 @@ process_iso_strm() {
         return 1
     fi
 
-    # 等待 ISO 文件写入完成（文件大小稳定）
-    if [ -f "$iso_path" ]; then
-        local prev_size=0
-        local curr_size=$(stat -c%s "$iso_path" 2>/dev/null || echo "0")
-        local stable_count=0
-
-        while [ $stable_count -lt 3 ]; do
-            sleep 1
-            prev_size=$curr_size
-            curr_size=$(stat -c%s "$iso_path" 2>/dev/null || echo "0")
-
-            if [ "$prev_size" -eq "$curr_size" ]; then
-                ((stable_count++))
-            else
-                stable_count=0
-            fi
-        done
-    fi
+    # 等待文件系统稳定（对于 fuse 网盘挂载尤其重要）
+    # 注意：不使用 stat 循环检查，避免触发 fuse 缓存问题
+    log_info "  等待文件系统稳定..."
+    sleep 3
 
     # 检查 ISO 文件
     if [ ! -f "$iso_path" ]; then
@@ -738,14 +724,26 @@ process_iso_strm() {
 
     log_info "  ISO 路径: $iso_path"
 
-    # 检测 ISO 类型
-    local iso_type
-    iso_type=$(detect_iso_type "$iso_path")
+    # 检测 ISO 类型（带重试机制，应对 fuse 网盘的暂时性错误）
+    local iso_type=""
+    local detect_retry=0
+    local max_detect_retries=3
 
-    if [ -z "$iso_type" ]; then
-        log_error "无法检测 ISO 类型: $iso_path"
-        return 1
-    fi
+    while [ $detect_retry -lt $max_detect_retries ] && [ -z "$iso_type" ]; do
+        iso_type=$(detect_iso_type "$iso_path" 2>&1 || true)
+
+        if [ -z "$iso_type" ]; then
+            detect_retry=$((detect_retry + 1))
+            if [ $detect_retry -lt $max_detect_retries ]; then
+                log_warn "  ⚠️  ISO 类型检测失败（第 $detect_retry 次），等待 5 秒后重试..."
+                sleep 5
+            else
+                log_error "无法检测 ISO 类型（已重试 $max_detect_retries 次）: $iso_path"
+                log_error "可能原因：文件损坏、网盘挂载不稳定、或 ffprobe 不支持此格式"
+                return 1
+            fi
+        fi
+    done
 
     log_info "  ISO 类型: ${iso_type^^}"
 

@@ -1,7 +1,7 @@
 {
-  "version": "2.6.8",
+  "version": "2.6.9",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.8.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.6.9.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🐛 Critical Fix：修复监控停止严重 Bug + fuse 网盘 MPLS 提取失败问题，服务稳定性大幅提升"
+  "changelog": "🐛 修复 ISO 类型检测在 fuse 网盘上频繁失败：移除 stat 循环 + 添加重试机制，提高网盘环境下的成功率"
 }
