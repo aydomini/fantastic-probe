@@ -7,6 +7,72 @@
 
 ---
 
+## [2.7.7] - 2026-01-21
+
+### 🐛 核心修复
+
+**1. mount 超时增至 120 秒（适配更慢 fuse 网盘）**
+- **用户反馈**：v2.7.6 的 70 秒超时在用户环境中依旧失败（2 次重试均超时）
+- **根本原因**：部分 fuse 网盘（如 Alist、Rclone）在慢速网络下需要 > 70 秒初始化
+- **解决方案**：
+  - mount 超时：70 秒 → **120 秒**（适配更慢的 fuse 网盘）
+  - 等待时间：10 秒 → **15 秒**（第二次重试前）
+  - 重试次数：2 次（不变）
+- **效果**：
+  - 首次成功概率大幅提升（120 秒涵盖慢速场景）
+  - 最多等待：2 × (120秒 + 15秒) = 270 秒
+
+**2. fallback ffprobe 智能猜测类型（修复"拖底"失败）**
+- **用户问题**："为什么失败后不能使用老方案 ffprobe 进行拖底？"
+- **根本原因**：当 `detect_iso_type()` 失败返回空 `$iso_type` 时，`extract_mediainfo()` 构造了无效命令：
+  ```bash
+  ffprobe -i ":${iso_path}"  # ❌ 缺少协议前缀！
+  ```
+  导致 "JSON 转换失败" 错误
+- **解决方案**：在 `extract_mediainfo()` 中添加智能猜测逻辑：
+  ```bash
+  if [ -z "$iso_type" ]; then
+      # 优先尝试 bluray 协议（更常见）
+      timeout "$FFPROBE_TIMEOUT" "$FFPROBE" ... -i "bluray:${iso_path}" && return 0
+      # 回退到 dvd 协议
+      timeout "$FFPROBE_TIMEOUT" "$FFPROBE" ... -i "dvd:${iso_path}" && return 0
+  fi
+  ```
+- **效果**：
+  - ✅ mount 检测失败时，ffprobe 能够自动尝试 bluray 和 dvd 协议
+  - ✅ 大幅提升 fallback 成功率（从"必定失败"变为"智能猜测"）
+  - ✅ 符合用户预期的"拖底"行为
+
+### 📋 技术细节
+
+**detect_iso_type() 超时演变**：
+```bash
+v2.7.3: mount（无超时）        # ❌ 可能无限挂起
+v2.7.5: timeout 30 mount       # ❌ 小于 fuse 60 秒缓存
+v2.7.6: timeout 70 mount       # ⚠️  某些慢速网盘仍不够
+v2.7.7: timeout 120 mount      # ✅ 涵盖慢速 fuse 场景
+```
+
+**extract_mediainfo() fallback 修复**：
+```bash
+# v2.7.6（❌ 错误）
+ffprobe -i ":${iso_path}"      # $iso_type 为空时生成无效命令
+
+# v2.7.7（✅ 正确）
+if [ -z "$iso_type" ]; then
+    # 智能猜测：先 bluray，后 dvd
+    ffprobe -i "bluray:${iso_path}" || ffprobe -i "dvd:${iso_path}"
+fi
+```
+
+### 🎯 用户影响
+
+- ✅ **慢速 fuse 网盘适配**：120 秒超时涵盖更多场景
+- ✅ **fallback 机制真正可用**：mount 失败时 ffprobe 能够智能猜测协议
+- ✅ **提升整体成功率**：双重保险（mount + ffprobe fallback）
+
+---
+
 ## [2.7.6] - 2026-01-21
 
 ### ⚡ 性能优化

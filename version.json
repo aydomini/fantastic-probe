@@ -1,7 +1,7 @@
 {
-  "version": "2.7.6",
+  "version": "2.7.7",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.6.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.7.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "⚡ 适配 fuse 60 秒缓存：mount 超时调整为 70 秒，首次即可成功"
+  "changelog": "🐛 修复：mount 超时增至 120 秒 + fallback ffprobe 智能猜测类型"
 }
