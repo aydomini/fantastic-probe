@@ -195,7 +195,7 @@ validate_config() {
 # 版本检查和自动更新
 #==============================================================================
 
-CURRENT_VERSION="2.6.7"
+CURRENT_VERSION="2.6.8"
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
 VERSION_CHECK_CACHE="/var/cache/fantastic-probe-last-check"
 VERSION_CHECK_INTERVAL=86400  # 24小时检查一次
@@ -348,17 +348,38 @@ extract_mediainfo_from_mpls() {
     fi
     log_info "  ✅ ISO 文件可正常访问"
 
+    # 等待 fuse 缓存稳定（避免 "file size changed" 错误）
+    log_info "  等待网盘缓存稳定..."
+    sleep 2
+
     # 提取 BDMV 目录结构（只提取 PLAYLIST 和 CLIPINF，不提取大的 STREAM）
     # PLAYLIST: 播放列表，包含语言信息（几百KB）
     # CLIPINF: 剪辑信息，MPLS 需要引用（几百KB）
     log_info "  提取 BDMV 目录结构（PLAYLIST + CLIPINF）..."
 
     if command -v 7z &>/dev/null; then
-        # 使用 7z 提取指定目录
-        if 7z x "$iso_path" "BDMV/PLAYLIST/*" "BDMV/CLIPINF/*" -o"$temp_dir" -y >/dev/null 2>&1; then
-            log_info "  ✅ BDMV 结构提取完成"
-        else
-            log_warn "  ⚠️  提取 BDMV 结构失败（可能是网络不稳定或 ISO 格式问题）"
+        # 带重试的提取逻辑（应对 fuse 网盘的暂时性错误）
+        local retry_count=0
+        local max_retries=3
+        local extract_success=false
+
+        while [ $retry_count -lt $max_retries ]; do
+            if 7z x "$iso_path" "BDMV/PLAYLIST/*" "BDMV/CLIPINF/*" -o"$temp_dir" -y >/dev/null 2>&1; then
+                log_info "  ✅ BDMV 结构提取完成"
+                extract_success=true
+                break
+            else
+                retry_count=$((retry_count + 1))
+                if [ $retry_count -lt $max_retries ]; then
+                    log_warn "  ⚠️  提取失败（第 $retry_count 次），等待 3 秒后重试..."
+                    sleep 3
+                else
+                    log_warn "  ⚠️  提取失败（已重试 $max_retries 次，可能是网络不稳定或 ISO 格式问题）"
+                fi
+            fi
+        done
+
+        if [ "$extract_success" != "true" ]; then
             return 1
         fi
     else
@@ -717,18 +738,6 @@ process_iso_strm() {
 
     log_info "  ISO 路径: $iso_path"
 
-    # 获取 ISO 文件大小（字节）
-    local iso_size=$(stat -c%s "$iso_path" 2>/dev/null || stat -f%z "$iso_path" 2>/dev/null || echo "0")
-    local iso_size_mb=$(awk -v size="$iso_size" 'BEGIN {printf "%.2f", size/1024/1024}')
-    local iso_size_gb=$(awk -v size="$iso_size" 'BEGIN {printf "%.2f", size/1024/1024/1024}')
-
-    # 判断是否 >= 1 GB（使用 awk 比较浮点数）
-    if awk -v gb="$iso_size_gb" 'BEGIN {exit (gb >= 1) ? 0 : 1}'; then
-        log_info "  ISO 大小: ${iso_size_gb} GB (${iso_size} bytes)"
-    else
-        log_info "  ISO 大小: ${iso_size_mb} MB (${iso_size} bytes)"
-    fi
-
     # 检测 ISO 类型
     local iso_type
     iso_type=$(detect_iso_type "$iso_path")
@@ -761,6 +770,18 @@ process_iso_strm() {
     if [ -z "$ffprobe_output" ] || ! echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
         log_error "ffprobe 提取失败: $iso_path"
         return 1
+    fi
+
+    # 从 ffprobe 输出中获取文件大小（避免 stat 触发 fuse 问题）
+    local iso_size=$(echo "$ffprobe_output" | jq -r '.format.size // "0"')
+    local iso_size_mb=$(awk -v size="$iso_size" 'BEGIN {printf "%.2f", size/1024/1024}')
+    local iso_size_gb=$(awk -v size="$iso_size" 'BEGIN {printf "%.2f", size/1024/1024/1024}')
+
+    # 显示文件大小（仅用于日志）
+    if [ "$iso_size" != "0" ] && awk -v gb="$iso_size_gb" 'BEGIN {exit (gb >= 1) ? 0 : 1}'; then
+        log_info "  ISO 大小: ${iso_size_gb} GB (${iso_size} bytes)"
+    elif [ "$iso_size" != "0" ]; then
+        log_info "  ISO 大小: ${iso_size_mb} MB (${iso_size} bytes)"
     fi
 
     # 转换为 Emby 格式（传递 ISO 文件大小）
@@ -1110,14 +1131,30 @@ main() {
     log_info "开始实时监控文件系统事件..."
     log_info "=========================================="
 
-    # 使用 inotifywait 监控目录
-    # -m: 持续监控模式
-    # -r: 递归监控子目录
-    # -e: 监控的事件类型（create, moved_to）
-    # --format: 输出格式（只输出文件路径）
-    inotifywait -m -r -e create -e moved_to --format '%w%f' "$STRM_ROOT" 2>/dev/null | \
-    while read -r event_file; do
-        handle_file_event "$event_file"  # 不再使用 &，直接同步执行
+    # 监控循环（带自动重启机制）
+    while true; do
+        log_info "启动 inotifywait 监控..."
+
+        # 临时禁用 errexit，防止监控循环因单个错误退出
+        set +e
+
+        # 使用 inotifywait 监控目录
+        # -m: 持续监控模式
+        # -r: 递归监控子目录
+        # -e: 监控的事件类型（create, moved_to）
+        # --format: 输出格式（只输出文件路径）
+        inotifywait -m -r -e create -e moved_to --format '%w%f' "$STRM_ROOT" 2>/dev/null | \
+        while read -r event_file; do
+            # 确保单个文件事件处理失败不会中断监控
+            handle_file_event "$event_file" || log_warn "处理文件事件失败: $event_file"
+        done
+
+        # 恢复 errexit
+        set -e
+
+        # 如果 inotifywait 意外退出，等待后重启
+        log_error "⚠️  inotifywait 监控意外退出，5秒后自动重启..."
+        sleep 5
     done
 }
 
