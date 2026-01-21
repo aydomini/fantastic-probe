@@ -7,6 +7,124 @@
 
 ---
 
+## [2.7.10] - 2026-01-21
+
+### 🐛 修复 fuse 网盘延迟问题
+
+**用户反馈**：
+```
+[23:28:52] ℹ️  智能检测 ISO 类型...
+[23:28:52] ℹ️  ✅ 文件名识别: 蓝光 ISO
+[23:29:01] ❌ ERROR: ISO 无法访问 (等了 9 秒)
+[23:29:03] ❌ ERROR: bluray 和 dvd 协议均失败 (2 秒)
+```
+
+- **问题分析**：
+  - v2.7.9 虽然移除了 mount，但 7z 和 ffprobe 仍然会失败
+  - 原因：fuse 网盘（115/Alist）需要 10-30 秒初始化文件访问
+  - 当前等待时间仅 3 秒，不够 fuse 准备
+
+- **v2.7.10 修复方案**：
+
+  **1. 增加 fuse 准备时间**
+  ```bash
+  # v2.7.9（❌ 不够）
+  sleep 3  # 等待文件系统稳定
+
+  # v2.7.10（✅ 充足）
+  sleep 10  # 给 fuse 网盘更多准备时间
+  ```
+
+  **2. 7z 检测添加 timeout**
+  ```bash
+  # v2.7.9（❌ 无超时，可能挂起）
+  if ! 7z l "$iso_path"; then
+      return 1  # 立即失败
+  fi
+
+  # v2.7.10（✅ 30秒超时，失败时 fallback）
+  if timeout 30 7z l "$iso_path"; then
+      # 继续 MPLS 提取
+  else
+      return 1  # fallback 到 extract_mediainfo()
+  fi
+  ```
+
+  **3. ffprobe 添加重试机制**
+  ```bash
+  # v2.7.9（❌ 单次尝试）
+  ffprobe -i "bluray:${iso_path}"  # 失败就报错
+
+  # v2.7.10（✅ 每个协议重试 2 次）
+  尝试 bluray 协议（最多 2 次，每次失败等待 5 秒）
+  失败 → 尝试 dvd 协议（最多 2 次，每次失败等待 5 秒）
+  失败 → 报错
+  ```
+
+### 📋 技术细节
+
+**修改 1：增加 fuse 准备时间**（`process_iso_strm()`）
+```bash
+# 第 993-996 行
+sleep 10  # v2.7.10: 从 3 秒增加到 10 秒
+```
+
+**修改 2：7z 检测添加 timeout 和降级**（`extract_from_mpls_pympls()`）
+```bash
+# 第 404-413 行
+if timeout 30 7z l "$iso_path" >/dev/null 2>&1; then
+    # 继续 MPLS 提取
+else
+    log_warn "跳过 MPLS 提取，fallback 到标准 ffprobe"
+    return 1  # 让主流程 fallback
+fi
+```
+
+**修改 3：ffprobe 重试机制**（`extract_mediainfo()`）
+```bash
+# 第 696-756 行
+# 主协议重试 2 次（每次失败等待 5 秒）
+max_retries=2
+while [ $retry_count -lt $max_retries ]; do
+    ffprobe -i "${iso_type}:${iso_path}"
+    if 成功: return 0
+    retry_count++
+    sleep 5
+done
+
+# 备用协议重试 2 次（每次失败等待 5 秒）
+while [ $retry_count -lt $max_retries ]; do
+    ffprobe -i "${fallback_type}:${iso_path}"
+    if 成功: return 0
+    retry_count++
+    sleep 5
+done
+```
+
+### 📊 预期改进
+
+| 场景 | v2.7.9 | v2.7.10 | 改进 |
+|------|--------|---------|------|
+| **fuse 初始化时间** | 3 秒 | 10 秒 | ✅ 更充足 |
+| **7z 检测** | 无超时 | 30 秒超时 | ✅ 防挂起 |
+| **ffprobe 尝试次数** | bluray×1 + dvd×1 = 2 次 | bluray×2 + dvd×2 = 4 次 | ✅ 2 倍容错 |
+| **最大等待时间** | 10 秒（3+2+2+3） | 30 秒（10+5+5+5+5） | ⚠️ 但成功率高 |
+
+### 🎯 用户影响
+
+- ✅ **fuse 网盘延迟容错增强**（10 秒等待 + 重试机制）
+- ✅ **7z 检测不会无限挂起**（30 秒超时）
+- ✅ **ffprobe 成功率提升**（每个协议重试 2 次）
+- ✅ **失败时有明确日志**（显示重试次数和原因）
+
+### ⚠️ 注意事项
+
+- **单个文件最大等待时间**：约 30-40 秒（等待 10秒 + 重试 4×5秒）
+- **批量处理速度**：仍远快于 v2.7.8 的 mount 方案（4 分钟/文件）
+- **建议**：确保 fuse 网盘挂载稳定，网络连接良好
+
+---
+
 ## [2.7.9] - 2026-01-21
 
 ### ⚡ 终极性能优化

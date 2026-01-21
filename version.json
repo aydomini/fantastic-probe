@@ -1,7 +1,7 @@
 {
-  "version": "2.7.9",
+  "version": "2.7.10",
   "release_date": "2026-01-21",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.9.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.10.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "⚡ 终极性能优化：完全移除 mount，速度提升 25 倍（智能判断 + ffprobe）"
+  "changelog": "🐛 修复 fuse 延迟问题：增加等待时间 + ffprobe 重试机制"
 }

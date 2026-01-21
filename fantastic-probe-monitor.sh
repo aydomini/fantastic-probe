@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.9
+# 版本：v2.7.10
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.7.9"
+VERSION="2.7.10"
 
 set -euo pipefail
 
@@ -299,14 +299,14 @@ check_disk_space() {
 }
 
 #==============================================================================
-# 智能检测 ISO 类型（v2.7.9 优化：完全移除 mount，改用智能判断）
+# 智能检测 ISO 类型（v2.7.10 优化：完全移除 mount，改用智能判断）
 #==============================================================================
 
 detect_iso_type() {
     local iso_path="$1"
     local strm_file="${2:-}"  # 可选：.strm 文件路径，用于文件名判断
 
-    # v2.7.9 终极优化：完全移除 mount 检测
+    # v2.7.10 终极优化：完全移除 mount 检测
     #
     # 为什么移除 mount？
     #   - fuse 网盘 mount ISO 需要 2-4 分钟（下载索引数据）
@@ -401,13 +401,16 @@ extract_mediainfo_from_mpls() {
     fi
     log_debug "    ✅ 解析脚本就绪"
 
-    # 测试 ISO 可访问性
-    if ! 7z l "$iso_path" >/dev/null 2>&1; then
-        log_error "  ❌ ISO 无法访问: $iso_path"
-        log_error "  可能原因: 1) 网盘挂载断开; 2) 文件损坏; 3) 权限不足"
-        return 1
+    # 测试 ISO 可访问性（v2.7.10：添加 timeout，7z 失败时跳过 MPLS 提取）
+    log_debug "    测试 ISO 可访问性（7z 快速检测，30秒超时）..."
+    if timeout 30 7z l "$iso_path" >/dev/null 2>&1; then
+        log_debug "    ✅ ISO 文件可访问（7z 检测通过）"
+    else
+        log_warn "  ⚠️  7z 无法快速访问 ISO（超时或失败）"
+        log_warn "  跳过 MPLS 提取，fallback 到标准 ffprobe"
+        log_warn "  （fuse 网盘可能需要更长时间初始化，ffprobe 可能成功）"
+        return 1  # 返回失败，让主流程 fallback 到 extract_mediainfo()
     fi
-    log_debug "    ✅ ISO 文件可访问"
 
     sleep 2  # 等待 fuse 缓存稳定
 
@@ -669,22 +672,18 @@ extract_mediainfo_from_mpls() {
 }
 
 #==============================================================================
-# 提取媒体信息（v2.7.9 优化：智能回退）
+# 提取媒体信息（v2.7.10 优化：智能回退 + 重试机制）
 #==============================================================================
 
 extract_mediainfo() {
     local iso_path="$1"
     local iso_type="$2"
 
-    # v2.7.9 优化：智能回退机制
+    # v2.7.10 优化：智能回退 + 重试机制（应对 fuse 延迟）
     #   1. 优先使用 detect_iso_type() 返回的类型（从文件名或统计判断）
-    #   2. 如果 ffprobe 失败，自动尝试另一种协议
-    #   3. 两种协议都失败才报错
-    #
-    # 这样确保：
-    #   - 文件名正确时：首次就成功（5-10 秒）
-    #   - 文件名错误时：第二次成功（10-20 秒）
-    #   - 两者都失败：可能不是标准 ISO（报错）
+    #   2. 如果 ffprobe 失败，等待 5 秒后重试一次（应对 fuse 延迟）
+    #   3. 重试失败后，尝试另一种协议
+    #   4. 两种协议都失败才报错
 
     log_debug "  准备提取媒体信息（协议: ${iso_type:-未知}）..."
 
@@ -694,19 +693,31 @@ extract_mediainfo() {
         iso_type="bluray"
     fi
 
-    # 尝试主协议
+    # 尝试主协议（带重试）
     log_info "  尝试 ${iso_type} 协议..."
     local ffprobe_json=""
-    ffprobe_json=$(timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v quiet -print_format json \
-        -show_format -show_streams -show_chapters \
-        -protocol_whitelist "file,${iso_type}" \
-        -i "${iso_type}:${iso_path}" 2>/dev/null)
+    local retry_count=0
+    local max_retries=2
 
-    if [ -n "$ffprobe_json" ] && echo "$ffprobe_json" | jq -e '.streams' >/dev/null 2>&1; then
-        log_info "  ✅ ${iso_type} 协议成功"
-        echo "$ffprobe_json"
-        return 0
-    fi
+    while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
+        if [ $retry_count -gt 0 ]; then
+            log_warn "  ${iso_type} 协议首次失败，等待 5 秒后重试（fuse 可能未就绪）..."
+            sleep 5
+        fi
+
+        ffprobe_json=$(timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v quiet -print_format json \
+            -show_format -show_streams -show_chapters \
+            -protocol_whitelist "file,${iso_type}" \
+            -i "${iso_type}:${iso_path}" 2>/dev/null)
+
+        if [ -n "$ffprobe_json" ] && echo "$ffprobe_json" | jq -e '.streams' >/dev/null 2>&1; then
+            log_info "  ✅ ${iso_type} 协议成功（尝试 $((retry_count + 1))/$max_retries）"
+            echo "$ffprobe_json"
+            return 0
+        fi
+
+        retry_count=$((retry_count + 1))
+    done
 
     # 主协议失败，尝试备用协议
     local fallback_type=""
@@ -716,21 +727,32 @@ extract_mediainfo() {
         fallback_type="bluray"
     fi
 
-    log_warn "  ${iso_type} 协议失败，尝试 ${fallback_type} 协议..."
-    ffprobe_json=$(timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v quiet -print_format json \
-        -show_format -show_streams -show_chapters \
-        -protocol_whitelist "file,${fallback_type}" \
-        -i "${fallback_type}:${iso_path}" 2>/dev/null)
+    log_warn "  ${iso_type} 协议失败（已重试 $max_retries 次），尝试 ${fallback_type} 协议..."
+    retry_count=0
 
-    if [ -n "$ffprobe_json" ] && echo "$ffprobe_json" | jq -e '.streams' >/dev/null 2>&1; then
-        log_info "  ✅ ${fallback_type} 协议成功（fallback）"
-        echo "$ffprobe_json"
-        return 0
-    fi
+    while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
+        if [ $retry_count -gt 0 ]; then
+            log_warn "  ${fallback_type} 协议首次失败，等待 5 秒后重试..."
+            sleep 5
+        fi
+
+        ffprobe_json=$(timeout "$FFPROBE_TIMEOUT" "$FFPROBE" -v quiet -print_format json \
+            -show_format -show_streams -show_chapters \
+            -protocol_whitelist "file,${fallback_type}" \
+            -i "${fallback_type}:${iso_path}" 2>/dev/null)
+
+        if [ -n "$ffprobe_json" ] && echo "$ffprobe_json" | jq -e '.streams' >/dev/null 2>&1; then
+            log_info "  ✅ ${fallback_type} 协议成功（fallback，尝试 $((retry_count + 1))/$max_retries）"
+            echo "$ffprobe_json"
+            return 0
+        fi
+
+        retry_count=$((retry_count + 1))
+    done
 
     # 两种协议都失败
-    log_error "  ⚠️  bluray 和 dvd 协议均失败"
-    log_error "  可能原因: 文件损坏、非标准 ISO、或网络问题"
+    log_error "  ⚠️  bluray 和 dvd 协议均失败（各重试 $max_retries 次）"
+    log_error "  可能原因: 文件损坏、非标准 ISO、网络问题、或 fuse 挂载异常"
     return 1
 }
 
@@ -991,9 +1013,9 @@ process_iso_strm() {
     fi
 
     # 等待文件系统稳定（对于 fuse 网盘挂载尤其重要）
-    # 注意：不使用 stat 循环检查，避免触发 fuse 缓存问题
-    log_info "  等待文件系统稳定..."
-    sleep 3
+    # v2.7.10: 增加到 10 秒，给 fuse 网盘更多准备时间
+    log_info "  等待文件系统稳定（fuse 网盘准备中）..."
+    sleep 10
 
     # 检查 ISO 文件
     if [ ! -f "$iso_path" ]; then
@@ -1008,7 +1030,7 @@ process_iso_strm() {
 
     log_info "  ISO 路径: $iso_path"
 
-    # 智能检测 ISO 类型（v2.7.9：无需重试，总是成功）
+    # 智能检测 ISO 类型（v2.7.10：无需重试，总是成功）
     log_info "  智能检测 ISO 类型..."
     local iso_type
     iso_type=$(detect_iso_type "$iso_path" "$strm_file")
