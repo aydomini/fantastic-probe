@@ -195,7 +195,7 @@ validate_config() {
 # 版本检查和自动更新
 #==============================================================================
 
-CURRENT_VERSION="2.6.5"
+CURRENT_VERSION="2.6.6"
 VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
 VERSION_CHECK_CACHE="/var/cache/fantastic-probe-last-check"
 VERSION_CHECK_INTERVAL=86400  # 24小时检查一次
@@ -379,6 +379,14 @@ extract_mediainfo_from_mpls() {
     }
     trap cleanup_bluray RETURN
 
+    # 方案C：测试 ISO 可访问性（fuse 挂载网盘的稳定性检查）
+    log_info "  检查 ISO 文件可访问性..."
+    if ! 7z l "$iso_path" >/dev/null 2>&1; then
+        log_warn "  ⚠️  ISO 文件无法访问（可能是网盘挂载问题或文件损坏）"
+        return 1
+    fi
+    log_info "  ✅ ISO 文件可正常访问"
+
     # 提取 BDMV 目录结构（只提取 PLAYLIST 和 CLIPINF，不提取大的 STREAM）
     # PLAYLIST: 播放列表，包含语言信息（几百KB）
     # CLIPINF: 剪辑信息，MPLS 需要引用（几百KB）
@@ -389,18 +397,30 @@ extract_mediainfo_from_mpls() {
         if 7z x "$iso_path" "BDMV/PLAYLIST/*" "BDMV/CLIPINF/*" -o"$temp_dir" -y >/dev/null 2>&1; then
             log_info "  ✅ BDMV 结构提取完成"
         else
-            log_warn "提取 BDMV 结构失败"
+            log_warn "  ⚠️  提取 BDMV 结构失败（可能是网络不稳定或 ISO 格式问题）"
             return 1
         fi
     else
-        log_warn "未找到 7z 工具，无法提取 BDMV 结构"
+        log_warn "  ⚠️  未找到 7z 工具，无法提取 BDMV 结构"
         return 1
     fi
 
     # 验证目录是否成功创建
     if [ ! -d "$temp_dir/BDMV/PLAYLIST" ]; then
-        log_warn "BDMV/PLAYLIST 目录提取失败"
+        log_warn "  ⚠️  BDMV/PLAYLIST 目录提取失败"
         return 1
+    fi
+
+    # 方案A：详细验证日志（诊断提取结果）
+    log_info "  验证提取结果..."
+    local playlist_count=$(find "$temp_dir/BDMV/PLAYLIST" -type f \( -name "*.mpls" -o -name "*.MPLS" \) 2>/dev/null | wc -l | tr -d ' ')
+    local clipinf_count=$(find "$temp_dir/BDMV/CLIPINF" -type f \( -name "*.clpi" -o -name "*.CLPI" \) 2>/dev/null | wc -l | tr -d ' ')
+
+    log_info "    PLAYLIST: $playlist_count 个文件"
+    log_info "    CLIPINF:  $clipinf_count 个文件"
+
+    if [ "$clipinf_count" -eq 0 ]; then
+        log_warn "  ⚠️  未找到 CLPI 文件，语言信息可能不完整（ISO 结构异常或提取不完整）"
     fi
 
     # 查找主播放列表（最大的 mpls 文件）
@@ -409,11 +429,21 @@ extract_mediainfo_from_mpls() {
         xargs ls -lS 2>/dev/null | head -1 | awk '{print $NF}')
 
     if [ -z "$main_mpls" ] || [ ! -f "$main_mpls" ]; then
-        log_warn "未找到主播放列表文件"
+        log_warn "  ⚠️  未找到主播放列表文件"
         return 1
     fi
 
-    log_info "  主播放列表: $(basename "$main_mpls")"
+    local mpls_basename=$(basename "$main_mpls" .mpls)
+    [ "$mpls_basename" = "$(basename "$main_mpls")" ] && mpls_basename=$(basename "$main_mpls" .MPLS)
+    log_info "    主播放列表: ${mpls_basename}.mpls"
+
+    # 检查对应的 CLPI 文件（语言信息存储位置）
+    local clpi_file=$(find "$temp_dir/BDMV/CLIPINF" -type f \( -name "${mpls_basename}.clpi" -o -name "${mpls_basename}.CLPI" \) 2>/dev/null | head -1)
+    if [ -n "$clpi_file" ] && [ -f "$clpi_file" ]; then
+        log_info "    ✅ 找到对应的 CLPI: ${mpls_basename}.clpi（语言信息来源）"
+    else
+        log_warn "    ⚠️  未找到对应的 CLPI: ${mpls_basename}.clpi（可能导致语言信息缺失）"
+    fi
 
     # 使用 ffprobe bluray: 协议读取 MPLS
     # bluray: 协议期望完整的 BDMV 目录结构
@@ -752,31 +782,26 @@ process_iso_strm() {
     # 提取媒体信息
     local ffprobe_output
 
-    # 禁用 MPLS 提取（用户反馈：MPLS 方式获取的信息反而更少）
-    # 统一使用标准提取方式（bluray: 或 dvd: 协议）
-    log_info "  使用标准提取方式..."
-    ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
-
-    # 注释掉的 MPLS 提取逻辑（保留代码以供将来改进）
-    # if [ "$iso_type" = "bluray" ]; then
-    #     log_info "  尝试从 MPLS 提取语言信息..."
-    #     local main_playlist
-    #     main_playlist=$(find_main_playlist "$iso_path" 2>/dev/null || true)
-    #     if [ -n "$main_playlist" ]; then
-    #         ffprobe_output=$(extract_mediainfo_from_mpls "$iso_path" "$main_playlist")
-    #         if [ -n "$ffprobe_output" ] && echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
-    #             log_success "✅ 成功从 MPLS 提取媒体信息"
-    #         else
-    #             log_warn "从 MPLS 提取失败，回退到标准提取方式"
-    #             ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
-    #         fi
-    #     else
-    #         log_warn "未找到 MPLS 播放列表，使用标准提取方式"
-    #         ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
-    #     fi
-    # else
-    #     ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
-    # fi
+    # 蓝光 ISO：优先尝试 MPLS 提取（更准确的语言信息）
+    if [ "$iso_type" = "bluray" ]; then
+        log_info "  尝试从 MPLS 提取语言信息..."
+        local main_playlist
+        main_playlist=$(find_main_playlist "$iso_path" 2>/dev/null || true)
+        if [ -n "$main_playlist" ]; then
+            ffprobe_output=$(extract_mediainfo_from_mpls "$iso_path" "$main_playlist")
+            if [ -n "$ffprobe_output" ] && echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
+                log_success "  ✅ MPLS 提取成功，已获取准确的语言信息"
+            else
+                log_warn "  ⚠️  MPLS 提取失败（查看上方日志了解详情），回退到标准 ffprobe 提取"
+                ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
+            fi
+        else
+            log_warn "  ⚠️  未找到 MPLS 播放列表（可能是 DVD 或非标准蓝光结构），使用标准 ffprobe 提取"
+            ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
+        fi
+    else
+        ffprobe_output=$(extract_mediainfo "$iso_path" "$iso_type")
+    fi
 
     if [ -z "$ffprobe_output" ] || ! echo "$ffprobe_output" | jq -e . >/dev/null 2>&1; then
         log_error "ffprobe 提取失败: $iso_path"
