@@ -384,7 +384,9 @@ extract_language_from_mpls() {
 
     # 创建临时挂载点
     local mount_point=$(mktemp -d)
-    trap "umount '$mount_point' 2>/dev/null; rmdir '$mount_point' 2>/dev/null" RETURN
+    local pympls_output=$(mktemp)
+    local pympls_error=$(mktemp)
+    trap "umount '$mount_point' 2>/dev/null; rmdir '$mount_point' 2>/dev/null; rm -f '$pympls_output' '$pympls_error'" RETURN
 
     # 挂载 ISO（使用 Linux 原生 mount，支持 UDF）
     log_debug "    挂载 ISO（mount -o ro,loop）..."
@@ -418,7 +420,9 @@ extract_language_from_mpls() {
     log_info "    解析 MPLS: $(basename "$main_mpls") (${mpls_size} bytes)"
 
     # 使用 pympls 解析（内嵌 Python 代码，无需外部脚本）
-    local language_map=$(python3 <<PYEOF 2>&1
+    # v2.7.14 优化：处理多 PlayItem、改进错误处理
+
+    python3 <<PYEOF >"$pympls_output" 2>"$pympls_error"
 import sys
 import json
 import pympls
@@ -434,44 +438,65 @@ def bytes_to_str(data):
 
 try:
     mpls = pympls.MPLS("$main_mpls")
+    play_items = mpls.PlayList.get('PlayItems', [])
 
-    play_item = mpls.PlayList['PlayItems'][0]
-    stn_table = play_item['STNTable']
+    if not play_items:
+        print(json.dumps({'error': 'No PlayItems found'}), file=sys.stderr)
+        sys.exit(1)
 
-    language_map = {'audio': [], 'subtitle': []}
+    # 遍历所有 PlayItem，选择流最多的那个
+    best_streams = {'audio': [], 'subtitle': []}
+    max_stream_count = 0
 
-    # 提取音轨语言
-    for i, audio in enumerate(stn_table.get('PrimaryAudioStreamEntries', [])):
-        attrs = audio.get('StreamAttributes', {})
-        lang = bytes_to_str(attrs.get('LanguageCode', b'und'))
-        language_map['audio'].append({'Index': i, 'Language': lang})
+    for idx, play_item in enumerate(play_items):
+        stn_table = play_item.get('STNTable', {})
 
-    # 提取字幕语言
-    for i, subtitle in enumerate(stn_table.get('PrimaryPGStreamEntries', [])):
-        attrs = subtitle.get('StreamAttributes', {})
-        lang = bytes_to_str(attrs.get('LanguageCode', b'und'))
-        language_map['subtitle'].append({'Index': i, 'Language': lang})
+        audio_streams = []
+        for i, audio in enumerate(stn_table.get('PrimaryAudioStreamEntries', [])):
+            attrs = audio.get('StreamAttributes', {})
+            lang = bytes_to_str(attrs.get('LanguageCode', b'und'))
+            audio_streams.append({'Index': i, 'Language': lang})
 
-    print(json.dumps(language_map))
+        subtitle_streams = []
+        for i, subtitle in enumerate(stn_table.get('PrimaryPGStreamEntries', [])):
+            attrs = subtitle.get('StreamAttributes', {})
+            lang = bytes_to_str(attrs.get('LanguageCode', b'und'))
+            subtitle_streams.append({'Index': i, 'Language': lang})
+
+        total = len(audio_streams) + len(subtitle_streams)
+        if total > max_stream_count:
+            max_stream_count = total
+            best_streams = {'audio': audio_streams, 'subtitle': subtitle_streams}
+
+    print(json.dumps(best_streams))
     sys.exit(0)
 
 except Exception as e:
-    print(json.dumps({'error': str(e)}), file=sys.stderr)
+    import traceback
+    print(json.dumps({'error': str(e), 'traceback': traceback.format_exc()}), file=sys.stderr)
     sys.exit(1)
 PYEOF
-)
     local pympls_exit=$?
+
+    # 读取输出和错误
+    local language_map=$(cat "$pympls_output")
+    local pympls_err=$(cat "$pympls_error")
 
     if [ $pympls_exit -ne 0 ]; then
         log_warn "    pympls 解析失败（退出码 $pympls_exit）"
-        log_debug "    错误: $(echo "$language_map" | head -3)"
+        if [ -n "$pympls_err" ]; then
+            log_debug "    错误: $(echo "$pympls_err" | jq -r '.error' 2>/dev/null || echo "$pympls_err" | head -3)"
+        fi
         return 1
     fi
 
     # 验证 JSON 格式
     if ! echo "$language_map" | jq -e '.audio' >/dev/null 2>&1; then
         log_warn "    语言映射 JSON 无效"
-        log_debug "    输出: $(echo "$language_map" | head -3)"
+        log_debug "    输出: $(echo "$language_map" | head -5)"
+        if [ -n "$pympls_err" ]; then
+            log_debug "    错误: $(echo "$pympls_err" | head -5)"
+        fi
         return 1
     fi
 

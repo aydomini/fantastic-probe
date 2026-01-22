@@ -7,6 +7,73 @@
 
 ---
 
+## [2.7.14] - 2026-01-22
+
+### 🐛 修复：pympls 多 PlayItem 支持 + 错误处理增强
+
+**问题发现**（生产环境日志）：
+```
+[INFO] 解析 MPLS: 00004.mpls (26426 bytes)
+[WARN] 语言映射 JSON 无效
+```
+
+**根本原因**：
+- v2.7.13 只处理第一个 PlayItem（`PlayItems[0]`）
+- 复杂 MPLS 文件有多个 PlayItem（正片、预告片、广告等）
+- 某些 PlayItem 可能没有音轨/字幕，导致解析失败
+- 错误处理不够详细，看不到真实错误原因
+
+**v2.7.14 优化**：
+
+**1. 支持多 PlayItem**：
+```python
+# 旧方案（v2.7.13）：
+play_item = mpls.PlayList['PlayItems'][0]  # 只处理第一个
+stn_table = play_item['STNTable']
+
+# 新方案（v2.7.14）：
+for idx, play_item in enumerate(play_items):  # 遍历所有
+    stn_table = play_item.get('STNTable', {})
+    # 选择流最多的 PlayItem（通常是正片）
+    if total > max_stream_count:
+        best_streams = {'audio': ..., 'subtitle': ...}
+```
+
+**2. 增强错误处理**：
+```bash
+# 分离 stdout 和 stderr
+python3 ... >"$pympls_output" 2>"$pympls_error"
+
+# 捕获详细错误（包含 traceback）
+except Exception as e:
+    import traceback
+    print(json.dumps({
+        'error': str(e),
+        'traceback': traceback.format_exc()
+    }), file=sys.stderr)
+```
+
+**3. 自动选择最佳 PlayItem**：
+- 计算每个 PlayItem 的流总数（音轨 + 字幕）
+- 选择流最多的 PlayItem（通常是正片）
+- 跳过空 PlayItem（预告片、菜单等）
+
+### ⚡ 预期效果
+
+**v2.7.13**（失败）：
+```
+[INFO] 解析 MPLS: 00004.mpls (26426 bytes)
+[WARN] 语言映射 JSON 无效
+```
+
+**v2.7.14**（成功）：
+```
+[INFO] 解析 MPLS: 00004.mpls (26426 bytes)
+[INFO] ✅ 语言信息提取成功（5音轨, 3字幕）
+```
+
+---
+
 ## [2.7.13] - 2026-01-22
 
 ### 🚀 革命性优化：mount + pympls 替代 7z
