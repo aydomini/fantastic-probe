@@ -143,6 +143,7 @@ if [ "$PKG_MANAGER" = "unknown" ]; then
     echo "  - inotify-tools"
     echo "  - jq"
     echo "  - genisoimage 或 p7zip"
+    echo "  - mediainfo (v2.7.15+ 必需)"
     echo ""
     exit 1
 fi
@@ -202,6 +203,12 @@ if ! command -v pip3 &> /dev/null; then
         echo "   需要安装: python3-pip (用于安装 pympls)"
         PACKAGES_TO_INSTALL+=("python3-pip")
     fi
+fi
+
+# 检查 mediainfo（语言信息提取工具）
+if ! command -v mediainfo &> /dev/null; then
+    echo "   需要安装: mediainfo (语言信息提取工具，v2.7.15+ 必需)"
+    PACKAGES_TO_INSTALL+=("mediainfo")
 fi
 
 # 安装依赖
