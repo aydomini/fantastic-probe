@@ -4,7 +4,7 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.17
+# 版本：v2.7.18
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
@@ -421,16 +421,16 @@ extract_mediainfo() {
     log_info "  尝试 ${iso_type} 协议..."
     local ffprobe_json=""
     local retry_count=0
-    local max_retries=2
+    local max_retries=3
 
     while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
         if [ $retry_count -gt 0 ]; then
-            log_warn "  ${iso_type} 协议首次失败，等待 10 秒后重试（fuse 可能未就绪）..."
-            sleep 10
+            log_warn "  ${iso_type} 协议第 ${retry_count} 次失败，等待 20 秒后重试（fuse 可能未就绪）..."
+            sleep 20
         fi
 
         local start_time=$(date +%s)
-        log_debug "  执行: ffprobe -i \"${iso_type}:${iso_path}\" (超时 ${FFPROBE_TIMEOUT}秒)"
+        log_info "  执行 ffprobe（尝试 $((retry_count + 1))/$max_retries，超时 ${FFPROBE_TIMEOUT}秒）..."
 
         # 捕获 stderr 用于调试
         local ffprobe_stderr=$(mktemp)
@@ -444,9 +444,13 @@ extract_mediainfo() {
         if [ $ffprobe_exit -eq 124 ]; then
             log_error "  ❌ ffprobe 超时（>${FFPROBE_TIMEOUT}秒）"
         elif [ $ffprobe_exit -ne 0 ]; then
-            log_debug "  ffprobe 失败（退出码 $ffprobe_exit，耗时 ${duration}秒）"
+            log_warn "  ffprobe 失败（退出码 $ffprobe_exit，耗时 ${duration}秒）"
+            # 显示错误信息（方便调试）
             if [ -s "$ffprobe_stderr" ]; then
-                log_debug "  错误信息: $(head -3 "$ffprobe_stderr")"
+                log_warn "  错误信息（前5行）："
+                head -5 "$ffprobe_stderr" | while IFS= read -r line; do
+                    log_warn "    $line"
+                done
             fi
         fi
         rm -f "$ffprobe_stderr"
@@ -473,12 +477,12 @@ extract_mediainfo() {
 
     while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
         if [ $retry_count -gt 0 ]; then
-            log_warn "  ${fallback_type} 协议首次失败，等待 10 秒后重试..."
-            sleep 10
+            log_warn "  ${fallback_type} 协议第 ${retry_count} 次失败，等待 20 秒后重试..."
+            sleep 20
         fi
 
         local start_time=$(date +%s)
-        log_debug "  执行: ffprobe -i \"${fallback_type}:${iso_path}\" (超时 ${FFPROBE_TIMEOUT}秒)"
+        log_info "  执行 ffprobe（备用协议，尝试 $((retry_count + 1))/$max_retries，超时 ${FFPROBE_TIMEOUT}秒）..."
 
         # 捕获 stderr 用于调试
         local ffprobe_stderr=$(mktemp)
@@ -492,15 +496,19 @@ extract_mediainfo() {
         if [ $ffprobe_exit -eq 124 ]; then
             log_error "  ❌ ffprobe 超时（>${FFPROBE_TIMEOUT}秒）"
         elif [ $ffprobe_exit -ne 0 ]; then
-            log_debug "  ffprobe 失败（退出码 $ffprobe_exit，耗时 ${duration}秒）"
+            log_warn "  ffprobe 失败（退出码 $ffprobe_exit，耗时 ${duration}秒）"
+            # 显示错误信息（方便调试）
             if [ -s "$ffprobe_stderr" ]; then
-                log_debug "  错误信息: $(head -3 "$ffprobe_stderr")"
+                log_warn "  错误信息（前5行）："
+                head -5 "$ffprobe_stderr" | while IFS= read -r line; do
+                    log_warn "    $line"
+                done
             fi
         fi
         rm -f "$ffprobe_stderr"
 
         if [ -n "$ffprobe_json" ] && echo "$ffprobe_json" | jq -e '.streams' >/dev/null 2>&1; then
-            log_info "  ✅ ${fallback_type} 协议成功（fallback，尝试 $((retry_count + 1))/$max_retries，耗时 ${duration}秒）"
+            log_info "  ✅ ${fallback_type} 协议成功（备用协议，尝试 $((retry_count + 1))/$max_retries，耗时 ${duration}秒）"
             echo "$ffprobe_json"
             return 0
         fi
@@ -773,9 +781,9 @@ process_iso_strm() {
     fi
 
     # 等待文件系统稳定（对于 fuse 网盘挂载尤其重要）
-    # v2.7.15: MediaInfo 方案无需 mount，但 ffprobe 仍需等待 fuse 初始化
-    log_info "  等待文件系统稳定（fuse 网盘准备中）..."
-    sleep 10
+    # v2.7.18: 大幅增加等待时间，解决网络盘初始化慢的问题
+    log_info "  等待文件系统稳定（fuse 网盘准备中，等待 60 秒）..."
+    sleep 60
 
     # 检查 ISO 文件
     if [ ! -f "$iso_path" ]; then

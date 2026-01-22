@@ -1,7 +1,7 @@
 {
-  "version": "2.7.17",
+  "version": "2.7.18",
   "release_date": "2026-01-22",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.17.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.18.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🎯 回归纯净：彻底删除 MediaInfo，回归纯 ffprobe 方案"
+  "changelog": "🔧 优化 fuse 网盘支持：增强重试机制 + 改进调试日志"
 }
