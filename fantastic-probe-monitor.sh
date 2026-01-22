@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.15
+# 版本：v2.7.16
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.7.15"
+VERSION="2.7.16"
 
 set -euo pipefail
 
@@ -494,14 +494,14 @@ merge_language_info() {
 }
 
 #==============================================================================
-# 提取媒体信息（v2.7.11：ffprobe 主提取 + 可选 MPLS 语言补充）
+# 提取媒体信息（v2.7.15：ffprobe 主提取 + MediaInfo 语言补充）
 #==============================================================================
 
 extract_mediainfo_with_language_enhancement() {
     local iso_path="$1"
     local iso_type="$2"
 
-    log_info "  [新方案] ffprobe 主提取 + MPLS 语言补充..."
+    log_info "  [v2.7.15] ffprobe 主提取 + MediaInfo 语言补充..."
 
     # 步骤 1：ffprobe 提取全部信息（快速，10-20 秒）
     log_info "  [步骤1/2] 使用 ffprobe 提取完整媒体信息..."
@@ -521,9 +521,9 @@ extract_mediainfo_with_language_enhancement() {
 
     log_debug "  语言信息完整度: $lang_count/$total_count"
 
-    # 如果语言信息不完整，尝试 MPLS 补充
+    # 如果语言信息不完整，尝试 MediaInfo 补充
     if [ "$lang_count" -lt "$total_count" ] && [ "$iso_type" = "bluray" ]; then
-        log_info "  [步骤2/2] 语言信息不完整，尝试 MPLS 补充..."
+        log_info "  [步骤2/2] 语言信息不完整，尝试 MediaInfo 补充..."
 
         local language_map
         language_map=$(extract_language_from_mpls "$iso_path")
@@ -531,12 +531,12 @@ extract_mediainfo_with_language_enhancement() {
         if [ -n "$language_map" ]; then
             log_info "  ✅ 正在合并语言信息..."
             ffprobe_json=$(merge_language_info "$ffprobe_json" "$language_map")
-            log_info "  ✅ 语言信息已补充"
+            log_info "  ✅ 语言信息已补充（MediaInfo）"
         else
-            log_warn "  ⚠️  MPLS 语言补充失败，使用 ffprobe 原始结果"
+            log_warn "  ⚠️  MediaInfo 语言补充失败，使用 ffprobe 原始结果"
         fi
     else
-        log_info "  [步骤2/2] 语言信息完整，跳过 MPLS 补充"
+        log_info "  [步骤2/2] 语言信息完整，跳过 MediaInfo 补充"
     fi
 
     echo "$ffprobe_json"
@@ -950,7 +950,7 @@ process_iso_strm() {
 
     log_info "  ISO 类型: ${iso_type^^}"
 
-    # 提取媒体信息（v2.7.11 新方案：ffprobe 主提取 + MPLS 语言补充）
+    # 提取媒体信息（v2.7.15 新方案：ffprobe 主提取 + MediaInfo 语言补充）
     local ffprobe_output
     log_info "  开始提取媒体信息..."
     ffprobe_output=$(extract_mediainfo_with_language_enhancement "$iso_path" "$iso_type")

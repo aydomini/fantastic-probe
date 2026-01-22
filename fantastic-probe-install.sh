@@ -181,30 +181,6 @@ if ! command -v isoinfo &> /dev/null; then
     PACKAGES_TO_INSTALL+=($pkg_name)
 fi
 
-# 检查 7z（Blu-ray MPLS 语言提取必需）
-if ! command -v 7z &> /dev/null; then
-    pkg_name=$(get_package_name "$PKG_MANAGER" "p7zip")
-    echo "   需要安装: $pkg_name (Blu-ray MPLS 语言提取必需)"
-    PACKAGES_TO_INSTALL+=($pkg_name)
-fi
-
-# 检查 Python 3（pympls 依赖）
-if ! command -v python3 &> /dev/null; then
-    echo "   需要安装: python3 (pympls MPLS 解析器依赖)"
-    PACKAGES_TO_INSTALL+=("python3")
-fi
-
-# 检查 pip3（用于安装 pympls）
-if ! command -v pip3 &> /dev/null; then
-    if [ "$PKG_MANAGER" = "apt" ]; then
-        echo "   需要安装: python3-pip (用于安装 pympls)"
-        PACKAGES_TO_INSTALL+=("python3-pip")
-    else
-        echo "   需要安装: python3-pip (用于安装 pympls)"
-        PACKAGES_TO_INSTALL+=("python3-pip")
-    fi
-fi
-
 # 检查 mediainfo（语言信息提取工具）
 if ! command -v mediainfo &> /dev/null; then
     echo "   需要安装: mediainfo (语言信息提取工具，v2.7.15+ 必需)"
@@ -218,47 +194,6 @@ if [ ${#PACKAGES_TO_INSTALL[@]} -gt 0 ]; then
     echo "   ✅ 依赖安装完成"
 else
     echo "   ✅ 所有依赖已安装"
-fi
-echo ""
-
-# 安装 pympls（Python MPLS 解析库）
-echo "1️⃣.5️⃣  安装 pympls（MPLS 直接解析库）..."
-echo ""
-
-# 检查 pympls 是否已安装
-echo "   检查 pympls 是否已安装..."
-if python3 -c "import pympls" 2>/dev/null; then
-    echo "   ✅ pympls 已安装"
-else
-    echo "   正在安装 pympls..."
-
-    # 优先使用 python3 -m pip（更可靠，不依赖 pip3 命令）
-    # 使用 --break-system-packages 适配 Debian 12+ PEP 668 限制
-    if python3 -m pip install pympls --break-system-packages --quiet 2>/dev/null; then
-        echo "   ✅ pympls 安装成功（使用 python3 -m pip）"
-    # 回退：尝试不带 --break-system-packages（兼容旧版本）
-    elif python3 -m pip install pympls --quiet 2>/dev/null; then
-        echo "   ✅ pympls 安装成功（使用 python3 -m pip，无需 --break-system-packages）"
-    # 回退：尝试使用 pip3 命令
-    elif command -v pip3 &> /dev/null && pip3 install pympls --break-system-packages --quiet 2>/dev/null; then
-        echo "   ✅ pympls 安装成功（使用 pip3）"
-    # 回退：尝试使用 pip 命令
-    elif command -v pip &> /dev/null && pip install pympls --break-system-packages --quiet 2>/dev/null; then
-        echo "   ✅ pympls 安装成功（使用 pip）"
-    else
-        echo "   ❌ pympls 安装失败"
-        echo "   ⚠️  警告：MPLS 元数据提取可能无法正常工作"
-        echo ""
-        echo "   请尝试手动安装（适配 Debian 12+ PEP 668）："
-        echo "   方法1: python3 -m pip install pympls --break-system-packages"
-        echo "   方法2: pip3 install pympls --break-system-packages"
-        echo "   方法3: python3 -m venv /opt/fantastic-probe-venv && /opt/fantastic-probe-venv/bin/pip install pympls"
-        echo ""
-        echo "   如果仍然失败，请检查："
-        echo "   - 是否有网络连接"
-        echo "   - 是否有足够的磁盘空间"
-        echo "   - pip 配置是否正确"
-    fi
 fi
 echo ""
 
@@ -286,19 +221,7 @@ fi
 cp "$MONITOR_SCRIPT" "$TARGET_SCRIPT"
 chmod +x "$TARGET_SCRIPT"
 echo "   ✅ 监控脚本已安装到: $TARGET_SCRIPT"
-
-# 复制 MPLS 解析脚本
-MPLS_PARSER="$SCRIPT_DIR/parse_mpls_pympls.py"
-TARGET_PARSER="/usr/local/bin/parse_mpls_pympls.py"
-
-if [ -f "$MPLS_PARSER" ]; then
-    cp "$MPLS_PARSER" "$TARGET_PARSER"
-    chmod +x "$TARGET_PARSER"
-    echo "   ✅ MPLS 解析脚本已安装到: $TARGET_PARSER"
-else
-    echo "   ⚠️  未找到 MPLS 解析脚本: $MPLS_PARSER"
-    echo "   ⚠️  警告：MPLS 元数据提取可能无法正常工作"
-fi
+echo ""
 
 # 安装自动更新助手
 AUTO_UPDATE_HELPER="$SCRIPT_DIR/auto-update-helper.sh"

@@ -1,9 +1,9 @@
 Package: fantastic-probe
-Version: 2.7.15
+Version: 2.7.16
 Section: utils
 Priority: optional
 Architecture: all
-Depends: inotify-tools, jq, genisoimage | p7zip-full, bash (>= 4.0)
+Depends: inotify-tools, jq, bash (>= 4.0)
 Recommends: ffmpeg, mediainfo
 Maintainer: Fantastic-Probe Team <noreply@github.com>
 Homepage: https://github.com/aydomini/fantastic-probe

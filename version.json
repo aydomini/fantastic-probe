@@ -1,7 +1,7 @@
 {
-  "version": "2.7.15",
+  "version": "2.7.16",
   "release_date": "2026-01-22",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.15.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.16.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🚀 革命性简化：MediaInfo 替代 mount + pympls（秒级提取语言信息）"
+  "changelog": "🔥 彻底清理：移除所有 pympls/7z/mount 依赖，纯 MediaInfo 方案"
 }
