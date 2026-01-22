@@ -7,6 +7,75 @@
 
 ---
 
+## [2.7.17] - 2026-01-22
+
+### 🎯 回归纯净：彻底删除 MediaInfo，回归纯 ffprobe 方案
+
+**v2.7.16 遗留问题**：
+- ⚠️ **MediaInfo 在网络盘（fuse）上同样很慢**：146 秒（vs mount 141 秒）
+- ⚠️ **本质相同**：MediaInfo 和 mount 都需要通过网络读取大文件
+- ⚠️ **语言信息非必需**：ffprobe 已能提取音轨和字幕，语言标签不影响播放
+
+**用户反馈**（生产环境实测）：
+```
+ISO 大小：45.72 GB（位于 pan_115 fuse 网盘）
+MediaInfo 开始：11:31:09
+MediaInfo 结束：11:33:35
+耗时：146 秒（2分26秒）！！！
+结果：未找到音轨或字幕信息（提取失败）
+```
+
+**v2.7.17 彻底删除 MediaInfo**：
+
+1. **删除 MediaInfo 相关代码**（~180 行）：
+   - ✅ 删除 `extract_language_from_mpls()` 函数（97 行）
+   - ✅ 删除 `merge_language_info()` 函数（26 行）
+   - ✅ 简化 `extract_mediainfo_with_language_enhancement()`（-50 行）
+   - ✅ 移除所有 MediaInfo 调用和语言补充逻辑
+
+2. **删除 MediaInfo 依赖**：
+   - ✅ 移除 mediainfo 安装逻辑（install.sh）
+   - ✅ 移除 mediainfo 依赖声明（debian/DEBIAN/control）
+   - ✅ 更新手动安装提示（移除 mediainfo）
+
+3. **简化日志信息**：
+   - ✅ "ffprobe 主提取 + MediaInfo 语言补充" → "使用 ffprobe 提取媒体信息"
+   - ✅ 移除所有"步骤1/2"、"步骤2/2"的分步日志
+   - ✅ 移除"语言信息完整度"、"MediaInfo 补充"等日志
+
+**最终方案**：
+- ✅ **纯 ffprobe**：一次调用，获取所有媒体信息
+- ✅ **速度最快**：10-20 秒（无网络延迟）
+- ✅ **代码最简**：-180 行，维护成本降低
+- ✅ **功能完整**：音轨、字幕、分辨率等全部信息
+
+**性能对比**（45GB ISO，fuse 网盘）：
+
+| 方案 | v2.7.14 | v2.7.16 | v2.7.17 | 改进 |
+|------|---------|---------|---------|------|
+| 主提取 | mount 141s | ffprobe 16s | ffprobe 16s | - |
+| 语言补充 | pympls 失败 | mediainfo 146s | **无** | **100%** |
+| 总耗时 | 141s+ | 162s | **16s** | **-90.1%** |
+| 成功率 | 失败 | 失败 | **成功** | **100%** |
+
+**依赖变化**：
+```bash
+# v2.7.16
+Depends: inotify-tools, jq, bash >= 4.0
+Recommends: ffmpeg, mediainfo
+
+# v2.7.17
+Depends: inotify-tools, jq, bash >= 4.0
+Recommends: ffmpeg
+```
+
+**升级影响**：
+- ✅ **无需手动操作**：update.sh 自动更新
+- ✅ **速度大幅提升**：网络盘处理时间从 162 秒降至 16 秒
+- ✅ **语言标签可能为 "und"**：不影响播放，Emby/Jellyfin 可自动识别
+
+---
+
 ## [2.7.16] - 2026-01-22
 
 ### 🔥 彻底清理：移除所有 pympls/7z/mount 依赖

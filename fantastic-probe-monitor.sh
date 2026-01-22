@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.16
+# 版本：v2.7.17
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.7.16"
+VERSION="2.7.17"
 
 set -euo pipefail
 
@@ -364,147 +364,16 @@ detect_iso_type() {
 }
 
 #==============================================================================
-# 从 ISO 补充语言信息（MediaInfo 方案）
-# v2.7.15 革命性简化：使用 MediaInfo 替代 mount + pympls
-#   - 无需 mount ISO（避免 fuse 网盘慢的问题）
-#   - 无需 pympls 解析（避免复杂的 MPLS 解析）
-#   - 速度快（秒级完成 vs 分钟级）
-#   - 稳定可靠（成熟工具）
-#==============================================================================
 
-extract_language_from_mpls() {
-    local iso_path="$1"
-
-    log_info "  [语言补充] 尝试从 ISO 获取语言信息（MediaInfo 方案）..."
-
-    # 检查 mediainfo 是否安装
-    if ! command -v mediainfo &> /dev/null; then
-        log_warn "  mediainfo 未安装，跳过语言补充"
-        log_warn "  安装命令: sudo apt install mediainfo"
-        return 1
-    fi
-
-    # 使用 mediainfo 提取 JSON 格式信息
-    local start_time=$(date +%s)
-    local mediainfo_json=$(mediainfo --Output=JSON "$iso_path" 2>/dev/null)
-    local mediainfo_exit=$?
-    local duration=$(($(date +%s) - start_time))
-
-    if [ $mediainfo_exit -ne 0 ] || [ -z "$mediainfo_json" ]; then
-        log_warn "  mediainfo 提取失败（退出码 $mediainfo_exit，耗时 ${duration}秒）"
-        return 1
-    fi
-
-    log_debug "    ✅ mediainfo 提取成功（耗时 ${duration}秒）"
-
-    # 解析语言信息并转换为标准格式
-    local language_map=$(echo "$mediainfo_json" | jq -c '
-        if .media.track then
-            {
-                audio: [
-                    .media.track[] |
-                    select(."@type" == "Audio") |
-                    {
-                        Index: ((.StreamOrder // (.ID // "0") | tostring) | tonumber),
-                        Language: (.Language // "und" | ascii_downcase |
-                            if length == 2 then .
-                            elif . == "chinese" then "zho"
-                            elif . == "english" then "eng"
-                            elif . == "japanese" then "jpn"
-                            elif . == "korean" then "kor"
-                            elif . == "cantonese" then "yue"
-                            else "und"
-                            end
-                        )
-                    }
-                ],
-                subtitle: [
-                    .media.track[] |
-                    select(."@type" == "Text" or ."@type" == "Subtitle") |
-                    {
-                        Index: ((.StreamOrder // (.ID // "0") | tostring) | tonumber),
-                        Language: (.Language // "und" | ascii_downcase |
-                            if length == 2 then .
-                            elif . == "chinese" then "zho"
-                            elif . == "english" then "eng"
-                            elif . == "japanese" then "jpn"
-                            elif . == "korean" then "kor"
-                            elif . == "cantonese" then "yue"
-                            else "und"
-                            end
-                        )
-                    }
-                ]
-            }
-        else
-            {audio: [], subtitle: []}
-        end
-    ')
-
-    # 验证 JSON 格式
-    if ! echo "$language_map" | jq -e '.audio' >/dev/null 2>&1; then
-        log_warn "  语言映射 JSON 无效"
-        log_debug "  mediainfo 输出: $(echo "$mediainfo_json" | head -10)"
-        return 1
-    fi
-
-    local audio_count=$(echo "$language_map" | jq '.audio | length')
-    local subtitle_count=$(echo "$language_map" | jq '.subtitle | length')
-
-    if [ "$audio_count" -eq 0 ] && [ "$subtitle_count" -eq 0 ]; then
-        log_warn "  未找到音轨或字幕信息"
-        return 1
-    fi
-
-    log_info "    ✅ 语言信息提取成功（${audio_count}音轨, ${subtitle_count}字幕）"
-
-    echo "$language_map"
-    return 0
-}
-
-#==============================================================================
-# 合并 ffprobe 和 MPLS 语言信息
-# v2.7.11 新增：将 MPLS 的语言信息合并到 ffprobe 结果
-#==============================================================================
-
-merge_language_info() {
-    local ffprobe_json="$1"
-    local language_map="$2"
-
-    # 使用 jq 合并语言信息
-    echo "$ffprobe_json" | jq --argjson langmap "$language_map" '
-        .streams |= map(
-            if .codec_type == "audio" then
-                . + {
-                    tags: (.tags // {} |
-                        .language = ($langmap.audio[.index].Language // .tags.language // "und")
-                    )
-                }
-            elif .codec_type == "subtitle" then
-                . + {
-                    tags: (.tags // {} |
-                        .language = ($langmap.subtitle[.index].Language // .tags.language // "und")
-                    )
-                }
-            else
-                .
-            end
-        )
-    '
-}
-
-#==============================================================================
-# 提取媒体信息（v2.7.15：ffprobe 主提取 + MediaInfo 语言补充）
+# 提取媒体信息（v2.7.17：纯 ffprobe 方案）
 #==============================================================================
 
 extract_mediainfo_with_language_enhancement() {
     local iso_path="$1"
     local iso_type="$2"
 
-    log_info "  [v2.7.15] ffprobe 主提取 + MediaInfo 语言补充..."
+    log_info "  使用 ffprobe 提取媒体信息..."
 
-    # 步骤 1：ffprobe 提取全部信息（快速，10-20 秒）
-    log_info "  [步骤1/2] 使用 ffprobe 提取完整媒体信息..."
     local ffprobe_json
     ffprobe_json=$(extract_mediainfo "$iso_path" "$iso_type")
 
@@ -515,33 +384,11 @@ extract_mediainfo_with_language_enhancement() {
 
     log_info "  ✅ ffprobe 提取成功"
 
-    # 步骤 2：检查语言信息是否需要补充
-    local lang_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="audio" or .codec_type=="subtitle") | select(.tags.language != "und" and .tags.language != null)] | length')
-    local total_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="audio" or .codec_type=="subtitle")] | length')
-
-    log_debug "  语言信息完整度: $lang_count/$total_count"
-
-    # 如果语言信息不完整，尝试 MediaInfo 补充
-    if [ "$lang_count" -lt "$total_count" ] && [ "$iso_type" = "bluray" ]; then
-        log_info "  [步骤2/2] 语言信息不完整，尝试 MediaInfo 补充..."
-
-        local language_map
-        language_map=$(extract_language_from_mpls "$iso_path")
-
-        if [ -n "$language_map" ]; then
-            log_info "  ✅ 正在合并语言信息..."
-            ffprobe_json=$(merge_language_info "$ffprobe_json" "$language_map")
-            log_info "  ✅ 语言信息已补充（MediaInfo）"
-        else
-            log_warn "  ⚠️  MediaInfo 语言补充失败，使用 ffprobe 原始结果"
-        fi
-    else
-        log_info "  [步骤2/2] 语言信息完整，跳过 MediaInfo 补充"
-    fi
-
     echo "$ffprobe_json"
     return 0
 }
+
+#==============================================================================
 
 # v2.7.11 已废弃：此函数太复杂，已被 extract_mediainfo_with_language_enhancement() 替代
 extract_mediainfo_from_mpls() {
@@ -950,7 +797,7 @@ process_iso_strm() {
 
     log_info "  ISO 类型: ${iso_type^^}"
 
-    # 提取媒体信息（v2.7.15 新方案：ffprobe 主提取 + MediaInfo 语言补充）
+    # 提取媒体信息（v2.7.17：纯 ffprobe 方案）
     local ffprobe_output
     log_info "  开始提取媒体信息..."
     ffprobe_output=$(extract_mediainfo_with_language_enhancement "$iso_path" "$iso_type")

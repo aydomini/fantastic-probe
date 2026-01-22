@@ -142,8 +142,7 @@ if [ "$PKG_MANAGER" = "unknown" ]; then
     echo "请手动安装以下依赖："
     echo "  - inotify-tools"
     echo "  - jq"
-    echo "  - genisoimage 或 p7zip"
-    echo "  - mediainfo (v2.7.15+ 必需)"
+    echo "  - genisoimage"
     echo ""
     exit 1
 fi
@@ -179,12 +178,6 @@ if ! command -v isoinfo &> /dev/null; then
     pkg_name=$(get_package_name "$PKG_MANAGER" "genisoimage")
     echo "   需要安装: $pkg_name (提供 isoinfo 命令)"
     PACKAGES_TO_INSTALL+=($pkg_name)
-fi
-
-# 检查 mediainfo（语言信息提取工具）
-if ! command -v mediainfo &> /dev/null; then
-    echo "   需要安装: mediainfo (语言信息提取工具，v2.7.15+ 必需)"
-    PACKAGES_TO_INSTALL+=("mediainfo")
 fi
 
 # 安装依赖

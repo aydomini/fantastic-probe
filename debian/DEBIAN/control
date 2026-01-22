@@ -1,10 +1,10 @@
 Package: fantastic-probe
-Version: 2.7.16
+Version: 2.7.17
 Section: utils
 Priority: optional
 Architecture: all
 Depends: inotify-tools, jq, bash (>= 4.0)
-Recommends: ffmpeg, mediainfo
+Recommends: ffmpeg
 Maintainer: Fantastic-Probe Team <noreply@github.com>
 Homepage: https://github.com/aydomini/fantastic-probe
 Description: ISO 媒体信息实时提取服务
@@ -15,6 +15,6 @@ Description: ISO 媒体信息实时提取服务
  主要特性：
   - 实时监控文件系统事件（inotify）
   - 支持蓝光和 DVD ISO 格式
-  - 语言信息提取（MediaInfo 方案，速度快且稳定）
+  - 纯 ffprobe 方案（快速稳定）
   - systemd 服务集成
   - 日志轮转支持
