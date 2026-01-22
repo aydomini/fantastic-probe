@@ -423,7 +423,7 @@ extract_mediainfo() {
     local retry_count=0
     local max_retries=3
 
-    while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
+    while [ $retry_count -lt $max_retries ]; do
         if [ $retry_count -gt 0 ]; then
             # v2.8.0: 简单重试 - 固定等待 10 秒
             log_warn "  ${iso_type} 协议第 ${retry_count} 次失败，等待 10 秒后重试..."
@@ -462,6 +462,8 @@ extract_mediainfo() {
             return 0
         fi
 
+        # 失败了，清空 ffprobe_json 继续重试
+        ffprobe_json=""
         retry_count=$((retry_count + 1))
     done
 
@@ -476,7 +478,7 @@ extract_mediainfo() {
     log_warn "  ${iso_type} 协议失败（已重试 $max_retries 次），尝试 ${fallback_type} 协议..."
     retry_count=0
 
-    while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
+    while [ $retry_count -lt $max_retries ]; do
         if [ $retry_count -gt 0 ]; then
             # v2.8.0: 简单重试 - 固定等待 10 秒
             log_warn "  ${fallback_type} 协议第 ${retry_count} 次失败，等待 10 秒后重试..."
@@ -515,6 +517,8 @@ extract_mediainfo() {
             return 0
         fi
 
+        # 失败了，清空 ffprobe_json 继续重试
+        ffprobe_json=""
         retry_count=$((retry_count + 1))
     done
 
@@ -991,6 +995,12 @@ scan_existing_files() {
             else
                 ((failed++)) || true
                 log_warn "处理失败，跳过: $strm_file"
+            fi
+
+            # v2.8.0: 任务间隔 - 避免频繁请求触发风控
+            if [ $((processed + failed)) -lt $((total - skipped)) ]; then
+                log_info "⏳ 任务间隔：等待 10 秒后处理下一个文件（避免频繁请求）"
+                sleep 10
             fi
         fi
     done
