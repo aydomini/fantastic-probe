@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.9.0
+# 版本：v2.9.1
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.9.0"
+VERSION="2.9.1"
 
 set -euo pipefail
 
@@ -1180,62 +1180,60 @@ scan_existing_files() {
 queue_processor() {
     log_info "任务队列处理器已启动"
 
-    while true; do
-        # 从队列读取文件路径（阻塞读取）
-        if read -r strm_file < "$QUEUE_FILE"; then
-            log_info "已从队列读取: $(basename "$strm_file")"
+    # 从命名管道读取（自动 FIFO，读取即删除）
+    while read -r strm_file; do
+        log_info "已从队列读取: $(basename "$strm_file")"
 
-            # 等待文件写入完成 + 避免触发网盘频率限制
-            sleep 10
+        # 等待文件写入完成 + 避免触发网盘频率限制
+        sleep 10
 
-            # ==================== 预检查阶段 ====================
+        # ==================== 预检查阶段 ====================
 
-            # 检查1：文件是否存在
-            if [ ! -f "$strm_file" ]; then
-                log_warn "队列中的文件已不存在，跳过: $strm_file"
-                continue
-            fi
-
-            # 检查2：是否已有 mediainfo JSON 文件
-            local strm_dir="$(dirname "$strm_file")"
-            local strm_name="$(basename "$strm_file" .strm)"
-            local json_file="${strm_dir}/${strm_name}-mediainfo.json"
-
-            if [ -f "$json_file" ]; then
-                log_info "跳过（已有JSON）: $(basename "$strm_file")"
-                continue
-            fi
-
-            # 检查3：文件是否可读
-            if [ ! -r "$strm_file" ]; then
-                log_error "文件不可读，跳过: $strm_file"
-                continue
-            fi
-
-            # ==================== 任务执行阶段 ====================
-
-            log_info "=========================================="
-            log_info "从队列处理: $(basename "$strm_file")"
-            log_info "=========================================="
-
-            # 关键修复：错误隔离，防止单个文件失败导致 queue_processor 退出
-            # 保持串行执行（一次只处理一个 ISO，避免网盘风控）
-            set +e
-            process_iso_strm "$strm_file"
-            local exit_code=$?
-            set -e
-
-            if [ $exit_code -eq 0 ]; then
-                log_success "✅ 文件处理成功"
-            else
-                log_error "❌ 文件处理失败（退出码: $exit_code）"
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: 任务失败（退出码: $exit_code） - $strm_file" >> /var/log/fantastic_probe_errors.log
-            fi
-
-            echo "" >&2
-            # 继续处理下一个任务（串行，避免网盘并发风控）
+        # 检查1：文件是否存在
+        if [ ! -f "$strm_file" ]; then
+            log_warn "队列中的文件已不存在，跳过: $strm_file"
+            continue
         fi
-    done
+
+        # 检查2：是否已有 mediainfo JSON 文件
+        local strm_dir="$(dirname "$strm_file")"
+        local strm_name="$(basename "$strm_file" .strm)"
+        local json_file="${strm_dir}/${strm_name}-mediainfo.json"
+
+        if [ -f "$json_file" ]; then
+            log_info "跳过（已有JSON）: $(basename "$strm_file")"
+            continue
+        fi
+
+        # 检查3：文件是否可读
+        if [ ! -r "$strm_file" ]; then
+            log_error "文件不可读，跳过: $strm_file"
+            continue
+        fi
+
+        # ==================== 任务执行阶段 ====================
+
+        log_info "=========================================="
+        log_info "从队列处理: $(basename "$strm_file")"
+        log_info "=========================================="
+
+        # 关键修复：错误隔离，防止单个文件失败导致 queue_processor 退出
+        # 保持串行执行（一次只处理一个 ISO，避免网盘风控）
+        set +e
+        process_iso_strm "$strm_file"
+        local exit_code=$?
+        set -e
+
+        if [ $exit_code -eq 0 ]; then
+            log_success "✅ 文件处理成功"
+        else
+            log_error "❌ 文件处理失败（退出码: $exit_code）"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: 任务失败（退出码: $exit_code） - $strm_file" >> /var/log/fantastic_probe_errors.log
+        fi
+
+        echo "" >&2
+        # 继续处理下一个任务（串行，避免网盘并发风控）
+    done < "$QUEUE_FILE"  # 从命名管道持续读取
 }
 
 #==============================================================================
