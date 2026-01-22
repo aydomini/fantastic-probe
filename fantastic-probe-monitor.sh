@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.18
+# 版本：v2.8.0
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.7.17"
+VERSION="2.8.0"
 
 set -euo pipefail
 
@@ -425,8 +425,18 @@ extract_mediainfo() {
 
     while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
         if [ $retry_count -gt 0 ]; then
-            log_warn "  ${iso_type} 协议第 ${retry_count} 次失败，等待 20 秒后重试（fuse 可能未就绪）..."
-            sleep 20
+            # v2.8.0: 智能重试 - 微量预热 + 渐进等待
+            local warmup_size=$((1024 * retry_count))  # 1KB, 2KB, 3KB...
+            local wait_time=$((5 * retry_count))        # 5s, 10s, 15s...
+
+            log_warn "  ${iso_type} 协议第 ${retry_count} 次失败，智能重试中..."
+            log_info "  ⏳ 预热 fuse 缓存（${warmup_size} 字节）..."
+
+            # 微量预热：用 head 读取少量数据，让 fuse 建立连接
+            timeout 5 head -c $warmup_size "$iso_path" > /dev/null 2>&1 || true
+
+            log_info "  ⏳ 等待 ${wait_time} 秒后重试..."
+            sleep $wait_time
         fi
 
         local start_time=$(date +%s)
@@ -477,8 +487,18 @@ extract_mediainfo() {
 
     while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
         if [ $retry_count -gt 0 ]; then
-            log_warn "  ${fallback_type} 协议第 ${retry_count} 次失败，等待 20 秒后重试..."
-            sleep 20
+            # v2.8.0: 智能重试 - 微量预热 + 渐进等待
+            local warmup_size=$((1024 * retry_count))  # 1KB, 2KB, 3KB...
+            local wait_time=$((5 * retry_count))        # 5s, 10s, 15s...
+
+            log_warn "  ${fallback_type} 协议第 ${retry_count} 次失败，智能重试中..."
+            log_info "  ⏳ 预热 fuse 缓存（${warmup_size} 字节）..."
+
+            # 微量预热：用 head 读取少量数据，让 fuse 建立连接
+            timeout 5 head -c $warmup_size "$iso_path" > /dev/null 2>&1 || true
+
+            log_info "  ⏳ 等待 ${wait_time} 秒后重试..."
+            sleep $wait_time
         fi
 
         local start_time=$(date +%s)
@@ -780,11 +800,7 @@ process_iso_strm() {
         return 1
     fi
 
-    # 等待文件系统稳定（对于 fuse 网盘挂载尤其重要）
-    # v2.7.18: 大幅增加等待时间，解决网络盘初始化慢的问题
-    log_info "  等待文件系统稳定（fuse 网盘准备中，等待 60 秒）..."
-    sleep 60
-
+    # v2.8.0: 删除固定 60 秒等待，改用智能重试机制
     # 检查 ISO 文件
     if [ ! -f "$iso_path" ]; then
         log_error "ISO 文件不存在: $iso_path"
