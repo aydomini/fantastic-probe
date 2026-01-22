@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.8.1
+# 版本：v2.9.0
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.8.1"
+VERSION="2.9.0"
 
 set -euo pipefail
 
@@ -299,6 +299,35 @@ check_disk_space() {
 }
 
 #==============================================================================
+# 检测 ISO 文件是否位于 FUSE 挂载点（v2.9.0 新增）
+#==============================================================================
+
+is_fuse_mount() {
+    local iso_path="$1"
+
+    # 方法1：路径匹配（快速，推荐）
+    # 检测常见 FUSE 网盘挂载关键词
+    if echo "$iso_path" | grep -qE "(pan_115|alist|clouddrive|rclone|strm_cloud|webdav|davfs)"; then
+        log_debug "  检测到 FUSE 挂载路径（路径匹配）"
+        return 0
+    fi
+
+    # 方法2：检查 /proc/mounts（精确但慢，仅在 Linux 上可用）
+    if [ -f /proc/mounts ]; then
+        local mount_point
+        mount_point=$(df "$iso_path" 2>/dev/null | tail -1 | awk '{print $6}')
+        if [ -n "$mount_point" ]; then
+            if grep -q "^[^ ]* $mount_point fuse" /proc/mounts 2>/dev/null; then
+                log_debug "  检测到 FUSE 挂载点（/proc/mounts 验证）"
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+#==============================================================================
 # 智能检测 ISO 类型（v2.7.11 优化：完全移除 mount，改用智能判断）
 #==============================================================================
 
@@ -397,6 +426,77 @@ extract_mediainfo_from_mpls() {
 }
 
 #==============================================================================
+# ffprobe 错误诊断（v2.9.0 新增）
+#==============================================================================
+
+diagnose_ffprobe_error() {
+    local error_msg="$1"
+    local iso_path="$2"
+    local iso_type="${3:-unknown}"
+
+    log_error ""
+    log_error "========== 错误诊断 =========="
+
+    # FUSE 未就绪错误（最常见）
+    if echo "$error_msg" | grep -qE "bdmv_parse_header|udfread ERROR|nav_get_title_list"; then
+        if is_fuse_mount "$iso_path"; then
+            log_warn "诊断：FUSE 网盘文件数据未完全缓存"
+            log_warn "说明：首次访问大文件需要时间下载到本地"
+            log_warn ""
+            log_warn "建议："
+            log_warn "  1. 等待 3-5 分钟后重新处理（推荐）"
+            log_warn "  2. 手动触发缓存："
+            log_warn "     dd if=\"$iso_path\" of=/dev/null bs=1M count=100"
+            log_warn "  3. 检查网络连接和网盘挂载状态"
+        else
+            log_error "诊断：文件可能损坏"
+            log_error "说明：非 FUSE 文件出现此错误通常表示文件真正损坏"
+            log_error ""
+            log_error "建议："
+            log_error "  1. 检查文件完整性（md5sum 或 sha256sum）"
+            log_error "  2. 尝试重新下载或创建 ISO 文件"
+        fi
+    # 文件真正损坏或已删除
+    elif echo "$error_msg" | grep -qE "Input/output error|No such file"; then
+        log_error "诊断：文件损坏或已删除"
+        log_error ""
+        log_error "建议："
+        log_error "  1. 检查文件是否存在：ls -lh \"$iso_path\""
+        log_error "  2. 检查文件系统是否正常"
+        log_error "  3. 尝试重新下载或恢复文件"
+    # 协议不支持
+    elif echo "$error_msg" | grep -qE "Protocol not found"; then
+        log_error "诊断：ffprobe 不支持 ${iso_type} 协议"
+        log_error ""
+        log_error "建议："
+        log_error "  1. 检查 ffprobe 版本（需要 >=4.4）"
+        log_error "  2. 检查编译选项是否启用 bluray 支持："
+        log_error "     ffprobe -protocols 2>&1 | grep bluray"
+        log_error "  3. 重新编译 ffmpeg 或安装完整版本"
+    # 超时错误
+    elif echo "$error_msg" | grep -qE "Terminated|timeout"; then
+        log_error "诊断：ffprobe 执行超时"
+        log_error ""
+        log_error "建议："
+        log_error "  1. 增加超时时间（当前：${FFPROBE_TIMEOUT:-300}秒）"
+        log_error "  2. 检查 FUSE 网盘是否响应缓慢"
+        log_error "  3. 尝试在非高峰时段处理"
+    # 未知错误
+    else
+        log_error "诊断：未知错误"
+        log_error ""
+        log_error "建议："
+        log_error "  1. 查看完整错误信息（见上方日志）"
+        log_error "  2. 手动运行以下命令排查："
+        log_error "     ffprobe -i \"${iso_type}:${iso_path}\""
+        log_error "  3. 检查系统日志：dmesg | tail -50"
+    fi
+
+    log_error "=============================="
+    log_error ""
+}
+
+#==============================================================================
 # 提取媒体信息（v2.7.11 优化：智能回退 + 重试机制）
 #==============================================================================
 
@@ -423,11 +523,22 @@ extract_mediainfo() {
     local retry_count=0
     local max_retries=3
 
+    # v2.9.0: 动态重试间隔（FUSE 文件 vs 本地文件）
+    local retry_intervals=(30 20 10)  # 默认：递减间隔
+    if is_fuse_mount "$iso_path"; then
+        # FUSE 文件可能需要更长时间缓存数据
+        retry_intervals=(60 30 15)
+        log_debug "  FUSE 文件检测：使用长重试间隔 (60/30/15秒)"
+    else
+        log_debug "  本地文件检测：使用标准重试间隔 (30/20/10秒)"
+    fi
+
     while [ $retry_count -lt $max_retries ]; do
         if [ $retry_count -gt 0 ]; then
-            # v2.8.0: 简单重试 - 固定等待 10 秒
-            log_warn "  ${iso_type} 协议第 ${retry_count} 次失败，等待 10 秒后重试..."
-            sleep 10
+            # v2.9.0: 动态重试间隔
+            local wait_time=${retry_intervals[$((retry_count - 1))]}
+            log_warn "  ${iso_type} 协议第 ${retry_count} 次失败，等待 ${wait_time} 秒后重试..."
+            sleep $wait_time
         fi
 
         local start_time=$(date +%s)
@@ -478,11 +589,16 @@ extract_mediainfo() {
     log_warn "  ${iso_type} 协议失败（已重试 $max_retries 次），尝试 ${fallback_type} 协议..."
     retry_count=0
 
+    # v2.9.0: 备用协议也使用动态间隔（复用主协议的设置）
+    # retry_intervals 已在主协议中根据 FUSE 检测设置
+    local last_error_msg=""  # 保存最后一次错误信息用于诊断
+
     while [ $retry_count -lt $max_retries ]; do
         if [ $retry_count -gt 0 ]; then
-            # v2.8.0: 简单重试 - 固定等待 10 秒
-            log_warn "  ${fallback_type} 协议第 ${retry_count} 次失败，等待 10 秒后重试..."
-            sleep 10
+            # v2.9.0: 动态重试间隔
+            local wait_time=${retry_intervals[$((retry_count - 1))]}
+            log_warn "  ${fallback_type} 协议第 ${retry_count} 次失败，等待 ${wait_time} 秒后重试..."
+            sleep $wait_time
         fi
 
         local start_time=$(date +%s)
@@ -507,6 +623,8 @@ extract_mediainfo() {
                 head -5 "$ffprobe_stderr" | while IFS= read -r line; do
                     log_warn "    $line"
                 done
+                # v2.9.0: 保存最后一次错误信息用于诊断
+                last_error_msg=$(cat "$ffprobe_stderr")
             fi
         fi
         rm -f "$ffprobe_stderr"
@@ -524,9 +642,16 @@ extract_mediainfo() {
 
     # 两种协议都失败
     log_error "  ⚠️  bluray 和 dvd 协议均失败（各重试 $max_retries 次）"
-    log_error "  可能原因: 文件损坏、非标准 ISO、网络问题、或 fuse 挂载异常"
-    log_error "  建议: 检查 ISO 文件是否可读，尝试手动运行："
-    log_error "        ffprobe -i \"bluray:${iso_path}\""
+
+    # v2.9.0: 调用错误诊断函数
+    if [ -n "$last_error_msg" ]; then
+        diagnose_ffprobe_error "$last_error_msg" "$iso_path" "$fallback_type"
+    else
+        log_error "  未能捕获详细错误信息，请查看上方日志"
+        log_error "  建议: 尝试手动运行："
+        log_error "        ffprobe -i \"bluray:${iso_path}\""
+    fi
+
     return 1
 }
 
@@ -788,9 +913,40 @@ process_iso_strm() {
 
     # v2.8.0: 删除固定 60 秒等待，改用智能重试机制
     # 检查 ISO 文件
+    # v2.9.0: FUSE 网盘文件智能等待机制
+    # 问题：FUSE 挂载点配置了目录列表缓存（如 60 秒）
+    # 现象：.iso.strm 和 .iso 同时移动到目录，但 FUSE 缓存未刷新，导致 .iso 文件暂时不可见
+    # 解决：检测到 FUSE 文件不存在时，主动刷新缓存并等待
     if [ ! -f "$iso_path" ]; then
-        log_error "ISO 文件不存在: $iso_path"
-        return 1
+        # 判断是否为 FUSE 挂载点
+        if is_fuse_mount "$iso_path"; then
+            log_warn "ISO 文件暂时不可见（FUSE 目录缓存未刷新）"
+            log_info "尝试刷新 FUSE 目录缓存..."
+
+            # 主动触发缓存刷新：访问父目录
+            local iso_dir=$(dirname "$iso_path")
+            ls "$iso_dir" >/dev/null 2>&1 || true
+
+            # 等待 FUSE 缓存刷新（根据 FUSE 配置调整，通常 60 秒）
+            log_info "等待 60 秒让 FUSE 目录缓存刷新..."
+            sleep 60
+
+            # 重新检查
+            if [ ! -f "$iso_path" ]; then
+                log_error "等待后 ISO 文件仍不存在: $iso_path"
+                log_error "可能原因："
+                log_error "  1. 文件移动失败或路径错误"
+                log_error "  2. FUSE 挂载异常（尝试重新挂载网盘）"
+                log_error "  3. .strm 文件内容路径错误"
+                return 1
+            fi
+
+            log_info "✅ FUSE 缓存已刷新，ISO 文件已可见"
+        else
+            # 本地文件不存在，直接失败
+            log_error "ISO 文件不存在: $iso_path"
+            return 1
+        fi
     fi
 
     if [ ! -r "$iso_path" ]; then
