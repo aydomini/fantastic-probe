@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.7.14
+# 版本：v2.7.15
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.7.14"
+VERSION="2.7.15"
 
 set -euo pipefail
 
@@ -364,144 +364,98 @@ detect_iso_type() {
 }
 
 #==============================================================================
-# 从 MPLS 补充语言信息（轻量级方案）
-# v2.7.11 新增：仅提取语言信息，不提取完整媒体信息
+# 从 ISO 补充语言信息（MediaInfo 方案）
+# v2.7.15 革命性简化：使用 MediaInfo 替代 mount + pympls
+#   - 无需 mount ISO（避免 fuse 网盘慢的问题）
+#   - 无需 pympls 解析（避免复杂的 MPLS 解析）
+#   - 速度快（秒级完成 vs 分钟级）
+#   - 稳定可靠（成熟工具）
 #==============================================================================
 
 extract_language_from_mpls() {
     local iso_path="$1"
 
-    log_info "  [语言补充] 尝试从 MPLS 获取语言信息..."
+    log_info "  [语言补充] 尝试从 ISO 获取语言信息（MediaInfo 方案）..."
 
-    # v2.7.13 新方案：mount + pympls（放弃 7z，支持 UDF 格式）
-
-    # 检查 pympls
-    if ! python3 -c "import pympls" 2>/dev/null; then
-        log_warn "  pympls 未安装，跳过语言补充"
+    # 检查 mediainfo 是否安装
+    if ! command -v mediainfo &> /dev/null; then
+        log_warn "  mediainfo 未安装，跳过语言补充"
+        log_warn "  安装命令: sudo apt install mediainfo"
         return 1
     fi
-    log_debug "    ✅ pympls 已安装"
 
-    # 创建临时挂载点
-    local mount_point=$(mktemp -d)
-    local pympls_output=$(mktemp)
-    local pympls_error=$(mktemp)
-    trap "umount '$mount_point' 2>/dev/null; rmdir '$mount_point' 2>/dev/null; rm -f '$pympls_output' '$pympls_error'" RETURN
-
-    # 挂载 ISO（使用 Linux 原生 mount，支持 UDF）
-    log_debug "    挂载 ISO（mount -o ro,loop）..."
+    # 使用 mediainfo 提取 JSON 格式信息
     local start_time=$(date +%s)
-
-    if ! mount -o ro,loop "$iso_path" "$mount_point" 2>/dev/null; then
-        local duration=$(($(date +%s) - start_time))
-        log_warn "  mount 失败（耗时 ${duration}秒），跳过语言补充"
-        return 1
-    fi
-
+    local mediainfo_json=$(mediainfo --Output=JSON "$iso_path" 2>/dev/null)
+    local mediainfo_exit=$?
     local duration=$(($(date +%s) - start_time))
-    log_debug "    ✅ mount 成功（耗时 ${duration}秒）"
 
-    # 查找主 MPLS（最大的文件）
-    local playlist_dir="$mount_point/BDMV/PLAYLIST"
-    if [ ! -d "$playlist_dir" ]; then
-        log_warn "    未找到 BDMV/PLAYLIST 目录"
+    if [ $mediainfo_exit -ne 0 ] || [ -z "$mediainfo_json" ]; then
+        log_warn "  mediainfo 提取失败（退出码 $mediainfo_exit，耗时 ${duration}秒）"
         return 1
     fi
 
-    local main_mpls=$(find "$playlist_dir" -type f \( -name "*.mpls" -o -name "*.MPLS" \) -printf '%s %p\n' 2>/dev/null | \
-        sort -rn | head -1 | cut -d' ' -f2-)
+    log_debug "    ✅ mediainfo 提取成功（耗时 ${duration}秒）"
 
-    if [ -z "$main_mpls" ] || [ ! -f "$main_mpls" ]; then
-        log_warn "    未找到 MPLS 文件"
-        return 1
-    fi
-
-    local mpls_size=$(stat -c%s "$main_mpls" 2>/dev/null || stat -f%z "$main_mpls" 2>/dev/null)
-    log_info "    解析 MPLS: $(basename "$main_mpls") (${mpls_size} bytes)"
-
-    # 使用 pympls 解析（内嵌 Python 代码，无需外部脚本）
-    # v2.7.14 优化：处理多 PlayItem、改进错误处理
-
-    python3 <<PYEOF >"$pympls_output" 2>"$pympls_error"
-import sys
-import json
-import pympls
-
-def bytes_to_str(data):
-    """转换 bytes 为字符串"""
-    if isinstance(data, bytes):
-        try:
-            return data.decode('utf-8').strip('\x00')
-        except:
-            return data.decode('latin1', errors='ignore').strip('\x00')
-    return data
-
-try:
-    mpls = pympls.MPLS("$main_mpls")
-    play_items = mpls.PlayList.get('PlayItems', [])
-
-    if not play_items:
-        print(json.dumps({'error': 'No PlayItems found'}), file=sys.stderr)
-        sys.exit(1)
-
-    # 遍历所有 PlayItem，选择流最多的那个
-    best_streams = {'audio': [], 'subtitle': []}
-    max_stream_count = 0
-
-    for idx, play_item in enumerate(play_items):
-        stn_table = play_item.get('STNTable', {})
-
-        audio_streams = []
-        for i, audio in enumerate(stn_table.get('PrimaryAudioStreamEntries', [])):
-            attrs = audio.get('StreamAttributes', {})
-            lang = bytes_to_str(attrs.get('LanguageCode', b'und'))
-            audio_streams.append({'Index': i, 'Language': lang})
-
-        subtitle_streams = []
-        for i, subtitle in enumerate(stn_table.get('PrimaryPGStreamEntries', [])):
-            attrs = subtitle.get('StreamAttributes', {})
-            lang = bytes_to_str(attrs.get('LanguageCode', b'und'))
-            subtitle_streams.append({'Index': i, 'Language': lang})
-
-        total = len(audio_streams) + len(subtitle_streams)
-        if total > max_stream_count:
-            max_stream_count = total
-            best_streams = {'audio': audio_streams, 'subtitle': subtitle_streams}
-
-    print(json.dumps(best_streams))
-    sys.exit(0)
-
-except Exception as e:
-    import traceback
-    print(json.dumps({'error': str(e), 'traceback': traceback.format_exc()}), file=sys.stderr)
-    sys.exit(1)
-PYEOF
-    local pympls_exit=$?
-
-    # 读取输出和错误
-    local language_map=$(cat "$pympls_output")
-    local pympls_err=$(cat "$pympls_error")
-
-    if [ $pympls_exit -ne 0 ]; then
-        log_warn "    pympls 解析失败（退出码 $pympls_exit）"
-        if [ -n "$pympls_err" ]; then
-            log_debug "    错误: $(echo "$pympls_err" | jq -r '.error' 2>/dev/null || echo "$pympls_err" | head -3)"
-        fi
-        return 1
-    fi
+    # 解析语言信息并转换为标准格式
+    local language_map=$(echo "$mediainfo_json" | jq -c '
+        if .media.track then
+            {
+                audio: [
+                    .media.track[] |
+                    select(."@type" == "Audio") |
+                    {
+                        Index: ((.StreamOrder // (.ID // "0") | tostring) | tonumber),
+                        Language: (.Language // "und" | ascii_downcase |
+                            if length == 2 then .
+                            elif . == "chinese" then "zho"
+                            elif . == "english" then "eng"
+                            elif . == "japanese" then "jpn"
+                            elif . == "korean" then "kor"
+                            elif . == "cantonese" then "yue"
+                            else "und"
+                            end
+                        )
+                    }
+                ],
+                subtitle: [
+                    .media.track[] |
+                    select(."@type" == "Text" or ."@type" == "Subtitle") |
+                    {
+                        Index: ((.StreamOrder // (.ID // "0") | tostring) | tonumber),
+                        Language: (.Language // "und" | ascii_downcase |
+                            if length == 2 then .
+                            elif . == "chinese" then "zho"
+                            elif . == "english" then "eng"
+                            elif . == "japanese" then "jpn"
+                            elif . == "korean" then "kor"
+                            elif . == "cantonese" then "yue"
+                            else "und"
+                            end
+                        )
+                    }
+                ]
+            }
+        else
+            {audio: [], subtitle: []}
+        end
+    ')
 
     # 验证 JSON 格式
     if ! echo "$language_map" | jq -e '.audio' >/dev/null 2>&1; then
-        log_warn "    语言映射 JSON 无效"
-        log_debug "    输出: $(echo "$language_map" | head -5)"
-        if [ -n "$pympls_err" ]; then
-            log_debug "    错误: $(echo "$pympls_err" | head -5)"
-        fi
+        log_warn "  语言映射 JSON 无效"
+        log_debug "  mediainfo 输出: $(echo "$mediainfo_json" | head -10)"
         return 1
     fi
 
     local audio_count=$(echo "$language_map" | jq '.audio | length')
     local subtitle_count=$(echo "$language_map" | jq '.subtitle | length')
+
+    if [ "$audio_count" -eq 0 ] && [ "$subtitle_count" -eq 0 ]; then
+        log_warn "  未找到音轨或字幕信息"
+        return 1
+    fi
+
     log_info "    ✅ 语言信息提取成功（${audio_count}音轨, ${subtitle_count}字幕）"
 
     echo "$language_map"
@@ -972,7 +926,7 @@ process_iso_strm() {
     fi
 
     # 等待文件系统稳定（对于 fuse 网盘挂载尤其重要）
-    # v2.7.11: 增加到 10 秒，给 fuse 网盘更多准备时间
+    # v2.7.15: MediaInfo 方案无需 mount，但 ffprobe 仍需等待 fuse 初始化
     log_info "  等待文件系统稳定（fuse 网盘准备中）..."
     sleep 10
 
