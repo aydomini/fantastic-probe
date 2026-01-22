@@ -1,7 +1,7 @@
 {
-  "version": "2.7.13",
+  "version": "2.7.14",
   "release_date": "2026-01-22",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.13.tar.gz",
+  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.7.14.tar.gz",
   "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🚀 革命性优化：mount + pympls 替代 7z（支持 UDF 格式，速度提升 10 倍）"
+  "changelog": "🐛 修复多 PlayItem MPLS 解析 + 增强错误处理"
 }
