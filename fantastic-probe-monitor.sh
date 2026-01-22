@@ -425,18 +425,9 @@ extract_mediainfo() {
 
     while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
         if [ $retry_count -gt 0 ]; then
-            # v2.8.0: 智能重试 - 微量预热 + 渐进等待
-            local warmup_size=$((1024 * retry_count))  # 1KB, 2KB, 3KB...
-            local wait_time=$((5 * retry_count))        # 5s, 10s, 15s...
-
-            log_warn "  ${iso_type} 协议第 ${retry_count} 次失败，智能重试中..."
-            log_info "  ⏳ 预热 fuse 缓存（${warmup_size} 字节）..."
-
-            # 微量预热：用 head 读取少量数据，让 fuse 建立连接
-            timeout 5 head -c $warmup_size "$iso_path" > /dev/null 2>&1 || true
-
-            log_info "  ⏳ 等待 ${wait_time} 秒后重试..."
-            sleep $wait_time
+            # v2.8.0: 简单重试 - 固定等待 10 秒
+            log_warn "  ${iso_type} 协议第 ${retry_count} 次失败，等待 10 秒后重试..."
+            sleep 10
         fi
 
         local start_time=$(date +%s)
@@ -487,18 +478,9 @@ extract_mediainfo() {
 
     while [ $retry_count -lt $max_retries ] && [ -z "$ffprobe_json" ]; do
         if [ $retry_count -gt 0 ]; then
-            # v2.8.0: 智能重试 - 微量预热 + 渐进等待
-            local warmup_size=$((1024 * retry_count))  # 1KB, 2KB, 3KB...
-            local wait_time=$((5 * retry_count))        # 5s, 10s, 15s...
-
-            log_warn "  ${fallback_type} 协议第 ${retry_count} 次失败，智能重试中..."
-            log_info "  ⏳ 预热 fuse 缓存（${warmup_size} 字节）..."
-
-            # 微量预热：用 head 读取少量数据，让 fuse 建立连接
-            timeout 5 head -c $warmup_size "$iso_path" > /dev/null 2>&1 || true
-
-            log_info "  ⏳ 等待 ${wait_time} 秒后重试..."
-            sleep $wait_time
+            # v2.8.0: 简单重试 - 固定等待 10 秒
+            log_warn "  ${fallback_type} 协议第 ${retry_count} 次失败，等待 10 秒后重试..."
+            sleep 10
         fi
 
         local start_time=$(date +%s)
