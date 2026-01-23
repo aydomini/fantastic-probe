@@ -4,11 +4,11 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.9.1
+# 版本：v2.9.2
 #==============================================================================
 
 # 版本号（用于更新检查和版本显示）
-VERSION="2.9.1"
+VERSION="2.9.2"
 
 set -euo pipefail
 
@@ -1130,9 +1130,8 @@ scan_existing_files() {
         return 0
     fi
 
-    local processed=0
+    local queued=0
     local skipped=0
-    local failed=0
 
     # 临时关闭 errexit，避免单个文件失败导致函数退出
     set +e
@@ -1145,19 +1144,11 @@ scan_existing_files() {
         if [ -f "$json_file" ]; then
             ((skipped++)) || true
         else
-            log_info "处理现有文件: $strm_file"
-            if process_iso_strm "$strm_file" 2>&1; then
-                ((processed++)) || true
-            else
-                ((failed++)) || true
-                log_warn "处理失败，跳过: $strm_file"
-            fi
-
-            # v2.8.0: 任务间隔 - 避免频繁请求触发风控
-            if [ $((processed + failed)) -lt $((total - skipped)) ]; then
-                log_info "⏳ 任务间隔：等待 10 秒后处理下一个文件（避免频繁请求）"
-                sleep 10
-            fi
+            # v2.9.2 修复：将未处理文件添加到队列，而不是同步处理
+            # 这样可以避免启动扫描阻塞，确保所有文件都被队列处理器处理
+            log_info "加入队列（启动扫描）: $(basename "$strm_file")"
+            echo "$strm_file" >> "$QUEUE_FILE" 2>/dev/null || log_warn "无法加入队列: $strm_file"
+            ((queued++)) || true
         fi
     done
 
@@ -1166,7 +1157,7 @@ scan_existing_files() {
 
     log_info "=========================================="
     log_info "启动扫描完成"
-    log_info "总计: $total, 已处理: $processed, 已存在: $skipped, 失败: $failed"
+    log_info "总计: $total, 已加入队列: $queued, 已存在: $skipped"
     log_info "=========================================="
     echo "" >&2
 
@@ -1294,11 +1285,11 @@ main() {
     log_info "防抖时间: ${DEBOUNCE_TIME}秒"
     log_info "任务队列: 串行处理（防止资源耗尽）"
 
-    # 启动时扫描现有文件（即使失败也继续）
-    scan_existing_files || log_warn "启动扫描出现错误，但服务将继续运行"
-
-    # 创建任务队列（命名管道 FIFO）
+    # v2.9.2 修复：先创建队列和启动处理器，再执行启动扫描
+    # 这样可以确保所有文件（包括启动时的现有文件）都通过队列处理器统一处理
+    log_info "=========================================="
     log_info "初始化任务队列..."
+    log_info "=========================================="
     rm -f "$QUEUE_FILE"
     mkfifo "$QUEUE_FILE"
     log_info "任务队列已创建: $QUEUE_FILE"
@@ -1307,6 +1298,10 @@ main() {
     queue_processor &
     QUEUE_PID=$!
     log_info "任务队列处理器已启动（PID: $QUEUE_PID）"
+    echo "" >&2
+
+    # 启动时扫描现有文件，将未处理文件加入队列（即使失败也继续）
+    scan_existing_files || log_warn "启动扫描出现错误，但服务将继续运行"
 
     # 开始监控
     log_info "=========================================="
