@@ -31,7 +31,8 @@ trap cleanup EXIT INT TERM
 SERVICE_NAME="fantastic-probe-monitor"
 CONFIG_FILE="/etc/fantastic-probe/config"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATIC_DIR="/usr/share/fantastic-probe/static"  # 预编译包本地缓存路径（已废弃）
+STATIC_DIR="/usr/share/fantastic-probe/static"  # 预编译包本地缓存路径
+FFPROBE_RELEASE_TAG="ffprobe-prebuilt-v1.0"  # FFprobe 预编译包 Release 版本
 
 #==============================================================================
 # 工具函数
@@ -180,26 +181,29 @@ reconfigure_ffprobe() {
     ARCH=$(uname -m)
     PREBUILT_AVAILABLE=false
     PREBUILT_SOURCE=""
+    PREBUILT_URL=""
     ARCH_NAME=""
 
-    # 仅检查本地缓存（不再从 GitHub 下载预编译包）
+    # 检查本地缓存和 GitHub Release 可用性
     if [ "$ARCH" = "x86_64" ]; then
         ARCH_NAME="x86_64"
         if [ -f "$STATIC_DIR/ffprobe_linux_x64.zip" ]; then
             PREBUILT_AVAILABLE=true
             PREBUILT_SOURCE="$STATIC_DIR/ffprobe_linux_x64.zip"
         fi
+        PREBUILT_URL="https://github.com/aydomini/fantastic-probe/releases/download/$FFPROBE_RELEASE_TAG/ffprobe_linux_x64.zip"
     elif [ "$ARCH" = "aarch64" ]; then
         ARCH_NAME="ARM64"
         if [ -f "$STATIC_DIR/ffprobe_linux_arm64.zip" ]; then
             PREBUILT_AVAILABLE=true
             PREBUILT_SOURCE="$STATIC_DIR/ffprobe_linux_arm64.zip"
         fi
+        PREBUILT_URL="https://github.com/aydomini/fantastic-probe/releases/download/$FFPROBE_RELEASE_TAG/ffprobe_linux_arm64.zip"
     fi
 
     local new_ffprobe=""
 
-    # 如果有本地缓存，提供安装选项
+    # 方案 1: 如果有本地缓存，提供安装选项
     if [ "$PREBUILT_AVAILABLE" = true ]; then
         echo "   ✅ 检测到架构: $ARCH_NAME"
         echo "   ✅ 找到本地缓存的预编译 ffprobe"
@@ -257,7 +261,101 @@ reconfigure_ffprobe() {
             # 清理临时文件
             rm -rf "$TEMP_DIR"
         else
-            echo "   ℹ️  跳过本地缓存，进入手动配置..."
+            echo "   ℹ️  跳过本地缓存，进入其他配置选项..."
+        fi
+
+    # 方案 2: 如果本地缓存不存在且架构支持，提供从 GitHub 下载的选项
+    elif [ -n "$PREBUILT_URL" ]; then
+        echo "   ✅ 检测到架构: $ARCH_NAME"
+        echo "   ℹ️  本地缓存不存在，可从 GitHub 下载预编译 ffprobe"
+        echo ""
+        read -p "   是否下载并安装预编译 ffprobe？[Y/n]: " download_choice
+        download_choice="${download_choice:-Y}"
+
+        if [[ "$download_choice" =~ ^[Yy]$ ]]; then
+            echo ""
+            echo "   📥 正在下载预编译 ffprobe..."
+
+            # 检查 unzip
+            if ! command -v unzip &> /dev/null; then
+                echo "   ⚠️  需要安装 unzip 工具"
+                read -p "   现在安装 unzip？[Y/n]: " install_unzip
+                if [[ "$install_unzip" =~ ^[Yy]$ ]]; then
+                    apt-get update && apt-get install -y unzip
+                else
+                    echo "   ❌ 无法继续，需要 unzip"
+                    return 1
+                fi
+            fi
+
+            # 准备临时目录和缓存目录
+            TEMP_DIR="/tmp/ffprobe-config-$$"
+            mkdir -p "$TEMP_DIR"
+            mkdir -p "$STATIC_DIR"
+
+            # 使用 curl 或 wget 下载
+            DOWNLOAD_SUCCESS=false
+            if command -v curl &> /dev/null; then
+                if curl -fL "$PREBUILT_URL" -o "$TEMP_DIR/ffprobe.zip" --progress-bar; then
+                    DOWNLOAD_SUCCESS=true
+                    echo "   ✅ 下载完成"
+                else
+                    echo "   ❌ 下载失败"
+                fi
+            elif command -v wget &> /dev/null; then
+                if wget --show-progress "$PREBUILT_URL" -O "$TEMP_DIR/ffprobe.zip" 2>&1; then
+                    DOWNLOAD_SUCCESS=true
+                    echo "   ✅ 下载完成"
+                else
+                    echo "   ❌ 下载失败"
+                fi
+            else
+                echo "   ❌ 错误: 需要 curl 或 wget"
+            fi
+
+            # 如果下载成功，解压并安装
+            if [ "$DOWNLOAD_SUCCESS" = true ] && [ -f "$TEMP_DIR/ffprobe.zip" ]; then
+                echo "   📦 正在安装..."
+
+                if unzip -q "$TEMP_DIR/ffprobe.zip" -d "$TEMP_DIR" 2>/dev/null; then
+                    if [ -f "$TEMP_DIR/ffprobe" ]; then
+                        cp "$TEMP_DIR/ffprobe" /usr/local/bin/ffprobe
+                        chmod +x /usr/local/bin/ffprobe
+                        new_ffprobe="/usr/local/bin/ffprobe"
+
+                        if /usr/local/bin/ffprobe -version &> /dev/null; then
+                            echo "   ✅ ffprobe 已安装到: /usr/local/bin/ffprobe"
+                            echo "   ✅ 安装成功！"
+
+                            # 保存到本地缓存供下次使用
+                            if [ "$ARCH" = "x86_64" ]; then
+                                cp "$TEMP_DIR/ffprobe.zip" "$STATIC_DIR/ffprobe_linux_x64.zip"
+                            else
+                                cp "$TEMP_DIR/ffprobe.zip" "$STATIC_DIR/ffprobe_linux_arm64.zip"
+                            fi
+                            echo "   ℹ️  已保存到本地缓存"
+                        else
+                            echo "   ❌ 安装失败: ffprobe 无法执行"
+                            new_ffprobe=""
+                        fi
+                    else
+                        echo "   ❌ 错误: 解压后未找到 ffprobe"
+                        new_ffprobe=""
+                    fi
+                else
+                    echo "   ❌ 解压失败"
+                    new_ffprobe=""
+                fi
+            fi
+
+            # 清理临时文件
+            rm -rf "$TEMP_DIR"
+
+            if [ -z "$new_ffprobe" ]; then
+                echo "   ℹ️  下载失败，进入手动配置..."
+            fi
+        else
+            echo "   ℹ️  跳过下载，进入手动配置..."
         fi
     fi
 
