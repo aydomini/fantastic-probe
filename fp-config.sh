@@ -1,4 +1,5 @@
 #!/bin/bash
+export LC_ALL=C.UTF-8
 
 #==============================================================================
 # Fantastic-Probe 配置工具
@@ -612,8 +613,8 @@ check_updates() {
     LOCAL_VERSION=""
 
     if [ -f "/usr/local/bin/get-version.sh" ]; then
-        # 使用 get-version.sh 获取动态版本号
-        LOCAL_VERSION=$(bash /usr/local/bin/get-version.sh 2>/dev/null | grep "当前版本" | cut -d'：' -f2 | tr -d ' ' || echo "")
+        # 使用 get-version.sh 获取动态版本号（--version 参数返回纯版本号）
+        LOCAL_VERSION=$(bash /usr/local/bin/get-version.sh --version 2>/dev/null || echo "")
     fi
 
     # 回退方案：从安装的脚本中读取

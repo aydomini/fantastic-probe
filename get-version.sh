@@ -1,4 +1,5 @@
 #!/bin/bash
+export LC_ALL=C.UTF-8
 
 #==============================================================================
 # 动态版本号获取脚本
@@ -101,19 +102,25 @@ export VERSION
 
 # 如果直接执行此脚本，输出版本信息
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
-    echo "=========================================="
-    echo "Fantastic-Probe 版本信息"
-    echo "=========================================="
-    echo ""
-    echo "当前版本：$VERSION"
-    echo ""
-
-    # 显示获取来源
-    if command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ] && git -C "$SCRIPT_DIR" describe --tags &>/dev/null 2>&1; then
-        echo "来源：Git tags ($(git -C "$SCRIPT_DIR" describe --tags --abbrev=0))"
-    elif echo "$VERSION" | grep -qE "^\d+\.\d+\.\d+$"; then
-        echo "来源：GitHub API 或硬编码默认值"
+    # 支持 --version 参数，仅输出版本号（供脚本解析使用）
+    if [ "$1" = "--version" ]; then
+        echo "$VERSION"
     else
-        echo "来源：硬编码默认值"
+        # 人类可读的友好输出格式
+        echo "=========================================="
+        echo "Fantastic-Probe 版本信息"
+        echo "=========================================="
+        echo ""
+        echo "当前版本：$VERSION"
+        echo ""
+
+        # 显示获取来源
+        if command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ] && git -C "$SCRIPT_DIR" describe --tags &>/dev/null 2>&1; then
+            echo "来源：Git tags ($(git -C "$SCRIPT_DIR" describe --tags --abbrev=0))"
+        elif echo "$VERSION" | grep -qE "^\d+\.\d+\.\d+$"; then
+            echo "来源：GitHub API 或硬编码默认值"
+        else
+            echo "来源：硬编码默认值"
+        fi
     fi
 fi
