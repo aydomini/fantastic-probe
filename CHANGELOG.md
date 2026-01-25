@@ -7,6 +7,68 @@
 
 ---
 
+## [3.1.4] - 2026-01-25
+
+### 🐛 修复：fp-config 完全适配 Cron 模式，移除 systemd 遗留代码
+
+**问题描述**
+- ❌ v3.1.3 已迁移到 Cron 定时任务模式，但 `fp-config.sh` 中仍保留旧的 systemd 服务代码
+- ❌ 用户配置 FFprobe 后尝试重启服务时报错：`Unit fantastic-probe-monitor.service not found`
+
+**核心修复**
+- ✅ **restart_service() 函数**：自动检测 Cron/systemd 模式，适配不同提示
+  - Cron 模式：提示"配置将在下次扫描时生效（最多等待 1 分钟）"，无需重启
+  - systemd 模式：保留原有重启逻辑（向后兼容）
+
+- ✅ **show_service_status() 函数**：根据模式显示不同状态
+  - Cron 模式：显示定时任务配置、最近日志（tail -10）
+  - systemd 模式：显示 systemctl status 输出
+
+- ✅ **start_service() 函数**：适配 Cron 模式
+  - Cron 模式：提示任务已自动启用，无需手动启动
+  - systemd 模式：正常启动服务
+
+- ✅ **stop_service() 函数**：适配 Cron 模式
+  - Cron 模式：提供禁用选项（移动配置文件）或卸载
+  - systemd 模式：正常停止服务
+
+- ✅ **配置修改函数**：统一更新提示信息
+  - `change_strm_root()`: 适配 Cron 模式提示
+  - `reconfigure_ffprobe()`: 适配 Cron 模式提示
+  - `edit_config_file()`: 适配 Cron 模式提示
+
+- ✅ **install_updates() 函数**：更新后自动检测模式
+  - Cron 模式：提示配置已更新，无需重启
+  - systemd 模式：执行服务重启
+
+**用户影响**
+- ✅ 所有配置操作不再报错
+- ✅ 提示信息准确反映当前运行模式
+- ✅ 配置更改后自动在下次 Cron 扫描时生效
+- ✅ 完全向后兼容 systemd 模式（如果存在）
+
+**技术细节**
+```
+修改文件：1 个
+- fp-config.sh: 6 处核心函数适配 Cron 模式（约 150 行代码重构）
+
+检测逻辑：
+if [ -f "/etc/cron.d/fantastic-probe" ]; then
+    # Cron 模式处理
+elif systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
+    # systemd 模式处理（向后兼容）
+else
+    # 未检测到服务
+fi
+```
+
+**验证**
+- ✅ 脚本语法检查通过：`bash -n fp-config.sh`
+- ✅ 所有服务管理功能正常工作
+- ✅ Cron 模式用户不再看到 systemd 错误
+
+---
+
 ## [3.1.3] - 2026-01-25
 
 ### 🧹 架构优化：完全迁移到 GitHub Releases + UTF-8 兼容性增强

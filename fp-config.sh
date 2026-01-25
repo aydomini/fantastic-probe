@@ -80,22 +80,46 @@ show_current_config() {
 # 重启服务
 restart_service() {
     echo ""
-    echo "🔄 重启服务以应用配置..."
+    echo "🔄 应用配置..."
 
-    if systemctl restart "$SERVICE_NAME"; then
-        echo "   ✅ 服务重启成功"
-        sleep 2
-        if systemctl is-active --quiet "$SERVICE_NAME"; then
-            echo "   ✅ 服务运行正常"
+    # 检查是否使用 Cron 模式（检测 cron 配置文件）
+    if [ -f "/etc/cron.d/fantastic-probe" ]; then
+        # Cron 模式：配置会在下一次定时任务执行时自动生效
+        echo "   ℹ️  检测到 Cron 模式（定时任务）"
+        echo "   ✅ 配置已更新，将在下一次扫描时生效（最多等待 1 分钟）"
+        echo ""
+        echo "   💡 提示："
+        echo "      • Cron 任务每分钟执行一次"
+        echo "      • 配置更改会自动应用，无需手动重启"
+        echo "      • 查看运行日志: tail -f /var/log/fantastic_probe.log"
+        echo ""
+        return 0
+    fi
+
+    # systemd 服务模式（向后兼容）
+    if systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
+        echo "   ℹ️  检测到 systemd 服务模式"
+        if systemctl restart "$SERVICE_NAME"; then
+            echo "   ✅ 服务重启成功"
+            sleep 2
+            if systemctl is-active --quiet "$SERVICE_NAME"; then
+                echo "   ✅ 服务运行正常"
+            else
+                echo "   ⚠️  警告: 服务未能正常启动"
+                echo "   请检查: systemctl status $SERVICE_NAME"
+            fi
         else
-            echo "   ⚠️  警告: 服务未能正常启动"
+            echo "   ❌ 服务重启失败"
             echo "   请检查: systemctl status $SERVICE_NAME"
+            return 1
         fi
     else
-        echo "   ❌ 服务重启失败"
-        echo "   请检查: systemctl status $SERVICE_NAME"
-        return 1
+        # 找不到服务，但配置已更新
+        echo "   ⚠️  未检测到 systemd 服务或 Cron 任务"
+        echo "   ✅ 配置文件已更新"
+        echo "   ℹ️  请手动重启服务或等待 Cron 任务执行"
     fi
+
     echo ""
 }
 
@@ -164,8 +188,12 @@ change_strm_root() {
     if [[ "$do_restart" =~ ^[Yy]$ ]]; then
         restart_service
     else
-        echo "   ⚠️  配置已更新，但需要重启服务才能生效"
-        echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        echo "   ⚠️  配置已更新，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+        else
+            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        fi
     fi
 }
 
@@ -458,8 +486,12 @@ reconfigure_ffprobe() {
     if [[ "$do_restart" =~ ^[Yy]$ ]]; then
         restart_service
     else
-        echo "   ⚠️  配置已更新，但需要重启服务才能生效"
-        echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        echo "   ⚠️  配置已更新，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+        else
+            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        fi
     fi
 }
 
@@ -544,8 +576,12 @@ edit_config_file() {
     if [[ "$do_restart" =~ ^[Yy]$ ]]; then
         restart_service
     else
-        echo "   ⚠️  配置已修改，但需要重启服务才能生效"
-        echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        echo "   ⚠️  配置已修改，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+        else
+            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        fi
     fi
 }
 
@@ -558,7 +594,36 @@ show_service_status() {
     echo ""
     echo "📊 服务状态"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    systemctl status "$SERVICE_NAME" --no-pager || true
+
+    # 检查是否使用 Cron 模式
+    if [ -f "/etc/cron.d/fantastic-probe" ]; then
+        echo "   ℹ️  运行模式: Cron 定时任务"
+        echo ""
+        echo "   📋 Cron 配置:"
+        echo "   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        cat /etc/cron.d/fantastic-probe | grep -v '^#' | grep -v '^$' || echo "   无有效配置"
+        echo ""
+        echo "   📝 最近运行日志（最后 10 行）:"
+        echo "   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        if [ -f "/var/log/fantastic_probe.log" ]; then
+            tail -10 /var/log/fantastic_probe.log | sed 's/^/   /'
+        else
+            echo "   ⚠️  日志文件不存在"
+        fi
+        echo ""
+        echo "   💡 提示:"
+        echo "      • 查看实时日志: tail -f /var/log/fantastic_probe.log"
+        echo "      • 查看错误日志: fp-config logs-error"
+        echo "      • Cron 任务每分钟自动执行一次"
+    elif systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
+        echo "   ℹ️  运行模式: systemd 服务"
+        echo ""
+        systemctl status "$SERVICE_NAME" --no-pager || true
+    else
+        echo "   ⚠️  未检测到 systemd 服务或 Cron 任务"
+        echo "   请检查安装是否正确"
+    fi
+
     echo ""
 }
 
@@ -567,19 +632,36 @@ start_service() {
     echo ""
     echo "▶️  启动服务..."
 
-    if systemctl start "$SERVICE_NAME"; then
-        echo "   ✅ 服务启动成功"
-        sleep 2
-        if systemctl is-active --quiet "$SERVICE_NAME"; then
-            echo "   ✅ 服务运行正常"
+    # 检查是否使用 Cron 模式
+    if [ -f "/etc/cron.d/fantastic-probe" ]; then
+        echo "   ℹ️  Cron 模式: 任务已自动启用"
+        echo "   ✅ Cron 任务配置: /etc/cron.d/fantastic-probe"
+        echo "   ℹ️  任务将每分钟自动执行，无需手动启动"
+        echo ""
+        echo "   💡 提示: 查看实时日志 tail -f /var/log/fantastic_probe.log"
+        return 0
+    fi
+
+    # systemd 服务模式
+    if systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
+        if systemctl start "$SERVICE_NAME"; then
+            echo "   ✅ 服务启动成功"
+            sleep 2
+            if systemctl is-active --quiet "$SERVICE_NAME"; then
+                echo "   ✅ 服务运行正常"
+            else
+                echo "   ⚠️  警告: 服务未能正常启动"
+                echo "   请检查: systemctl status $SERVICE_NAME"
+            fi
         else
-            echo "   ⚠️  警告: 服务未能正常启动"
-            echo "   请检查: systemctl status $SERVICE_NAME"
+            echo "   ❌ 服务启动失败"
+            return 1
         fi
     else
-        echo "   ❌ 服务启动失败"
-        return 1
+        echo "   ⚠️  未检测到 systemd 服务"
+        echo "   当前可能使用 Cron 模式，无需手动启动"
     fi
+
     echo ""
 }
 
@@ -588,12 +670,40 @@ stop_service() {
     echo ""
     echo "⏹️  停止服务..."
 
-    if systemctl stop "$SERVICE_NAME"; then
-        echo "   ✅ 服务已停止"
-    else
-        echo "   ❌ 服务停止失败"
-        return 1
+    # 检查是否使用 Cron 模式
+    if [ -f "/etc/cron.d/fantastic-probe" ]; then
+        echo "   ⚠️  Cron 模式: 无法直接停止定时任务"
+        echo ""
+        echo "   如需停止，请选择以下方式之一："
+        echo "   1️⃣  临时禁用（保留配置）:"
+        echo "      sudo mv /etc/cron.d/fantastic-probe /etc/cron.d/fantastic-probe.disabled"
+        echo ""
+        echo "   2️⃣  永久卸载（删除所有）:"
+        echo "      sudo fp-config uninstall"
+        echo ""
+        read -p "   是否临时禁用 Cron 任务？[y/N]: " disable_cron
+        if [[ "$disable_cron" =~ ^[Yy]$ ]]; then
+            mv /etc/cron.d/fantastic-probe /etc/cron.d/fantastic-probe.disabled
+            echo "   ✅ Cron 任务已禁用"
+            echo "   ℹ️  重新启用: sudo mv /etc/cron.d/fantastic-probe.disabled /etc/cron.d/fantastic-probe"
+        else
+            echo "   ℹ️  操作已取消"
+        fi
+        return 0
     fi
+
+    # systemd 服务模式
+    if systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
+        if systemctl stop "$SERVICE_NAME"; then
+            echo "   ✅ 服务已停止"
+        else
+            echo "   ❌ 服务停止失败"
+            return 1
+        fi
+    else
+        echo "   ⚠️  未检测到 systemd 服务"
+    fi
+
     echo ""
 }
 
@@ -723,26 +833,44 @@ install_updates() {
         echo "   ✅ 更新完成！"
         echo ""
 
-        # 重启服务
-        echo "   🔄 重启服务..."
-        if systemctl restart "$SERVICE_NAME"; then
-            echo "   ✅ 服务已启动"
+        # 应用配置
+        echo "   🔄 应用配置..."
+
+        # 检查是否使用 Cron 模式
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式: 配置已更新"
+            echo "   ✅ 任务将在下次扫描时自动应用（最多等待 1 分钟）"
             echo ""
-            echo "   查看服务状态: systemctl status $SERVICE_NAME"
-            echo "   查看日志:     tail -f /var/log/fantastic_probe.log"
+            echo "   查看运行日志: tail -f /var/log/fantastic_probe.log"
+        elif systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
+            if systemctl restart "$SERVICE_NAME"; then
+                echo "   ✅ 服务已重启"
+                echo ""
+                echo "   查看服务状态: systemctl status $SERVICE_NAME"
+                echo "   查看日志:     tail -f /var/log/fantastic_probe.log"
+            else
+                echo "   ⚠️  服务启动失败，请检查日志"
+                echo "   查看详细错误: systemctl status $SERVICE_NAME"
+            fi
         else
-            echo "   ⚠️  服务启动失败，请检查日志"
-            echo "   查看详细错误: systemctl status $SERVICE_NAME"
+            echo "   ⚠️  未检测到服务配置，请手动检查"
         fi
     else
         echo "   ❌ 下载失败"
         echo "   请检查网络连接或手动更新"
         rm -rf "$TEMP_DIR"
 
-        # 尝试重启服务
+        # 尝试恢复服务
         echo ""
-        echo "   🔄 尝试重启服务..."
-        systemctl start "$SERVICE_NAME" || true
+        echo "   🔄 尝试恢复服务..."
+
+        # 检查是否使用 Cron 模式
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式: 任务仍在运行，无需恢复"
+        elif systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
+            systemctl start "$SERVICE_NAME" || true
+        fi
+
         return 1
     fi
     echo ""
