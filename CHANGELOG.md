@@ -7,6 +7,56 @@
 
 ---
 
+## [3.1.2] - 2026-01-25 (预发布)
+
+### 🎁 恢复 FFprobe 预编译包分发 + 菜单式配置
+
+**核心改进**
+- ✅ **恢复预编译包分发**：重新添加 `static/` 目录和预编译二进制包
+  - 添加 `static/ffprobe_linux_x64.zip`（48MB）
+  - 添加 `static/ffprobe_linux_arm64.zip`（44MB）
+  - 创建 GitHub Release `ffprobe-prebuilt-v1.0` 用于用户下载
+  - 更新 `.gitignore` 规则以支持 `static/*.zip` 提交
+
+- ✅ **重构 FFprobe 配置为菜单式选择**（`fp-config.sh`）
+  - 恢复 `FFPROBE_RELEASE_TAG="ffprobe-prebuilt-v1.0"` 定义
+  - 三层优先级逻辑：本地缓存 → GitHub 下载 → 手动配置
+  - 清晰的用户选项菜单，尊重用户选择
+  - 下载后自动保存到本地缓存 `/usr/share/fantastic-probe/static/`
+
+- ✅ **重构 install.sh FFprobe 配置为菜单式选择**（2 处）
+  - 初次安装和重新配置都提供相同的菜单
+  - 选项 1：项目提供的预编译 ffprobe（本地优先、GitHub 下载回退）
+  - 选项 2：系统已安装的 ffprobe（需先 apt install ffmpeg）
+  - 选项 3：手动指定 ffprobe 路径（自定义场景）
+  - 用户有完全的控制权，而不是被强制安装
+
+**使用体验改进**
+- 安装时清晰展示可用选项和推荐方案
+- 本地有预编译包时显示"本地已包含"，加快安装速度
+- 下载失败时自动降级到其他选项，增强容错性
+- 所有配置逻辑一致，安装、重配置和 fp-config 行为统一
+
+**代码统计**
+```
+新增文件：2 个（ffprobe_linux_x64.zip、ffprobe_linux_arm64.zip）
+修改文件：3 个（.gitignore、fp-config.sh、fantastic-probe-install.sh）
+新增代码：400+ 行（菜单式选择逻辑）
+删除代码：80 行（简化自动安装的复杂逻辑）
+```
+
+**依赖关系**
+- 仍依赖 `unzip`（解压预编译包）
+- 仍支持 `curl` 或 `wget`（GitHub 下载回退）
+- 不强制依赖 `ffmpeg`（给用户选择权）
+
+**向后兼容性**
+- ✅ 现有用户的 ffprobe 配置保持不变（仅在重新配置时提示选项）
+- ✅ 脚本接口不变，仍支持旧版安装脚本的调用方式
+- ✅ 配置文件格式不变，无需迁移
+
+---
+
 ## [3.1.1] - 2026-01-25
 
 ### 🎨 项目结构精简与维护优化
