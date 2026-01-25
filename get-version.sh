@@ -12,7 +12,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 默认版本号（最后的回退方案）
-VERSION="2.9.3"
+VERSION="3.1.1"
 
 #==============================================================================
 # 方法 1：从本地 Git tags 获取（如果在 git 仓库中）
@@ -91,7 +91,7 @@ get_version_from_script_comment() {
 VERSION=$(get_version_from_git_tag) || \
 VERSION=$(get_version_from_github_api "aydomini/fantastic-probe") || \
 VERSION=$(get_version_from_script_comment "$1") || \
-VERSION="2.9.3"  # 最终回退到硬编码默认值
+VERSION="3.1.1"  # 最终回退到硬编码默认值
 
 #==============================================================================
 # 导出变量

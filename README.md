@@ -30,28 +30,6 @@ wget -qO- https://raw.githubusercontent.com/aydomini/fantastic-probe/main/instal
 <details>
 <summary><b>📦 其他安装方式</b>（点击展开）</summary>
 
-### Debian/Ubuntu deb 包
-
-适合 Debian/Ubuntu 用户，提供原生包管理器体验：
-
-```bash
-# 下载 deb 包
-wget https://github.com/aydomini/fantastic-probe/releases/download/v2.6.5/fantastic-probe_2.6.5_all.deb
-
-# 安装
-sudo apt install ./fantastic-probe_2.6.5_all.deb
-```
-
-安装后配置：
-
-```bash
-# 编辑配置文件
-sudo nano /etc/fantastic-probe/config
-
-# 启动服务
-sudo systemctl enable --now fantastic-probe-monitor
-```
-
 ### 手动安装
 
 传统的手动安装方式：
@@ -101,28 +79,6 @@ sudo fp-config logs       # 查看实时日志
 - **修改监控目录**：`sudo fp-config strm`
 - **直接编辑配置**：`sudo fp-config edit`
 
-### ⚠️ 监控目录权限注意事项
-
-**重要**：如果监控目录由安装脚本创建，它会以 root 身份创建。安装时会提示您设置合适的权限。
-
-**如果需要以普通用户身份向监控目录写入文件，可以**：
-
-1. **设置特定用户所有（推荐）**：
-   ```bash
-   # 适用于 Emby/Jellyfin 等媒体服务器
-   sudo chown -R emby:emby /mnt/sata1/media/媒体库/strm
-
-   # 或设置为您的用户名
-   sudo chown -R $USER:$USER /mnt/sata1/media/媒体库/strm
-   ```
-
-2. **验证权限是否正确**：
-   ```bash
-   ls -ld /mnt/sata1/media/媒体库/strm
-   ```
-
-   应该显示您期望的所有者，如 `emby emby` 或您的用户名。
-
 **服务管理**：
 - **查看服务状态**：`sudo fp-config status`
 - **重启服务**：`sudo fp-config restart`
@@ -155,19 +111,11 @@ sudo nano /etc/fantastic-probe/config
 | `FFPROBE` | ffprobe 可执行文件路径 | `/usr/bin/ffprobe` |
 | `LOG_FILE` | 主日志文件 | `/var/log/fantastic_probe.log` |
 | `ERROR_LOG_FILE` | 错误日志文件 | `/var/log/fantastic_probe_errors.log` |
-| `FFPROBE_TIMEOUT` | ffprobe 命令超时（秒）<br>**说明**：单个 ffprobe 命令的最大执行时间 | `300` |
-| `MAX_FILE_PROCESSING_TIME` | 任务总超时（秒）<br>**说明**：包括预检查、ffprobe、后处理的总时间<br>**要求**：必须 > `FFPROBE_TIMEOUT` | `600` |
+| `FFPROBE_TIMEOUT` | ffprobe 命令超时（秒） | `300` |
+| `MAX_FILE_PROCESSING_TIME` | 任务总超时（秒）<br>**说明**：包括预检查、ffprobe、后处理的总时间 | `600` |
 | `DEBOUNCE_TIME` | 防抖时间（秒） | `5` |
 | `AUTO_UPDATE_CHECK` | 是否自动检查更新 | `true` |
 | `AUTO_UPDATE_INSTALL` | 是否自动安装更新 | `false` |
-
-**超时配置说明**：
-- `FFPROBE_TIMEOUT`（300秒）：控制单个 ffprobe 命令的超时时间
-- `MAX_FILE_PROCESSING_TIME`（600秒）：控制整个任务的超时时间，包括：
-  - 预检查（文件存在性、权限检查）
-  - ffprobe 执行
-  - JSON 生成和权限设置
-  - 建议：`MAX_FILE_PROCESSING_TIME` ≥ `FFPROBE_TIMEOUT` + 60 秒
 
 **文件权限说明**：
 - 生成的 JSON 文件会**自动继承** STRM 文件的所有者和权限
@@ -223,10 +171,10 @@ sudo systemctl restart fantastic-probe-monitor
 
 ```bash
 # 查看当前版本
-grep "CURRENT_VERSION" /usr/local/bin/fantastic-probe-monitor
+/usr/local/bin/get-version.sh
 
-# 查看日志中的版本信息
-journalctl -u fantastic-probe-monitor | grep "版本:"
+# 或查看日志中的版本信息
+journalctl -u fantastic-probe-monitor | grep "版本"
 ```
 
 ---
@@ -255,7 +203,7 @@ sudo bash fantastic-probe-uninstall.sh
 
 ---
 
-## 🐛 故障排查
+## 🐛 故障排查与常见问题
 
 ### 服务无法启动
 
@@ -295,9 +243,9 @@ touch /mnt/sata1/media/媒体库/strm/test.iso.strm
 # 路径必须在监控目录内
 ```
 
-### 权限问题排查
+### 权限问题
 
-**症状**：无法向监控目录写入 .iso.strm 文件，或者服务无法读取文件。
+**症状**：无法向监控目录写入文件，或服务无法读取文件。
 
 **诊断步骤**：
 
@@ -318,14 +266,14 @@ touch /mnt/sata1/media/媒体库/strm/test.iso.strm
 
 3. **修复权限问题**：
    ```bash
-   # 方式1：设置为特定用户所有（推荐）
+   # 推荐：设置为特定用户所有
    sudo chown -R emby:emby /mnt/sata1/media/媒体库/strm
 
-   # 方式2：设置宽松权限（不推荐）
-   sudo chmod 777 /mnt/sata1/media/媒体库/strm
+   # 或设置为您的用户名
+   sudo chown -R $USER:$USER /mnt/sata1/media/媒体库/strm
    ```
 
-4. **检查已生成的 JSON 文件权限**：
+4. **检查生成的 JSON 文件权限**：
    ```bash
    ls -l /mnt/sata1/media/媒体库/strm/*.json
    ```
@@ -350,6 +298,49 @@ df -h /mnt/sata1/media/媒体库/strm/
 # 清理日志释放空间
 sudo fp-config logs-clear
 ```
+
+### 常见问题解答
+
+**Q: 实时监控会影响系统性能吗？**
+
+A: 几乎不会。inotify 是内核级别的监控机制，空闲时 CPU 占用接近 0%，比定时全量扫描更高效。
+
+**Q: 可以同时监控多个目录吗？**
+
+A: 当前版本只监控单个根目录，但会递归监控所有子目录。
+
+**Q: 服务崩溃了怎么办？**
+
+A: systemd 会自动重启服务（延迟 10 秒）。查看日志了解崩溃原因：
+```bash
+journalctl -u fantastic-probe-monitor --since "1 hour ago"
+```
+
+**Q: 能否处理已有的文件？**
+
+A: 可以！服务启动时会自动扫描现有文件，处理所有未生成 JSON 的 `.iso.strm` 文件。也可以手动重启服务来触发扫描：
+```bash
+systemctl restart fantastic-probe-monitor
+```
+
+**Q: 如何暂停监控？**
+
+A: 停止服务即可：
+```bash
+systemctl stop fantastic-probe-monitor
+```
+
+需要时重新启动：
+```bash
+systemctl start fantastic-probe-monitor
+```
+
+**Q: 日志文件会无限增长吗？**
+
+A: 不会。已配置 logrotate 自动管理：
+- 单个文件最大 10MB
+- 保留 1 个备份
+- 总空间约 20MB
 
 ---
 
@@ -438,226 +429,38 @@ ffprobe -version
 **监控的事件**：
 - `CREATE` - 新文件创建
 - `MOVED_TO` - 文件移动到监控目录
-
-**过滤条件**：
-- ✅ 只处理以 `.iso.strm` 结尾的文件
-- ❌ 其他文件（.mp4.strm、.mkv.strm 等）会被跳过
-- ❌ 不监控文件修改（`MODIFY` 事件）
-
-**触发示例**：
-```bash
-# ✅ 会触发处理
-touch /mnt/.../strm/movie.iso.strm
-mv /tmp/movie.iso.strm /mnt/.../strm/
-
-# ❌ 不会触发处理
-touch /mnt/.../strm/movie.mp4.strm  # 不是 .iso.strm
-echo "new" > movie.iso.strm          # modify 事件，不监控
-```
-
-### 监控流程
-
-1. **服务启动**
-   - 扫描现有未处理文件
-   - 创建任务队列（FIFO）
-   - 启动队列处理器（后台进程）
-   - 开始监控文件系统事件
-
-2. **检测新文件**
-   - inotify 检测到 `.iso.strm` 文件创建
-   - 防抖检查（5秒内重复事件跳过）
-   - **添加到任务队列**（不是立即处理）
-
-3. **队列处理器**
-   - **串行处理**：一次只处理一个文件
-   - 从队列读取文件路径（阻塞读取）
-   - 等待文件写入完成并避免网盘风控（10秒）
-   - **预检查阶段**：
-     - 检查文件是否存在
-     - 检查是否已有 mediainfo JSON（避免重复处理）
-     - 检查文件是否可读
-   - **任务执行阶段**：
-     - 后台执行处理任务
-     - 超时控制：单个任务最长 300 秒（5分钟）
-     - 错误处理：失败任务自动跳过，不阻塞队列
-   - 提取媒体信息并生成 JSON
-
-4. **结果**
-   - 成功：日志记录 ✅ SUCCESS
-   - 失败：日志记录 ❌ ERROR，写入错误日志
+- 只处理以 `.iso.strm` 结尾的文件
 
 ### 任务队列机制
 
 **为什么需要任务队列？**
-- 防止高并发场景下资源耗尽
-- 每个 ISO 处理需要 1-5 分钟
-- 如果每秒都有新文件，无队列会启动大量并发进程导致系统崩溃
+- 防止高并发场景下资源耗尽（每个 ISO 处理需要 1-5 分钟）
+- 保证一次只处理一个文件，避免系统崩溃
 
 **队列工作原理**：
 ```
 inotify 监控 → 防抖检查 → 加入队列 → 队列处理器（串行）→ 生成 JSON
-(生产者)                                    (消费者)
 ```
+
+**处理流程**：
+1. **服务启动**：扫描现有文件 → 创建任务队列 → 启动队列处理器 → 监控文件系统
+2. **检测新文件**：inotify 检测到文件 → 防抖检查 → 添加到队列
+3. **队列处理**：串行处理，等待文件稳定（10秒）→ 预检查 → 提取媒体信息 → 生成 JSON
 
 **优势**：
 - ✅ 保证一次只处理一个文件
 - ✅ 避免资源耗尽
-- ✅ 文件按顺序处理，先进先出
-- ✅ 即使每秒都有新文件，也能稳定运行
-- ✅ **智能预检查**：任务执行前验证文件状态，避免无效处理
-- ✅ **超时保护**：卡死任务自动终止，不阻塞队列
-- ✅ **错误隔离**：单个任务失败不影响后续任务
-
-**示例**：
-```
-时间轴：每秒1个文件（高并发场景）
-├─ 0秒: file1.iso.strm → 加入队列 → 开始处理 (120秒)
-├─ 1秒: file2.iso.strm → 加入队列 → 等待
-├─ 2秒: file3.iso.strm → 加入队列 → 等待
-...
-├─ 120秒: file1 处理完成 → 等待10秒 → file2 开始处理 (120秒)
-└─ 250秒: file2 处理完成 → 等待10秒 → file3 开始处理
-
-结果：任意时刻只有1个ffprobe运行，系统稳定！✅
-注：10秒间隔可避免触发网盘频率限制
-```
+- ✅ 智能预检查，避免无效处理
+- ✅ 超时保护，卡死任务自动终止
+- ✅ 错误隔离，单个任务失败不影响后续
 
 ### 生成的文件
 
-对于 `xxx.iso.strm` 文件，会生成：
-- `xxx.iso-mediainfo.json` - Emby 兼容的媒体信息
-
-**JSON 中的关键信息**：
-- `Size` - ISO 文件的实际磁盘大小（字节）
+对于 `xxx.iso.strm` 文件，会生成 `xxx.iso-mediainfo.json`，包含：
+- `Size` - ISO 文件实际大小（字节）
 - `RunTimeTicks` - 媒体时长
 - `MediaStreams` - 视频/音频/字幕流信息
 - `Chapters` - 章节信息
-
-**日志显示示例**：
-```
-[2026-01-20 HH:MM:SS] ℹ️  INFO: 处理: movie.iso.strm
-[2026-01-20 HH:MM:SS] ℹ️  INFO:   ISO 路径: /path/to/movie.iso
-[2026-01-20 HH:MM:SS] ℹ️  INFO:   ISO 大小: 46.23 GB (49647272960 bytes)
-[2026-01-20 HH:MM:SS] ℹ️  INFO:   ISO 类型: BLURAY
-[2026-01-20 HH:MM:SS] ℹ️  INFO:   尝试从 MPLS 提取语言信息...
-[2026-01-20 HH:MM:SS] ℹ️  INFO:   主播放列表: BDMV/PLAYLIST/00000.mpls (时长: 7200秒)
-[2026-01-20 HH:MM:SS] ℹ️  INFO:   从 MPLS 提取语言信息: BDMV/PLAYLIST/00000.mpls
-[2026-01-20 HH:MM:SS] ✅ SUCCESS: 成功从 MPLS 提取媒体信息
-[2026-01-20 HH:MM:SS] ✅ SUCCESS: 已生成: movie.iso-mediainfo.json
-[2026-01-20 HH:MM:SS] ℹ️  INFO:   视频流: 1, 音频流: 3, 字幕流: 15
-```
-
-### MPLS 语言提取
-
-**解决的问题**：
-
-蓝光光盘的音轨和字幕语言信息存储在 **BDMV/PLAYLIST/*.mpls** 文件中，而不是 M2TS 流文件中。直接从 M2TS 提取会导致语言标签显示为 `undefined`（未指定）。
-
-**工作原理**：
-
-1. **自动查找主播放列表**
-   - 扫描 ISO 内的 BDMV/PLAYLIST 目录
-   - 逐个分析播放列表时长
-   - 选择时长最长的作为主播放列表（通常是正片）
-
-2. **从 MPLS 提取准确的语言信息**
-   - 使用 ffprobe 的 bluray 协议读取 mpls 文件
-   - 获取准确的音轨语言（Chinese, English, Japanese 等）
-   - 获取准确的字幕语言和标题信息
-
-3. **智能回退机制**
-   - 如果找不到 MPLS 或提取失败，自动回退到标准方式
-   - 确保兼容性和稳定性
-
-**依赖工具**：
-
-- `isoinfo`（genisoimage 包）- 列出 ISO 内的文件（推荐）
-- `7z`（p7zip-full 包）- 备选工具
-
-安装脚本会自动安装所需工具。
-
-**效果对比**：
-
-| 提取方式 | 音轨语言 | 字幕语言 | 准确度 |
-|---------|---------|---------|--------|
-| **直接从 M2TS** | undefined | undefined | ❌ 不准确 |
-| **从 MPLS** | Chinese, English, Japanese | Chinese Simplified, English | ✅ 准确 |
-
-**注意事项**：
-
-- 仅适用于蓝光（BLURAY）类型的 ISO
-- DVD 仍使用标准提取方式
-- 如果 ISO 内没有 BDMV/PLAYLIST 目录，自动回退到标准方式
-
-### 健壮性机制
-
-**问题场景**：队列中的任务在准备执行时可能遇到各种问题：
-- 文件已被删除或移动
-- 已有 JSON 文件（重复任务）
-- 文件权限问题（不可读）
-- 任务处理超时或卡死
-- ISO 文件损坏或格式错误
-
-**解决方案：三层保护机制**
-
-#### 1. 预检查阶段（执行前验证）
-
-在任务真正开始处理前，进行快速验证：
-
-```
-✓ 检查文件是否存在
-✓ 检查是否已有 mediainfo JSON（避免重复）
-✓ 检查文件是否可读
-```
-
-**优势**：
-- 快速跳过无效任务（毫秒级）
-- 避免浪费资源启动 ffprobe
-- 日志清晰显示跳过原因
-
-**日志示例**：
-```
-[2026-01-20 HH:MM:SS] ⚠️  WARN: 队列中的文件已不存在，跳过: movie.iso.strm
-[2026-01-20 HH:MM:SS] ℹ️  INFO: 跳过（已有JSON）: movie.iso.strm
-[2026-01-20 HH:MM:SS] ❌ ERROR: 文件不可读，跳过: movie.iso.strm
-```
-
-#### 2. 超时保护（防止任务卡死）
-
-**问题**：某些 ISO 文件可能因损坏、权限或网络问题导致 ffprobe 卡死
-
-**解决方案**：
-- 单个任务最长执行时间：300 秒（5分钟）
-- 超时后自动终止任务进程（kill -9）
-- 记录超时日志到错误日志文件
-- 自动处理下一个任务
-
-**日志示例**：
-```
-[2026-01-20 HH:MM:SS] ❌ ERROR: 文件处理超时（300秒），强制终止: movie.iso.strm
-```
-
-#### 3. 错误隔离（失败不阻塞队列）
-
-**问题**：某个任务失败可能导致整个队列停止
-
-**解决方案**：
-- 使用 `set +e` 临时禁用 errexit
-- 捕获任务退出码，记录详细错误信息
-- 失败后自动跳过，继续处理下一个任务
-- 所有错误写入独立错误日志
-
-**日志示例**：
-```
-[2026-01-20 HH:MM:SS] ❌ ERROR: 文件处理失败（退出码: 1）
-# 同时写入 /var/log/fantastic_probe_errors.log
-[2026-01-20 HH:MM:SS] ERROR: 任务失败（退出码: 1） - /path/to/movie.iso.strm
-```
-
-**效果**：
-- ✅ 单个任务失败不影响其他任务
-- ✅ 队列持续运行，不会卡死
-- ✅ 所有错误可追溯，方便排查问题
 
 </details>
 
@@ -684,59 +487,11 @@ inotify 监控 → 防抖检查 → 加入队列 → 队列处理器（串行）
 
 </details>
 
-<details>
-<summary><b>❓ 常见问题</b>（点击展开）</summary>
-
-**Q: 实时监控会影响系统性能吗？**
-
-A: 几乎不会。inotify 是内核级别的监控机制，空闲时 CPU 占用接近 0%，比定时全量扫描更高效。
-
-**Q: 可以同时监控多个目录吗？**
-
-A: 当前版本只监控单个根目录，但会递归监控所有子目录。
-
-**Q: 服务崩溃了怎么办？**
-
-A: systemd 会自动重启服务（延迟 10 秒）。查看日志了解崩溃原因：
-```bash
-journalctl -u fantastic-probe-monitor --since "1 hour ago"
-```
-
-**Q: 能否处理已有的文件？**
-
-A: 可以！服务启动时会自动扫描现有文件，处理所有未生成 JSON 的 `.iso.strm` 文件。也可以手动重启服务来触发扫描：
-```bash
-systemctl restart fantastic-probe-monitor
-```
-
-**Q: 如何暂停监控？**
-
-A: 停止服务即可：
-```bash
-systemctl stop fantastic-probe-monitor
-```
-
-需要时重新启动：
-```bash
-systemctl start fantastic-probe-monitor
-```
-
-**Q: 日志文件会无限增长吗？**
-
-A: 不会。已配置 logrotate 自动管理：
-- 单个文件最大 10MB
-- 保留 1 个备份
-- 总空间约 20MB
-
-</details>
-
 ---
 
 ## 📚 文档
 
 - **[CHANGELOG.md](CHANGELOG.md)** - 版本历史和更新日志
-- **[安装指南](#安装)** - 详细安装步骤
-- **[配置说明](#配置)** - 配置选项说明
 
 ---
 
@@ -744,4 +499,4 @@ A: 不会。已配置 logrotate 自动管理：
 **作者**: aydomini
 **仓库**: https://github.com/aydomini/fantastic-probe
 **许可**: MIT License
-**更新**: 2026-01-20
+**更新**: 2026-01-25
