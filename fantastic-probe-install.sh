@@ -83,6 +83,15 @@ get_package_name() {
         jq)
             echo "jq"
             ;;
+        sqlite3)
+            if [ "$pkg_manager" = "apt" ]; then
+                echo "sqlite3"
+            elif [ "$pkg_manager" = "pacman" ]; then
+                echo "sqlite"
+            else
+                echo "sqlite3"
+            fi
+            ;;
         genisoimage)
             if [ "$pkg_manager" = "pacman" ]; then
                 echo "cdrtools"  # Arch Linux 使用 cdrtools
@@ -159,10 +168,10 @@ echo ""
 
 PACKAGES_TO_INSTALL=()
 
-# 检查 inotify-tools
-if ! command -v inotifywait &> /dev/null; then
-    pkg_name=$(get_package_name "$PKG_MANAGER" "inotify-tools")
-    echo "   需要安装: $pkg_name (inotify-tools)"
+# 检查 sqlite3（Cron 模式必需）
+if ! command -v sqlite3 &> /dev/null; then
+    pkg_name=$(get_package_name "$PKG_MANAGER" "sqlite3")
+    echo "   需要安装: $pkg_name (sqlite3，Cron 模式必需)"
     PACKAGES_TO_INSTALL+=($pkg_name)
 fi
 
@@ -180,6 +189,13 @@ if ! command -v isoinfo &> /dev/null; then
     PACKAGES_TO_INSTALL+=($pkg_name)
 fi
 
+# 检查 inotify-tools（inotify 模式可选，Cron 模式不需要）
+if ! command -v inotifywait &> /dev/null; then
+    echo "   ⚠️  inotify-tools 未安装（仅 inotify 模式需要，Cron 模式不需要）"
+    echo "      默认使用 Cron 模式，跳过 inotify-tools 安装"
+    echo "      如需使用 inotify 模式，请手动安装: apt-get install inotify-tools"
+fi
+
 # 安装依赖
 if [ ${#PACKAGES_TO_INSTALL[@]} -gt 0 ]; then
     echo ""
@@ -190,31 +206,8 @@ else
 fi
 echo ""
 
-# 2. 停止旧服务（如果存在）
-echo "2️⃣  停止旧服务..."
-if systemctl is-active --quiet fantastic-probe-monitor.service; then
-    echo "   停止运行中的服务..."
-    systemctl stop fantastic-probe-monitor.service
-    echo "   ✅ 服务已停止"
-else
-    echo "   ✅ 无运行中的服务"
-fi
-echo ""
-
-# 3. 复制监控脚本
-echo "3️⃣  安装监控脚本..."
-MONITOR_SCRIPT="$SCRIPT_DIR/fantastic-probe-monitor.sh"
-TARGET_SCRIPT="/usr/local/bin/fantastic-probe-monitor"
-
-if [ ! -f "$MONITOR_SCRIPT" ]; then
-    echo "   ❌ 找不到监控脚本: $MONITOR_SCRIPT"
-    exit 1
-fi
-
-cp "$MONITOR_SCRIPT" "$TARGET_SCRIPT"
-chmod +x "$TARGET_SCRIPT"
-echo "   ✅ 监控脚本已安装到: $TARGET_SCRIPT"
-echo ""
+# 2. 安装 Cron 扫描器和处理库
+echo "2️⃣  安装 Cron 扫描器和处理库..."
 
 # 安装版本号获取脚本（支持动态版本号）
 VERSION_SCRIPT="$SCRIPT_DIR/get-version.sh"
@@ -259,6 +252,40 @@ if [ -f "$CONFIG_TOOL" ]; then
 else
     echo "   ⚠️  未找到配置工具（跳过，不影响正常使用）"
 fi
+echo ""
+
+# 安装 Cron 扫描器和处理库（Cron 模式必需）
+echo "   ✅ 安装 Cron 扫描器和处理库..."
+
+CRON_SCANNER="$SCRIPT_DIR/fantastic-probe-cron-scanner.sh"
+PROCESS_LIB="$SCRIPT_DIR/fantastic-probe-process-lib.sh"
+TARGET_CRON_SCANNER="/usr/local/bin/fantastic-probe-cron-scanner"
+TARGET_PROCESS_LIB="/usr/local/lib/fantastic-probe-process-lib.sh"
+
+# 检查文件是否存在
+if [ -f "$CRON_SCANNER" ]; then
+    cp "$CRON_SCANNER" "$TARGET_CRON_SCANNER"
+    chmod +x "$TARGET_CRON_SCANNER"
+    echo "   ✅ Cron 扫描器已安装到: $TARGET_CRON_SCANNER"
+else
+    echo "   ⚠️  未找到 Cron 扫描器（跳过，不影响正常使用）"
+fi
+
+if [ -f "$PROCESS_LIB" ]; then
+    mkdir -p /usr/local/lib
+    cp "$PROCESS_LIB" "$TARGET_PROCESS_LIB"
+    chmod +x "$TARGET_PROCESS_LIB"
+    echo "   ✅ 处理库已安装到: $TARGET_PROCESS_LIB"
+else
+    echo "   ⚠️  未找到处理库（跳过，不影响正常使用）"
+fi
+
+# 创建失败缓存目录（Cron 模式使用）
+echo "   ✅ 创建失败缓存目录..."
+mkdir -p /var/lib/fantastic-probe
+chmod 755 /var/lib/fantastic-probe
+echo "   ✅ 缓存目录已创建: /var/lib/fantastic-probe"
+
 echo ""
 
 # 4. 配置服务（交互式向导）
@@ -858,23 +885,8 @@ if [ "$RECONFIGURE_FFPROBE" = "true" ]; then
     echo ""
 fi
 
-# 5. 安装 systemd 服务
-echo "5️⃣  安装 systemd 服务..."
-SERVICE_FILE="$SCRIPT_DIR/fantastic-probe-monitor.service"
-TARGET_SERVICE="/etc/systemd/system/fantastic-probe-monitor.service"
-
-if [ ! -f "$SERVICE_FILE" ]; then
-    echo "   ❌ 找不到服务文件: $SERVICE_FILE"
-    exit 1
-fi
-
-cp "$SERVICE_FILE" "$TARGET_SERVICE"
-chmod 644 "$TARGET_SERVICE"
-echo "   ✅ 服务文件已安装到: $TARGET_SERVICE"
-echo ""
-
-# 6. 创建日志文件
-echo "6️⃣  创建日志文件..."
+# 5. 创建日志文件
+echo "5️⃣  创建日志文件..."
 touch /var/log/fantastic_probe.log
 touch /var/log/fantastic_probe_errors.log
 chmod 644 /var/log/fantastic_probe.log
@@ -882,8 +894,8 @@ chmod 644 /var/log/fantastic_probe_errors.log
 echo "   ✅ 日志文件已创建"
 echo ""
 
-# 7. 配置 logrotate（日志轮转）
-echo "7️⃣  配置日志轮转..."
+# 6. 配置 logrotate（日志轮转）
+echo "6️⃣  配置日志轮转..."
 LOGROTATE_FILE="$SCRIPT_DIR/logrotate-fantastic-probe.conf"
 TARGET_LOGROTATE="/etc/logrotate.d/fantastic-probe"
 
@@ -897,47 +909,44 @@ else
 fi
 echo ""
 
-# 8. 重新加载 systemd
-echo "8️⃣  重新加载 systemd..."
-systemctl daemon-reload
-echo "   ✅ systemd 配置已重新加载"
-echo ""
+# 7. 配置 Cron 任务（Cron 模式）
+echo "7️⃣  配置 Cron 任务..."
 
-# 9. 启用服务（开机自启）
-echo "9️⃣  启用服务（开机自启）..."
-systemctl enable fantastic-probe-monitor.service
-echo "   ✅ 服务已设置为开机自启"
-echo ""
+CRON_FILE="/etc/cron.d/fantastic-probe"
 
-# 10. 启动服务
-echo "🔟 启动服务..."
-systemctl start fantastic-probe-monitor.service
-sleep 2
-
-if systemctl is-active --quiet fantastic-probe-monitor.service; then
-    echo "   ✅ 服务启动成功"
-else
-    echo "   ❌ 服务启动失败"
-    echo ""
-    echo "   查看错误信息:"
-    systemctl status fantastic-probe-monitor.service
-    exit 1
+# 检查是否已存在
+if [ -f "$CRON_FILE" ]; then
+    echo "   ℹ️  Cron 任务文件已存在，将覆盖"
+    rm -f "$CRON_FILE"
 fi
+
+# 创建 Cron 任务文件
+cat > "$CRON_FILE" <<'CRONEOF'
+# Fantastic-Probe Cron 扫描任务
+# 每分钟执行一次扫描
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# 每分钟执行一次扫描（默认 Cron 模式）
+*/1 * * * * root /usr/local/bin/fantastic-probe-cron-scanner scan >> /var/log/fantastic_probe.log 2>&1
+
+# 每小时清理孤立锁文件
+0 * * * * root rm -f /tmp/fantastic_probe_cron_scanner.lock 2>/dev/null || true
+CRONEOF
+
+chmod 644 "$CRON_FILE"
+echo "   ✅ Cron 任务已配置: $CRON_FILE"
+echo "   ℹ️  默认模式: Cron（每分钟扫描一次）"
+echo "   ℹ️  如需切换到 inotify 实时监控模式，请使用: fp-config"
 echo ""
 
-# 9. 显示服务状态
-echo "9️⃣  服务状态:"
-systemctl status fantastic-probe-monitor.service --no-pager -l
-echo ""
-
-# 10. 移除旧的 cron 任务（如果存在）
-echo "🔟 清理旧的 cron 任务..."
+# 8. 清理旧的 cron 任务（如果存在）
+echo "8️⃣  清理旧的 cron 任务..."
 if crontab -l 2>/dev/null | grep -q "fantastic-probe"; then
-    echo "   检测到旧的 cron 任务，建议手动清理:"
+    echo "   检测到旧的 cron 任务（用户级别），建议手动清理:"
     echo "   crontab -e"
     echo "   删除包含 'fantastic-probe' 的行"
-    echo ""
-    echo "   ⚠️  提示：现在使用实时监控，无需 cron 定时任务"
 else
     echo "   ✅ 无旧的 cron 任务"
 fi
@@ -948,32 +957,22 @@ echo "=========================================="
 echo "✅ 安装完成！"
 echo "=========================================="
 echo ""
+echo "ℹ️  Fantastic-Probe 现在使用 Cron 模式（每分钟扫描一次）"
+echo ""
 echo "📝 常用命令:"
 echo ""
-echo "  查看服务状态:"
-echo "    systemctl status fantastic-probe-monitor"
-echo ""
-echo "  查看实时日志:"
+echo "  查看 Cron 执行日志:"
 echo "    tail -f /var/log/fantastic_probe.log"
 echo ""
 echo "  查看错误日志:"
 echo "    tail -f /var/log/fantastic_probe_errors.log"
 echo ""
-echo "  查看系统日志:"
-echo "    journalctl -u fantastic-probe-monitor -f"
+echo "  查看失败文件列表:"
+echo "    fp-config failure-list"
 echo ""
-echo "  停止服务:"
-echo "    systemctl stop fantastic-probe-monitor"
+echo "  清空失败缓存:"
+echo "    fp-config failure-clear"
 echo ""
-echo "  启动服务:"
-echo "    systemctl start fantastic-probe-monitor"
+echo "  重置单个文件的失败记录:"
+echo "    fp-config failure-reset '/path/to/file.iso.strm'"
 echo ""
-echo "  重启服务:"
-echo "    systemctl restart fantastic-probe-monitor"
-echo ""
-echo "  禁用开机自启:"
-echo "    systemctl disable fantastic-probe-monitor"
-echo ""
-echo "=========================================="
-echo "🎉 服务现在正在后台运行，实时监控 .iso.strm 文件！"
-echo "=========================================="

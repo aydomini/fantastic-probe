@@ -18,49 +18,25 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# 1. 停止服务
-echo "1️⃣  停止服务..."
-if systemctl is-active --quiet fantastic-probe-monitor.service; then
-    systemctl stop fantastic-probe-monitor.service
-    echo "   ✅ 服务已停止"
-else
-    echo "   ✅ 服务未运行"
-fi
-echo ""
-
-# 2. 禁用服务
-echo "2️⃣  禁用服务..."
-if systemctl is-enabled --quiet fantastic-probe-monitor.service 2>/dev/null; then
-    systemctl disable fantastic-probe-monitor.service
-    echo "   ✅ 服务已禁用"
-else
-    echo "   ✅ 服务未启用"
-fi
-echo ""
-
-# 3. 删除服务文件
-echo "3️⃣  删除服务文件..."
-if [ -f "/etc/systemd/system/fantastic-probe-monitor.service" ]; then
-    rm -f /etc/systemd/system/fantastic-probe-monitor.service
-    echo "   ✅ 服务文件已删除"
-else
-    echo "   ✅ 服务文件不存在"
-fi
-echo ""
-
-# 4. 重新加载 systemd
-echo "4️⃣  重新加载 systemd..."
-systemctl daemon-reload
-echo "   ✅ systemd 配置已重新加载"
-echo ""
-
-# 5. 删除脚本和工具
-echo "5️⃣  删除脚本和工具..."
+# 1. 删除脚本和工具
+echo "1️⃣  删除脚本和工具..."
 FILES_REMOVED=0
 
 if [ -f "/usr/local/bin/fantastic-probe-monitor" ]; then
     rm -f /usr/local/bin/fantastic-probe-monitor
     echo "   ✅ 监控脚本已删除"
+    FILES_REMOVED=$((FILES_REMOVED + 1))
+fi
+
+if [ -f "/usr/local/bin/fantastic-probe-cron-scanner" ]; then
+    rm -f /usr/local/bin/fantastic-probe-cron-scanner
+    echo "   ✅ Cron 扫描器已删除"
+    FILES_REMOVED=$((FILES_REMOVED + 1))
+fi
+
+if [ -f "/usr/local/lib/fantastic-probe-process-lib.sh" ]; then
+    rm -f /usr/local/lib/fantastic-probe-process-lib.sh
+    echo "   ✅ 处理库已删除"
     FILES_REMOVED=$((FILES_REMOVED + 1))
 fi
 
@@ -90,6 +66,13 @@ if [ -L "/usr/local/bin/fantastic-probe-config" ] || [ -f "/usr/local/bin/fantas
     FILES_REMOVED=$((FILES_REMOVED + 1))
 fi
 
+# 删除版本号获取脚本
+if [ -f "/usr/local/bin/get-version.sh" ]; then
+    rm -f /usr/local/bin/get-version.sh
+    echo "   ✅ 版本号获取脚本已删除"
+    FILES_REMOVED=$((FILES_REMOVED + 1))
+fi
+
 # 删除预编译包
 if [ -d "/usr/share/fantastic-probe" ]; then
     rm -rf /usr/share/fantastic-probe
@@ -103,7 +86,7 @@ fi
 echo ""
 
 # 6. 清理临时文件和锁文件
-echo "6️⃣  清理临时文件和锁文件..."
+echo "2️⃣  清理临时文件和锁文件..."
 TEMP_FILES_REMOVED=0
 
 if [ -f "/tmp/fantastic_probe_monitor.lock" ]; then
@@ -130,6 +113,13 @@ if [ -f "/tmp/fantastic-probe-auto-update.lock" ]; then
     TEMP_FILES_REMOVED=$((TEMP_FILES_REMOVED + 1))
 fi
 
+# 清理 Cron 扫描器锁文件
+if [ -f "/tmp/fantastic_probe_cron_scanner.lock" ]; then
+    rm -f /tmp/fantastic_probe_cron_scanner.lock
+    echo "   ✅ Cron 扫描器锁文件已删除"
+    TEMP_FILES_REMOVED=$((TEMP_FILES_REMOVED + 1))
+fi
+
 # 清理可能的临时安装目录
 if [ -d "/tmp/fantastic-probe-install-"* ]; then
     rm -rf /tmp/fantastic-probe-install-*
@@ -142,8 +132,38 @@ if [ $TEMP_FILES_REMOVED -eq 0 ]; then
 fi
 echo ""
 
+# 6.5 删除 Cron 任务
+echo "3️⃣  删除 Cron 任务..."
+if [ -f "/etc/cron.d/fantastic-probe" ]; then
+    rm -f /etc/cron.d/fantastic-probe
+    echo "   ✅ Cron 任务已删除"
+else
+    echo "   ✅ Cron 任务不存在"
+fi
+echo ""
+
+# 6.6 询问是否删除失败缓存数据库
+echo "4️⃣  失败缓存数据库处理..."
+if [ -f "/var/lib/fantastic-probe/failure_cache.db" ]; then
+    read -p "   是否删除失败缓存数据库？[Y/n]: " delete_cache
+    delete_cache="${delete_cache:-Y}"
+
+    if [[ "$delete_cache" =~ ^[Yy]$ ]]; then
+        rm -f /var/lib/fantastic-probe/failure_cache.db
+        rmdir /var/lib/fantastic-probe 2>/dev/null || true
+        echo "   ✅ 失败缓存数据库已删除"
+    else
+        echo "   ℹ️  失败缓存数据库保留在: /var/lib/fantastic-probe/failure_cache.db"
+    fi
+else
+    echo "   ✅ 失败缓存数据库不存在"
+    # 删除空目录
+    rmdir /var/lib/fantastic-probe 2>/dev/null || true
+fi
+echo ""
+
 # 7. 清理 logrotate 配置
-echo "7️⃣  清理 logrotate 配置..."
+echo "5️⃣  清理 logrotate 配置..."
 if [ -f "/etc/logrotate.d/fantastic-probe" ]; then
     rm -f /etc/logrotate.d/fantastic-probe
     echo "   ✅ logrotate 配置已删除"
@@ -153,7 +173,7 @@ fi
 echo ""
 
 # 8. 询问是否删除配置文件
-echo "8️⃣  配置文件处理..."
+echo "6️⃣  配置文件处理..."
 if [ -d "/etc/fantastic-probe" ]; then
     read -p "   是否删除配置文件？ (y/N): " -n 1 -r
     echo ""
@@ -170,7 +190,7 @@ fi
 echo ""
 
 # 9. 询问是否删除日志
-echo "9️⃣  日志文件处理..."
+echo "7️⃣  日志文件处理..."
 read -p "   是否删除日志文件？ (y/N): " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
@@ -185,7 +205,7 @@ fi
 echo ""
 
 # 10. 询问是否删除生成的 JSON 文件
-echo "🔟 生成的 JSON 文件处理..."
+echo "8️⃣  生成的 JSON 文件处理..."
 echo "   ⚠️  注意：删除 JSON 文件会导致 Emby 需要重新扫描媒体库"
 read -p "   是否删除所有生成的 .iso-mediainfo.json 文件？ (y/N): " -n 1 -r
 echo ""
@@ -219,6 +239,3 @@ echo "✅ 卸载完成！"
 echo "=========================================="
 echo ""
 echo "ℹ️  如需恢复定时任务方式，请运行:"
-echo "   crontab -e"
-echo "   添加: 0 3 * * * /usr/local/bin/fantastic-probe"
-echo ""

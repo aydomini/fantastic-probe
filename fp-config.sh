@@ -847,38 +847,211 @@ uninstall_service() {
 }
 
 #==============================================================================
-# 日志管理函数
+# 日志管理函数（增强版）
 #==============================================================================
 
-# 查看实时主日志
-view_logs() {
-    echo ""
-    echo "📝 实时主日志（按 Ctrl+C 退出）"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    tail -f "$LOG_FILE" 2>/dev/null || echo "❌ 日志文件不存在: $LOG_FILE"
-}
+# 获取日志统计信息
+get_log_stats() {
+    local log_file="$1"
 
-# 查看错误日志
-view_error_logs() {
-    echo ""
-    echo "⚠️  错误日志（最近 50 行）"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    if [ -f "$ERROR_LOG_FILE" ]; then
-        tail -50 "$ERROR_LOG_FILE"
-    else
-        echo "ℹ️  暂无错误日志"
+    if [ ! -f "$log_file" ]; then
+        echo "日志文件不存在"
+        return
     fi
+
+    local total_lines=$(wc -l < "$log_file" 2>/dev/null || echo "0")
+    local file_size=$(du -h "$log_file" 2>/dev/null | cut -f1 || echo "0")
+    local last_modified=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M:%S" "$log_file" 2>/dev/null || stat -c "%y" "$log_file" 2>/dev/null | cut -d'.' -f1 || echo "未知")
+
+    # 统计今天的日志条数
+    local today=$(date '+%Y-%m-%d')
+    local today_count=$(grep -c "^\[$today" "$log_file" 2>/dev/null || echo "0")
+
+    # 统计成功/失败/警告数量
+    local success_count=$(grep -c "✅\|SUCCESS\|成功" "$log_file" 2>/dev/null || echo "0")
+    local error_count=$(grep -c "❌\|ERROR\|错误\|失败" "$log_file" 2>/dev/null || echo "0")
+    local warn_count=$(grep -c "⚠️\|WARN\|警告" "$log_file" 2>/dev/null || echo "0")
+
+    echo "   文件路径: $log_file"
+    echo "   文件大小: $file_size ($total_lines 行)"
+    echo "   最后修改: $last_modified"
+    echo "   今日记录: $today_count 条"
+    echo "   统计: ✅ 成功 $success_count | ❌ 错误 $error_count | ⚠️  警告 $warn_count"
+}
+
+# 查看实时主日志（增强版）
+view_logs() {
+    clear
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════════════╗"
+    echo "║                    📝 实时主日志 - Cron 扫描                          ║"
+    echo "╚════════════════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # 显示日志文件信息
+    get_log_stats "$LOG_FILE"
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "💡 提示："
+    echo "   • 按 Ctrl+C 退出实时日志"
+    echo "   • 日志每分钟更新一次（Cron 任务）"
+    echo "   • 可使用以下命令过滤日志："
+    echo "     - grep '成功'：只显示成功的记录"
+    echo "     - grep '失败'：只显示失败的记录"
+    echo "     - grep '$(date +%Y-%m-%d)'：只显示今天的日志"
+    echo ""
+    echo "📍 日志格式说明："
+    echo "   [时间戳] [CRON] 消息内容"
+    echo "   ✅ = 成功 | ❌ = 失败 | ⚠️  = 警告 | ℹ️  = 信息"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "🔄 开始实时监控..."
+    echo ""
+
+    if [ -f "$LOG_FILE" ]; then
+        # 先显示最近 20 行，然后跟踪新日志
+        tail -20 "$LOG_FILE"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 实时日志 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        tail -f "$LOG_FILE"
+    else
+        echo "❌ 日志文件不存在: $LOG_FILE"
+        echo ""
+        echo "💡 可能原因："
+        echo "   1. Cron 任务尚未运行（等待 1 分钟）"
+        echo "   2. 日志路径配置错误"
+        echo "   3. 权限不足，无法写入日志"
+        echo ""
+    fi
+}
+
+# 查看错误日志（增强版）
+view_error_logs() {
+    clear
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════════════╗"
+    echo "║                    ⚠️  错误日志 - 故障排查                            ║"
+    echo "╚════════════════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    if [ -f "$ERROR_LOG_FILE" ]; then
+        # 显示错误日志统计
+        get_log_stats "$ERROR_LOG_FILE"
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        # 检查是否有错误
+        local error_count=$(wc -l < "$ERROR_LOG_FILE" 2>/dev/null || echo "0")
+
+        if [ "$error_count" -eq 0 ]; then
+            echo "✅ 太棒了！没有错误记录"
+            echo ""
+            echo "💡 这意味着："
+            echo "   • 所有文件处理成功"
+            echo "   • 没有遇到严重问题"
+            echo "   • 系统运行正常"
+        else
+            echo "📋 最近 50 条错误记录："
+            echo ""
+            tail -50 "$ERROR_LOG_FILE" | while IFS= read -r line; do
+                # 高亮显示错误关键词
+                if echo "$line" | grep -q "ERROR\|错误\|失败"; then
+                    echo "   🔴 $line"
+                elif echo "$line" | grep -q "WARN\|警告"; then
+                    echo "   🟡 $line"
+                else
+                    echo "   ⚪ $line"
+                fi
+            done
+
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "💡 常见错误类型及解决方案："
+            echo ""
+            echo "1️⃣  【FUSE 未就绪】"
+            echo "   症状: bdmv_parse_header / udfread ERROR"
+            echo "   解决: 等待 3-5 分钟后自动重试（FUSE 需要下载文件）"
+            echo ""
+            echo "2️⃣  【文件不存在】"
+            echo "   症状: No such file / 找不到文件"
+            echo "   解决: 检查 STRM 文件路径是否正确"
+            echo ""
+            echo "3️⃣  【权限不足】"
+            echo "   症状: Permission denied"
+            echo "   解决: 检查文件和目录权限"
+            echo ""
+            echo "4️⃣  【超时】"
+            echo "   症状: timeout / Terminated"
+            echo "   解决: 增加 FFPROBE_TIMEOUT 配置值"
+            echo ""
+            echo "5️⃣  【协议不支持】"
+            echo "   症状: Protocol not found"
+            echo "   解决: 升级 ffmpeg 或检查编译选项"
+            echo ""
+        fi
+    else
+        echo "✅ 太棒了！没有错误日志文件"
+        echo ""
+        echo "💡 这意味着："
+        echo "   • 系统从未遇到严重错误"
+        echo "   • 所有任务都成功完成"
+        echo ""
+    fi
+
     echo ""
 }
 
-# 查看系统日志
+# 查看系统日志（增强版）
 view_system_logs() {
+    clear
     echo ""
-    echo "🖥️  系统日志（最近 50 行，按 Ctrl+C 退出）"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "╔════════════════════════════════════════════════════════════════════════╗"
+    echo "║                    🖥️  系统日志 - Systemd Journal                     ║"
+    echo "╚════════════════════════════════════════════════════════════════════════╝"
     echo ""
+    echo "💡 提示："
+    echo "   • 按 Ctrl+C 退出实时日志"
+    echo "   • 当前监控服务: $SERVICE_NAME"
+    echo "   • 显示最近 50 行并跟踪新日志"
+    echo ""
+    echo "📍 日志级别说明："
+    echo "   • INFO    - 信息（蓝色/白色）"
+    echo "   • WARNING - 警告（黄色）"
+    echo "   • ERROR   - 错误（红色）"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # 检查 journalctl 是否可用
+    if ! command -v journalctl &> /dev/null; then
+        echo "❌ journalctl 命令不可用"
+        echo ""
+        echo "💡 解决方案："
+        echo "   • Cron 模式不使用 systemd 服务"
+        echo "   • 请使用主日志查看：fp-config logs"
+        echo ""
+        return
+    fi
+
+    # 检查服务是否存在
+    if ! systemctl list-unit-files | grep -q "$SERVICE_NAME"; then
+        echo "ℹ️  systemd 服务不存在: $SERVICE_NAME"
+        echo ""
+        echo "💡 提示："
+        echo "   • Cron 模式不使用 systemd 服务"
+        echo "   • 日志直接写入文件：$LOG_FILE"
+        echo "   • 请使用主日志查看：fp-config logs"
+        echo ""
+        return
+    fi
+
     journalctl -u "$SERVICE_NAME" -n 50 -f
 }
 
@@ -901,6 +1074,204 @@ clear_logs() {
 }
 
 #==============================================================================
+# Cron 模式管理函数
+#==============================================================================
+
+# 查看失败文件列表
+view_failure_list() {
+    echo ""
+    echo "📋 Cron 模式失败文件列表"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    if ! command -v fantastic-probe-cron-scanner &> /dev/null; then
+        echo "❌ 错误: 未找到 Cron 扫描器"
+        echo "   请确认已安装 Fantastic-Probe Cron 模式"
+        return 1
+    fi
+
+    fantastic-probe-cron-scanner stats
+    echo ""
+}
+
+# 清空失败缓存
+clear_failure_cache() {
+    echo ""
+    echo "🗑️  清空失败缓存"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   ⚠️  警告: 此操作将删除所有失败记录"
+    echo "   ⚠️  清空后，所有失败文件将重新尝试处理"
+    echo ""
+    read -p "   确定要清空失败缓存吗？[y/N]: " confirm
+
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        if ! command -v fantastic-probe-cron-scanner &> /dev/null; then
+            echo "   ❌ 错误: 未找到 Cron 扫描器"
+            return 1
+        fi
+
+        fantastic-probe-cron-scanner clear-cache
+        echo "   ✅ 失败缓存已清空"
+    else
+        echo "   ℹ️  操作已取消"
+    fi
+    echo ""
+}
+
+# 重置单个文件的失败记录
+reset_single_file_failure() {
+    echo ""
+    echo "🔄 重置单个文件的失败记录"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    if ! command -v fantastic-probe-cron-scanner &> /dev/null; then
+        echo "❌ 错误: 未找到 Cron 扫描器"
+        return 1
+    fi
+
+    read -p "   请输入文件完整路径: " file_path
+
+    if [ -z "$file_path" ]; then
+        echo "   ⚠️  文件路径为空，操作已取消"
+        return 1
+    fi
+
+    if [ ! -f "$file_path" ]; then
+        echo "   ⚠️  警告: 文件不存在: $file_path"
+        read -p "   是否仍要重置记录？[y/N]: " confirm
+        confirm="${confirm:-N}"
+
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "   ℹ️  操作已取消"
+            return 1
+        fi
+    fi
+
+    fantastic-probe-cron-scanner reset-file "$file_path"
+    echo "   ✅ 文件失败记录已重置: $file_path"
+    echo "   ℹ️  该文件将在下次 Cron 扫描时重新处理"
+    echo ""
+}
+
+#==============================================================================
+# 子菜单函数
+#==============================================================================
+
+# 服务管理菜单
+service_menu() {
+    while true; do
+        echo ""
+        echo "【服务管理】"
+        echo "  1) 查看服务状态"
+        echo "  2) 启动服务"
+        echo "  3) 停止服务"
+        echo "  4) 重启服务"
+        echo "  0) 返回主菜单"
+        echo ""
+        read -p "请选择 [0-4]: " svc_choice
+        echo ""
+
+        case "$svc_choice" in
+            1)
+                show_service_status
+                read -p "按 Enter 继续..."
+                ;;
+            2)
+                start_service
+                read -p "按 Enter 继续..."
+                ;;
+            3)
+                stop_service
+                read -p "按 Enter 继续..."
+                ;;
+            4)
+                restart_service
+                read -p "按 Enter 继续..."
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo "❌ 无效选择"
+                read -p "按 Enter 继续..."
+                ;;
+        esac
+    done
+}
+
+# 日志管理菜单
+logs_menu() {
+    while true; do
+        echo ""
+        echo "【日志管理】"
+        echo "  1) 查看实时日志"
+        echo "  2) 查看错误日志"
+        echo "  3) 查看系统日志"
+        echo "  0) 返回主菜单"
+        echo ""
+        read -p "请选择 [0-3]: " log_choice
+        echo ""
+
+        case "$log_choice" in
+            1)
+                view_logs
+                ;;
+            2)
+                view_error_logs
+                read -p "按 Enter 继续..."
+                ;;
+            3)
+                view_system_logs
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo "❌ 无效选择"
+                read -p "按 Enter 继续..."
+                ;;
+        esac
+    done
+}
+
+# 系统管理菜单
+system_menu() {
+    while true; do
+        echo ""
+        echo "【系统管理】"
+        echo "  1) 检查更新"
+        echo "  2) 安装更新"
+        echo "  3) 卸载服务"
+        echo "  0) 返回主菜单"
+        echo ""
+        read -p "请选择 [0-3]: " sys_choice
+        echo ""
+
+        case "$sys_choice" in
+            1)
+                check_updates
+                read -p "按 Enter 继续..."
+                ;;
+            2)
+                install_updates
+                read -p "按 Enter 继续..."
+                ;;
+            3)
+                uninstall_service
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo "❌ 无效选择"
+                read -p "按 Enter 继续..."
+                ;;
+        esac
+    done
+}
+
+#==============================================================================
 # 主菜单
 #==============================================================================
 
@@ -910,37 +1281,24 @@ show_menu() {
     echo "║    Fantastic-Probe 管理工具                    ║"
     echo "╚════════════════════════════════════════════════╝"
     echo ""
-    echo "  配置管理"
-    echo "  ────────"
+    echo "  【配置管理】"
     echo "  1) 查看当前配置"
-    echo "  2) 修改 STRM 根目录"
-    echo "  3) 重新配置 FFprobe"
-    echo "  4) 修改自动更新设置"
-    echo "  5) 直接编辑配置文件"
+    echo "  2) 配置向导（STRM、FFprobe 等）"
+    echo "  3) 直接编辑配置文件"
     echo ""
-    echo "  服务管理"
-    echo "  ────────"
-    echo "  6) 查看服务状态"
-    echo "  7) 启动服务"
-    echo "  8) 停止服务"
-    echo "  9) 重启服务"
+    echo "  【失败文件管理】"
+    echo "  4) 查看失败文件列表"
+    echo "  5) 清空失败缓存"
+    echo "  6) 重置单个文件的失败记录"
     echo ""
-    echo "  日志管理"
-    echo "  ────────"
-    echo "  10) 查看实时日志"
-    echo "  11) 查看错误日志"
-    echo "  12) 查看系统日志"
-    echo "  13) 清空日志文件"
-    echo ""
-    echo "  系统管理"
-    echo "  ────────"
-    echo "  14) 检查更新"
-    echo "  15) 安装更新"
-    echo "  16) 卸载服务"
+    echo "  【快捷菜单】"
+    echo "  7) 服务管理"
+    echo "  8) 日志管理"
+    echo "  9) 系统管理（更新、卸载）"
     echo ""
     echo "  0) 退出"
     echo ""
-    read -p "请选择操作 [0-16]: " choice
+    read -p "请选择操作 [0-9]: " choice
     echo ""
 
     case "$choice" in
@@ -949,61 +1307,51 @@ show_menu() {
             read -p "按 Enter 返回菜单..."
             ;;
         2)
-            change_strm_root
+            echo "【配置向导】"
+            echo "请选择要配置的项："
+            echo "  1) STRM 根目录"
+            echo "  2) FFprobe"
+            echo "  0) 返回"
+            read -p "请选择 [0-2]: " config_choice
+            case "$config_choice" in
+                1)
+                    change_strm_root
+                    ;;
+                2)
+                    reconfigure_ffprobe
+                    ;;
+                0)
+                    ;;
+                *)
+                    echo "❌ 无效选择"
+                    ;;
+            esac
             read -p "按 Enter 返回菜单..."
             ;;
         3)
-            reconfigure_ffprobe
-            read -p "按 Enter 返回菜单..."
-            ;;
-        4)
-            change_auto_update
-            read -p "按 Enter 返回菜单..."
-            ;;
-        5)
             edit_config_file
             read -p "按 Enter 返回菜单..."
             ;;
+        4)
+            view_failure_list
+            read -p "按 Enter 返回菜单..."
+            ;;
+        5)
+            clear_failure_cache
+            read -p "按 Enter 返回菜单..."
+            ;;
         6)
-            show_service_status
+            reset_single_file_failure
             read -p "按 Enter 返回菜单..."
             ;;
         7)
-            start_service
-            read -p "按 Enter 返回菜单..."
+            service_menu
             ;;
         8)
-            stop_service
-            read -p "按 Enter 返回菜单..."
+            logs_menu
             ;;
         9)
-            restart_service
-            read -p "按 Enter 返回菜单..."
-            ;;
-        10)
-            view_logs
-            ;;
-        11)
-            view_error_logs
-            read -p "按 Enter 返回菜单..."
-            ;;
-        12)
-            view_system_logs
-            ;;
-        13)
-            clear_logs
-            read -p "按 Enter 返回菜单..."
-            ;;
-        14)
-            check_updates
-            read -p "按 Enter 返回菜单..."
-            ;;
-        15)
-            install_updates
-            read -p "按 Enter 返回菜单..."
-            ;;
-        16)
-            uninstall_service
+            system_menu
             ;;
         0)
             echo "👋 再见！"
@@ -1036,9 +1384,6 @@ main() {
             ffprobe)
                 reconfigure_ffprobe
                 ;;
-            update)
-                change_auto_update
-                ;;
             edit)
                 edit_config_file
                 ;;
@@ -1063,8 +1408,14 @@ main() {
             logs-system)
                 view_system_logs
                 ;;
-            logs-clear)
-                clear_logs
+            failure-list)
+                view_failure_list
+                ;;
+            failure-clear)
+                clear_failure_cache
+                ;;
+            failure-reset)
+                reset_single_file_failure
                 ;;
             check-update)
                 check_updates
@@ -1087,6 +1438,11 @@ main() {
                 echo "    ffprobe         重新配置 FFprobe"
                 echo "    update          修改自动更新设置"
                 echo "    edit            直接编辑配置文件"
+                echo ""
+                echo "  Cron 模式管理："
+                echo "    failure-list    查看失败文件列表"
+                echo "    failure-clear   清空失败缓存"
+                echo "    failure-reset   重置单个文件的失败记录"
                 echo ""
                 echo "  服务管理："
                 echo "    restart         重启服务"
