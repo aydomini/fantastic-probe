@@ -3,10 +3,6 @@ build/
 *.deb
 *.rpm
 *.tar.gz
-*.zip
-
-# 例外：保留 static 目录下的预编译 ffprobe 包
-!static/*.zip
 
 # 临时文件和备份
 *.bak
@@ -54,6 +50,7 @@ env/
 static/ffprobe
 static/bin/
 static/extracted/
-# 预编译包（已迁移到 GitHub Releases）
-static/
+
+# 全局忽略 zip 文件，但保留 static 目录中的预编译包
 *.zip
+!static/*.zip
