@@ -1,7 +1,0 @@
-{
-  "version": "2.9.2",
-  "release_date": "2026-01-23",
-  "download_url": "https://github.com/aydomini/fantastic-probe/archive/v2.9.2.tar.gz",
-  "install_script_url": "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh",
-  "changelog": "🐛 修复启动扫描改为队列模式，解决批量文件处理阻塞问题"
-}

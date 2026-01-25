@@ -216,6 +216,19 @@ chmod +x "$TARGET_SCRIPT"
 echo "   ✅ 监控脚本已安装到: $TARGET_SCRIPT"
 echo ""
 
+# 安装版本号获取脚本（支持动态版本号）
+VERSION_SCRIPT="$SCRIPT_DIR/get-version.sh"
+TARGET_VERSION_SCRIPT="/usr/local/bin/get-version.sh"
+
+if [ -f "$VERSION_SCRIPT" ]; then
+    cp "$VERSION_SCRIPT" "$TARGET_VERSION_SCRIPT"
+    chmod +x "$TARGET_VERSION_SCRIPT"
+    echo "   ✅ 版本号获取脚本已安装到: $TARGET_VERSION_SCRIPT"
+else
+    echo "   ⚠️  版本号获取脚本不存在（不影响正常使用，将使用硬编码版本号）"
+fi
+echo ""
+
 # 安装自动更新助手
 AUTO_UPDATE_HELPER="$SCRIPT_DIR/auto-update-helper.sh"
 TARGET_HELPER="/usr/local/bin/fantastic-probe-auto-update"

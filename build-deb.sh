@@ -7,7 +7,17 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="2.9.2"
+
+# 动态读取版本号（从 Git tags → 硬编码默认值）
+VERSION="2.9.3"  # 硬编码默认值
+
+if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
+    source "$SCRIPT_DIR/get-version.sh"
+elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
+    # 从 Git tags 获取版本号
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "2.9.3")
+fi
+
 ARCH="all"
 PKG_NAME="fantastic-probe_${VERSION}_${ARCH}"
 BUILD_DIR="$SCRIPT_DIR/build/$PKG_NAME"

@@ -6,9 +6,21 @@
 
 set -e
 
-VERSION_CHECK_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/version.json"
-CURRENT_VERSION="2.9.2"
+# GitHub Releases API URL（不再需要 version.json）
+GITHUB_API_URL="https://api.github.com/repos/aydomini/fantastic-probe/releases/latest"
 INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh"
+
+# 动态读取当前版本号（从 Git tags → 硬编码默认值）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CURRENT_VERSION="2.9.3"  # 硬编码默认值
+
+if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
+    source "$SCRIPT_DIR/get-version.sh"
+    CURRENT_VERSION="$VERSION"
+elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
+    # 从 Git tags 获取版本号
+    CURRENT_VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "2.9.3")
+fi
 
 #==============================================================================
 # 颜色输出
@@ -71,9 +83,9 @@ fi
 info "检查最新版本..."
 
 if command -v curl &> /dev/null; then
-    VERSION_INFO=$(curl -fsSL "$VERSION_CHECK_URL" 2>/dev/null)
+    VERSION_INFO=$(curl -fsSL "$GITHUB_API_URL" 2>/dev/null)
 elif command -v wget &> /dev/null; then
-    VERSION_INFO=$(wget -qO- "$VERSION_CHECK_URL" 2>/dev/null)
+    VERSION_INFO=$(wget -qO- "$GITHUB_API_URL" 2>/dev/null)
 fi
 
 if [ -z "$VERSION_INFO" ]; then
@@ -81,15 +93,23 @@ if [ -z "$VERSION_INFO" ]; then
     exit 1
 fi
 
-# 解析版本信息（需要 jq）
-if ! command -v jq &> /dev/null; then
-    error "缺少 jq 工具，无法解析版本信息"
-    exit 1
+# 解析版本信息（可以不用 jq，使用 grep）
+if command -v jq &> /dev/null; then
+    # 使用 jq 解析（更可靠）
+    LATEST_VERSION=$(echo "$VERSION_INFO" | jq -r '.tag_name' | sed 's/^v//')
+    RELEASE_DATE=$(echo "$VERSION_INFO" | jq -r '.published_at' | cut -d'T' -f1)
+    CHANGELOG=$(echo "$VERSION_INFO" | jq -r '.body' | head -5)
+else
+    # 回退方案：使用 grep（不需要 jq）
+    LATEST_VERSION=$(echo "$VERSION_INFO" | grep -oP '"tag_name":\s*"\K[^"]+' | head -1 | sed 's/^v//')
+    RELEASE_DATE=$(echo "$VERSION_INFO" | grep -oP '"published_at":\s*"\K[^"]+' | head -1 | cut -d'T' -f1)
+    CHANGELOG="查看详情: https://github.com/aydomini/fantastic-probe/releases/latest"
 fi
 
-LATEST_VERSION=$(echo "$VERSION_INFO" | jq -r '.version')
-RELEASE_DATE=$(echo "$VERSION_INFO" | jq -r '.release_date')
-CHANGELOG=$(echo "$VERSION_INFO" | jq -r '.changelog')
+if [ -z "$LATEST_VERSION" ]; then
+    error "无法解析版本信息"
+    exit 1
+fi
 
 echo ""
 echo "当前版本: $CURRENT_VERSION"

@@ -4,13 +4,20 @@
 # ISO 媒体信息提取服务 - 实时监控版本
 # 功能：实时监控 strm 目录，自动处理新增的 .iso.strm 文件
 # 作者：Fantastic-Probe Team
-# 版本：v2.9.2
 #==============================================================================
 
-# 版本号（用于更新检查和版本显示）
-VERSION="2.9.2"
-
 set -euo pipefail
+
+# 动态读取版本号（从 Git tags → GitHub API → 硬编码默认值）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VERSION="2.9.3"  # 硬编码默认值
+
+if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
+    source "$SCRIPT_DIR/get-version.sh"
+elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
+    # 从 Git tags 获取版本号
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "2.9.3")
+fi
 
 #==============================================================================
 # 配置参数
@@ -101,7 +108,11 @@ trap 'log_warn "收到中断信号，正在停止..."; exit 130' INT TERM
 #==============================================================================
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE" >&2
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    # 立即输出到 stderr + 后台异步写文件（避免 tee 同步阻塞）
+    echo "[$timestamp] $1" >&2
+    echo "[$timestamp] $1" >> "$LOG_FILE" &
 }
 
 log_info() {
@@ -1093,19 +1104,24 @@ handle_file_event() {
 
     # 防抖检查
     if ! should_process_file "$event_file"; then
-        log_info "跳过（防抖）: $event_file"
+        log_info "跳过（防抖）: $event_file" &
         return 0
     fi
 
     # 检查文件是否存在
     if [ ! -f "$event_file" ]; then
-        log_warn "文件已不存在: $event_file"
+        log_warn "文件已不存在: $event_file" &
         return 0
     fi
 
-    # 添加到队列（非阻塞写入）
-    echo "$event_file" >> "$QUEUE_FILE" 2>/dev/null || true
-    log_info "已加入队列: $(basename "$event_file")"
+    # 改进：非阻塞超时写入（2 秒超时，避免 FIFO 缓冲区满导致无限阻塞）
+    if timeout 2 bash -c "echo '$event_file' >> '$QUEUE_FILE'" 2>/dev/null; then
+        log_info "已加入队列: $(basename "$event_file")" &
+        return 0
+    else
+        log_warn "队列写入超时，跳过: $(basename "$event_file")" &
+        return 1
+    fi
 }
 
 #==============================================================================
@@ -1146,9 +1162,17 @@ scan_existing_files() {
         else
             # v2.9.2 修复：将未处理文件添加到队列，而不是同步处理
             # 这样可以避免启动扫描阻塞，确保所有文件都被队列处理器处理
-            log_info "加入队列（启动扫描）: $(basename "$strm_file")"
-            echo "$strm_file" >> "$QUEUE_FILE" 2>/dev/null || log_warn "无法加入队列: $strm_file"
-            ((queued++)) || true
+            if timeout 5 bash -c "echo '$strm_file' >> '$QUEUE_FILE'" 2>/dev/null; then
+                log_info "加入队列（启动扫描）: $(basename "$strm_file")" &
+                ((queued++)) || true
+            else
+                log_warn "无法加入队列（超时）: $strm_file" &
+            fi
+
+            # 限流：每 10 个文件后暂停 1 秒，避免一次性加入过多文件导致 FIFO 溢出
+            if [ $((queued % 10)) -eq 0 ] && [ $queued -gt 0 ]; then
+                sleep 1
+            fi
         fi
     done
 
@@ -1315,16 +1339,22 @@ main() {
         # 临时禁用 errexit，防止监控循环因单个错误退出
         set +e
 
-        # 使用 inotifywait 监控目录
+        # 使用 inotifywait 监控目录（改进：行缓冲 + 异步处理）
         # -m: 持续监控模式
         # -r: 递归监控子目录
         # -e: 监控的事件类型（create, moved_to）
         # --format: 输出格式（只输出文件路径）
+        # stdbuf -oL: 强制行缓冲，事件更频繁流出（避免缓冲区堆积导致管道阻塞）
         inotifywait -m -r -e create -e moved_to --format '%w%f' "$STRM_ROOT" 2>/dev/null | \
-        while read -r event_file; do
-            # 确保单个文件事件处理失败不会中断监控
-            handle_file_event "$event_file" || log_warn "处理文件事件失败: $event_file"
-        done
+        stdbuf -oL bash -c '
+            while read -r event_file; do
+                # 异步处理事件（不阻塞 inotifywait 读取）
+                # 使用后台进程 + timeout，防止单个文件处理卡住监控
+                {
+                    timeout 30 bash -c '\''handle_file_event "$1"'\'' _ "$event_file" 2>&1 || true
+                } &
+            done
+        '
 
         # 恢复 errexit
         set -e

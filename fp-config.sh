@@ -560,10 +560,22 @@ check_updates() {
     echo ""
     echo "   正在检查 GitHub 仓库..."
 
-    # 获取本地版本
+    # 获取本地版本（优先使用 get-version.sh，回退到直接读取）
     LOCAL_VERSION=""
-    if [ -f "/usr/local/bin/fantastic-probe-monitor" ]; then
+
+    if [ -f "/usr/local/bin/get-version.sh" ]; then
+        # 使用 get-version.sh 获取动态版本号
+        LOCAL_VERSION=$(bash /usr/local/bin/get-version.sh 2>/dev/null | grep "当前版本" | cut -d'：' -f2 | tr -d ' ' || echo "")
+    fi
+
+    # 回退方案：从安装的脚本中读取
+    if [ -z "$LOCAL_VERSION" ] && [ -f "/usr/local/bin/fantastic-probe-monitor" ]; then
         LOCAL_VERSION=$(grep "^VERSION=" /usr/local/bin/fantastic-probe-monitor | head -1 | cut -d'"' -f2 || echo "unknown")
+    fi
+
+    # 最终回退
+    if [ -z "$LOCAL_VERSION" ]; then
+        LOCAL_VERSION="unknown"
     fi
 
     echo "   本地版本: $LOCAL_VERSION"
@@ -753,6 +765,7 @@ uninstall_service() {
     rm -f /usr/local/bin/fantastic-probe-auto-update
     rm -f /usr/local/bin/fp-config
     rm -f /usr/local/bin/fantastic-probe-config
+    rm -f /usr/local/bin/get-version.sh
     echo "      ✅ 所有脚本已删除"
 
     # 5.5. 删除预编译包
