@@ -347,7 +347,7 @@ A: 不会。已配置 logrotate 自动管理：
 <details>
 <summary><b>📦 预编译 FFprobe</b>（点击展开）</summary>
 
-项目在 `static/` 目录提供了预编译的 ffprobe 二进制文件，方便用户快速部署。
+项目在 GitHub Release 中提供了预编译的 ffprobe 二进制文件，方便用户快速部署。首次安装时会自动从 Release 下载并缓存到本地。
 
 ### 支持的架构
 
@@ -389,19 +389,30 @@ A: 不会。已配置 logrotate 自动管理：
 
 ### 手动安装预编译 ffprobe
 
-如需手动安装：
+**自动安装（推荐）**：
+运行安装脚本时选择"选项1"，会自动从 GitHub Release 下载并安装。
+
+**手动安装**：
 
 ```bash
-# 解压对应架构的包
-unzip static/ffprobe_linux_x64.zip
+# 1. 从 GitHub Release 下载对应架构的包
+wget https://github.com/aydomini/fantastic-probe/releases/download/ffprobe-prebuilt-v1.0/ffprobe_linux_x64.zip
 
-# 安装到系统路径
+# 2. 解压
+unzip ffprobe_linux_x64.zip
+
+# 3. 安装到系统路径
 sudo cp ffprobe /usr/local/bin/ffprobe
 sudo chmod +x /usr/local/bin/ffprobe
 
-# 验证安装
+# 4. 验证安装
 ffprobe -version
 ```
+
+**离线安装**：
+1. 从其他电脑下载 Release 中的 zip 文件
+2. 放置到项目根目录的 `static/` 文件夹（会被忽略）
+3. 运行安装脚本，会自动检测并使用本地文件
 
 </details>
 

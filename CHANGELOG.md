@@ -7,6 +7,51 @@
 
 ---
 
+## [3.1.3] - 2026-01-25
+
+### 🧹 架构优化：完全迁移到 GitHub Releases + UTF-8 兼容性增强
+
+**核心改进**
+- ✅ **仓库瘦身**：移除 static 目录，减少仓库大小 90%+
+  - 删除 `static/ffprobe_linux_x64.zip`（48MB）
+  - 删除 `static/ffprobe_linux_arm64.zip`（44MB）
+  - 仓库从 ~100MB 减少到 ~10MB
+  - git clone 速度提升 10 倍
+
+- ✅ **预编译包托管到 GitHub Releases**
+  - Release 标签：`ffprobe-prebuilt-v1.0`
+  - 首次安装从 Release 自动下载
+  - 自动缓存到 `/usr/share/fantastic-probe/static/`
+  - 再次安装使用本地缓存，无需重复下载
+
+- ✅ **UTF-8 兼容性增强**
+  - 所有核心脚本添加 `export LC_ALL=C.UTF-8`
+  - `fp-config.sh`: 修复版本检测（使用 `sed` 替代 `awk` 处理中文冒号）
+  - `get-version.sh`: 添加 `--version` 参数，返回纯版本号供脚本解析
+
+**用户影响**
+- ✅ 首次安装需要网络连接（约 50MB 下载）
+- ✅ 再次安装无需网络（使用本地缓存）
+- ✅ 离线安装：手动下载 Release → 放到 `static/` → 运行安装脚本
+
+**开发者影响**
+- ✅ 仓库大小减少 90%+
+- ✅ 每次 Release 不再包含二进制文件
+- ✅ 更符合 Git 最佳实践
+
+**技术细节**
+```
+修改文件：6 个
+- .gitignore: 完全忽略 static 目录
+- fp-config.sh: 添加 UTF-8 locale + 版本检测优化
+- get-version.sh: 添加 --version 参数 + UTF-8 locale
+- fantastic-probe-install.sh: 添加 UTF-8 locale
+- fantastic-probe-cron-scanner.sh: 添加 UTF-8 locale
+- update.sh: 添加 UTF-8 locale
+```
+
+---
+
 ## [3.1.2] - 2026-01-25 (预发布)
 
 ### 🎁 恢复 FFprobe 预编译包分发 + 菜单式配置
