@@ -31,8 +31,7 @@ trap cleanup EXIT INT TERM
 SERVICE_NAME="fantastic-probe-monitor"
 CONFIG_FILE="/etc/fantastic-probe/config"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATIC_DIR="/usr/share/fantastic-probe/static"  # 预编译包本地缓存路径
-FFPROBE_RELEASE_TAG="ffprobe-prebuilt-v1.0"     # FFprobe 预编译包版本
+STATIC_DIR="/usr/share/fantastic-probe/static"  # 预编译包本地缓存路径（已废弃）
 
 #==============================================================================
 # 工具函数
@@ -177,47 +176,41 @@ reconfigure_ffprobe() {
     echo "   说明：ffprobe 用于提取蓝光/DVD 媒体信息"
     echo ""
 
-    # 检测架构和预编译包
+    # 检测架构和本地缓存
     ARCH=$(uname -m)
     PREBUILT_AVAILABLE=false
-    PREBUILT_SOURCE=""  # 本地路径或 GitHub URL
+    PREBUILT_SOURCE=""
     ARCH_NAME=""
 
-    # 优先使用本地缓存，如果没有则从 GitHub 下载
+    # 仅检查本地缓存（不再从 GitHub 下载预编译包）
     if [ "$ARCH" = "x86_64" ]; then
         ARCH_NAME="x86_64"
         if [ -f "$STATIC_DIR/ffprobe_linux_x64.zip" ]; then
             PREBUILT_AVAILABLE=true
             PREBUILT_SOURCE="$STATIC_DIR/ffprobe_linux_x64.zip"
-        else
-            PREBUILT_AVAILABLE=true
-            PREBUILT_SOURCE="https://github.com/aydomini/fantastic-probe/releases/download/$FFPROBE_RELEASE_TAG/ffprobe_linux_x64.zip"
         fi
     elif [ "$ARCH" = "aarch64" ]; then
         ARCH_NAME="ARM64"
         if [ -f "$STATIC_DIR/ffprobe_linux_arm64.zip" ]; then
             PREBUILT_AVAILABLE=true
             PREBUILT_SOURCE="$STATIC_DIR/ffprobe_linux_arm64.zip"
-        else
-            PREBUILT_AVAILABLE=true
-            PREBUILT_SOURCE="https://github.com/aydomini/fantastic-probe/releases/download/$FFPROBE_RELEASE_TAG/ffprobe_linux_arm64.zip"
         fi
     fi
 
     local new_ffprobe=""
 
-    # 自动安装预编译包（优先方案）
+    # 如果有本地缓存，提供安装选项
     if [ "$PREBUILT_AVAILABLE" = true ]; then
         echo "   ✅ 检测到架构: $ARCH_NAME"
-        echo "   ✅ 找到项目提供的预编译 ffprobe"
+        echo "   ✅ 找到本地缓存的预编译 ffprobe"
         echo ""
-        read -p "   是否自动安装预编译 ffprobe？[Y/n]: " auto_install
+        read -p "   是否使用本地缓存的 ffprobe？[Y/n]: " auto_install
         auto_install="${auto_install:-Y}"
 
         if [[ "$auto_install" =~ ^[Yy]$ ]]; then
             echo ""
 
-            # 检查 unzip 是否可用
+            # 检查 unzip
             if ! command -v unzip &> /dev/null; then
                 echo "   ⚠️  需要安装 unzip 工具"
                 read -p "   现在安装 unzip？[Y/n]: " install_unzip
@@ -233,64 +226,21 @@ reconfigure_ffprobe() {
             TEMP_DIR="/tmp/ffprobe-config-$$"
             mkdir -p "$TEMP_DIR"
 
-            # 判断是本地文件还是需要下载
-            if [[ "$PREBUILT_SOURCE" =~ ^https:// ]]; then
-                # 从 GitHub 下载
-                echo "   📥 正在下载预编译 ffprobe..."
-
-                if command -v curl &> /dev/null; then
-                    if curl -fL "$PREBUILT_SOURCE" -o "$TEMP_DIR/ffprobe.zip" --progress-bar; then
-                        echo "   ✅ 下载完成"
-                        PREBUILT_ZIP="$TEMP_DIR/ffprobe.zip"
-                    else
-                        echo "   ❌ 下载失败"
-                        rm -rf "$TEMP_DIR"
-                        return 1
-                    fi
-                elif command -v wget &> /dev/null; then
-                    if wget --show-progress "$PREBUILT_SOURCE" -O "$TEMP_DIR/ffprobe.zip" 2>&1; then
-                        echo "   ✅ 下载完成"
-                        PREBUILT_ZIP="$TEMP_DIR/ffprobe.zip"
-                    else
-                        echo "   ❌ 下载失败"
-                        rm -rf "$TEMP_DIR"
-                        return 1
-                    fi
-                else
-                    echo "   ❌ 错误: 需要 curl 或 wget"
-                    rm -rf "$TEMP_DIR"
-                    return 1
-                fi
-            else
-                # 使用本地缓存
-                echo "   📦 使用本地缓存..."
-                PREBUILT_ZIP="$PREBUILT_SOURCE"
-            fi
+            # 使用本地缓存
+            echo "   📦 使用本地缓存..."
+            PREBUILT_ZIP="$PREBUILT_SOURCE"
 
             # 解压并安装
             echo "   📦 正在安装..."
             if unzip -q "$PREBUILT_ZIP" -d "$TEMP_DIR" 2>/dev/null; then
-                # 安装到 /usr/local/bin
                 if [ -f "$TEMP_DIR/ffprobe" ]; then
                     cp "$TEMP_DIR/ffprobe" /usr/local/bin/ffprobe
                     chmod +x /usr/local/bin/ffprobe
                     new_ffprobe="/usr/local/bin/ffprobe"
 
-                    # 验证安装
                     if /usr/local/bin/ffprobe -version &> /dev/null; then
                         echo "   ✅ ffprobe 已安装到: /usr/local/bin/ffprobe"
                         echo "   ✅ 安装成功！"
-
-                        # 如果是从 GitHub 下载的，保存到本地缓存
-                        if [[ "$PREBUILT_SOURCE" =~ ^https:// ]]; then
-                            mkdir -p "$STATIC_DIR"
-                            if [ "$ARCH" = "x86_64" ]; then
-                                cp "$TEMP_DIR/ffprobe.zip" "$STATIC_DIR/ffprobe_linux_x64.zip"
-                            else
-                                cp "$TEMP_DIR/ffprobe.zip" "$STATIC_DIR/ffprobe_linux_arm64.zip"
-                            fi
-                            echo "   ✅ 已保存到本地缓存"
-                        fi
                     else
                         echo "   ❌ 安装失败: ffprobe 无法执行"
                         new_ffprobe=""
@@ -307,11 +257,11 @@ reconfigure_ffprobe() {
             # 清理临时文件
             rm -rf "$TEMP_DIR"
         else
-            echo "   ℹ️  跳过自动安装，进入手动配置..."
+            echo "   ℹ️  跳过本地缓存，进入手动配置..."
         fi
     fi
 
-    # 手动配置（回退方案）
+    # 手动配置（主要方案）
     if [ -z "$new_ffprobe" ]; then
         echo ""
         echo "   🔍 手动配置 FFprobe"
@@ -596,8 +546,8 @@ check_updates() {
         # 如果没有找到项目版本的 Release，从主分支获取版本号
         echo "   ℹ️  仓库中暂无正式版本 Release"
         echo "   正在从主分支获取版本信息..."
-        REMOTE_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/fantastic-probe-monitor.sh" 2>/dev/null | \
-            grep "^VERSION=" | head -1 | cut -d'"' -f2 || echo "")
+        REMOTE_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/aydomini/fantastic-probe/main/get-version.sh" 2>/dev/null | \
+            grep '^VERSION=' | head -1 | cut -d'"' -f2 || echo "")
 
         if [ -z "$REMOTE_VERSION" ]; then
             echo "   ❌ 无法获取远程版本信息"

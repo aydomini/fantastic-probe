@@ -496,7 +496,13 @@ inotify 监控 → 防抖检查 → 加入队列 → 队列处理器（串行）
 ---
 
 **项目**: Fantastic-Probe
+
 **作者**: aydomini
+
 **仓库**: https://github.com/aydomini/fantastic-probe
+
 **许可**: MIT License
+
 **更新**: 2026-01-25
+
+---
