@@ -33,7 +33,7 @@ get_version_from_git_tag() {
 }
 
 #==============================================================================
-# 方法 2：从 GitHub API 获取最新 release 版本
+# 方法 2：从 GitHub API 获取最新 release 版本（排除 ffprobe）
 #==============================================================================
 
 get_version_from_github_api() {
@@ -42,21 +42,39 @@ get_version_from_github_api() {
 
     # 优先使用 curl，回退到 wget
     if command -v curl &> /dev/null; then
-        local response=$(curl -s --max-time $timeout "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null)
+        # 获取所有 releases，过滤掉 draft、prerelease 和 ffprobe 相关的
+        local response=$(curl -s --max-time $timeout "https://api.github.com/repos/$repo/releases" 2>/dev/null)
         if [ -n "$response" ]; then
-            # 提取 tag_name 字段，移除 'v' 前缀
-            local version=$(echo "$response" | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)
+            # 提取符合条件的第一个 release 的 tag_name
+            # 过滤条件：非 draft、非 prerelease、不包含 "ffprobe"
+            local version=$(echo "$response" | \
+                grep -E '"tag_name":|"draft":|"prerelease":' | \
+                paste -d ' ' - - - | \
+                grep '"draft": false' | \
+                grep '"prerelease": false' | \
+                grep -v 'ffprobe' | \
+                head -1 | \
+                sed -E 's/.*"tag_name": "v?([^"]+)".*/\1/')
+
             if [ -n "$version" ]; then
-                echo "${version#v}"
+                echo "$version"
                 return 0
             fi
         fi
     elif command -v wget &> /dev/null; then
-        local response=$(wget -q -O- --timeout=$timeout "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null)
+        local response=$(wget -q -O- --timeout=$timeout "https://api.github.com/repos/$repo/releases" 2>/dev/null)
         if [ -n "$response" ]; then
-            local version=$(echo "$response" | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)
+            local version=$(echo "$response" | \
+                grep -E '"tag_name":|"draft":|"prerelease":' | \
+                paste -d ' ' - - - | \
+                grep '"draft": false' | \
+                grep '"prerelease": false' | \
+                grep -v 'ffprobe' | \
+                head -1 | \
+                sed -E 's/.*"tag_name": "v?([^"]+)".*/\1/')
+
             if [ -n "$version" ]; then
-                echo "${version#v}"
+                echo "$version"
                 return 0
             fi
         fi
