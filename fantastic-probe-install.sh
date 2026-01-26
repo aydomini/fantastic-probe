@@ -679,10 +679,34 @@ if [ "$CONFIG_WIZARD_SKIP" != "true" ]; then
     fi
 
     echo ""
-    echo "   生成配置文件..."
 
-    # 使用配置模板（如果存在）或生成配置
-    if [ -f "$SCRIPT_DIR/config/config.template" ]; then
+    # 检查配置文件是否已存在
+    if [ -f "$CONFIG_FILE" ]; then
+        echo "   检测到现有配置文件，将保留用户配置..."
+
+        # 备份现有配置
+        cp "$CONFIG_FILE" "$CONFIG_FILE.bak.$(date +%Y%m%d_%H%M%S)"
+        echo "   ✅ 已备份现有配置"
+
+        # 只更新必要的字段
+        sed -i "s|^STRM_ROOT=.*|STRM_ROOT=\"$user_strm_root\"|" "$CONFIG_FILE"
+        sed -i "s|^FFPROBE=.*|FFPROBE=\"$user_ffprobe\"|" "$CONFIG_FILE"
+        echo "   ✅ 已更新 STRM_ROOT 和 FFPROBE 配置"
+
+        # 验证 Emby 配置是否存在，如果不存在则追加
+        if ! grep -q "^EMBY_ENABLED=" "$CONFIG_FILE" 2>/dev/null; then
+            echo "" >> "$CONFIG_FILE"
+            echo "# Emby 媒体库集成（可选）" >> "$CONFIG_FILE"
+            echo "EMBY_ENABLED=false" >> "$CONFIG_FILE"
+            echo "EMBY_URL=\"\"" >> "$CONFIG_FILE"
+            echo "EMBY_API_KEY=\"\"" >> "$CONFIG_FILE"
+            echo "EMBY_NOTIFY_TIMEOUT=5" >> "$CONFIG_FILE"
+            echo "   ✅ 已补充 Emby 配置项（默认关闭）"
+        else
+            echo "   ✅ Emby 配置已保留"
+        fi
+    elif [ -f "$SCRIPT_DIR/config/config.template" ]; then
+        echo "   生成新配置文件..."
         cp "$SCRIPT_DIR/config/config.template" "$CONFIG_FILE"
         # 替换配置值
         sed -i "s|^STRM_ROOT=.*|STRM_ROOT=\"$user_strm_root\"|" "$CONFIG_FILE"
@@ -1079,7 +1103,7 @@ if [ -f "$LOGROTATE_FILE" ]; then
     cp "$LOGROTATE_FILE" "$TARGET_LOGROTATE"
     chmod 644 "$TARGET_LOGROTATE"
     echo "   ✅ logrotate 配置已安装"
-    echo "   ℹ️  日志文件达到 10MB 时自动轮转，保留最近 1 个备份（总空间约 20MB）"
+    echo "   ℹ️  日志文件达到 1MB 时自动轮转，保留最近 1 个备份（总空间约 2MB）"
 else
     echo "   ⚠️  找不到 logrotate 配置文件，跳过（日志将不会自动轮转）"
 fi

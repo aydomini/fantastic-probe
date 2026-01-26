@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.1.7"  # 硬编码默认值
+VERSION="3.1.8"  # 硬编码默认值
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.1.7")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.1.8")
 fi
 
 #==============================================================================
@@ -54,8 +54,8 @@ mkdir -p "$CACHE_DIR"
 log() {
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] [CRON] $1" >&2
-    echo "[$timestamp] [CRON] $1" >> "$LOG_FILE" &
+    # 只输出到日志文件，避免重复（crontab 会捕获 stderr）
+    echo "[$timestamp] [CRON] $1" >> "$LOG_FILE"
 }
 
 log_info() {
@@ -270,26 +270,16 @@ process_iso_strm() {
 #==============================================================================
 
 scan_and_process() {
-    log_info "=========================================="
-    log_info "Cron 扫描任务启动"
-    log_info "版本: $VERSION"
-    log_info "=========================================="
-
     # 验证监控目录
     if [ ! -d "$STRM_ROOT" ]; then
         log_error "STRM 根目录不存在: $STRM_ROOT"
         return 1
     fi
 
-    # 初始化失败缓存
+    # 初始化失败缓存（静默）
     init_failure_cache
 
-    # 显示失败统计
-    log_info "$(get_failure_stats)"
-
     # 查找所有没有 JSON 的 .iso.strm 文件
-    log_info "扫描目录: $STRM_ROOT"
-
     local pending_files=()
 
     while IFS= read -r -d '' strm_file; do
@@ -308,13 +298,19 @@ scan_and_process() {
     done < <(find "$STRM_ROOT" -type f -name "*.iso.strm" -print0 2>/dev/null)
 
     local total_pending=${#pending_files[@]}
-    log_info "发现 $total_pending 个待处理文件"
 
+    # 空扫描时静默（只记录一行摘要）
     if [ $total_pending -eq 0 ]; then
-        log_info "没有需要处理的文件"
-        log_info "=========================================="
+        log_info "扫描完成，无待处理文件"
         return 0
     fi
+
+    # 有文件时输出详细信息
+    log_info "=========================================="
+    log_info "扫描任务启动（版本: $VERSION）"
+    log_info "$(get_failure_stats)"
+    log_info "发现 $total_pending 个待处理文件"
+    log_info "=========================================="
 
     # 批量处理（限制单次处理数量，避免长时间运行）
     local processed=0

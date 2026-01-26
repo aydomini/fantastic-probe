@@ -7,6 +7,116 @@
 
 ---
 
+## [3.1.8] - 2026-01-26
+
+### 🐛 关键修复：Emby 配置更新时覆盖问题
+
+**问题描述**
+- v3.1.7 修复了配置持久化的"添加"问题，但引入了新问题
+- 用户配置 Emby 后，自动更新或手动更新时配置被重置
+- 配置文件在更新时被模板无条件覆盖，用户配置丢失
+
+**根本原因**
+
+问题链条（新发现）：
+```
+用户通过 fp-config 配置 Emby
+    ↓
+配置正确保存到 /etc/fantastic-probe/config
+    ↓
+项目自动更新或手动运行 install.sh
+    ↓
+install.sh 无条件覆盖配置文件（第 686 行）
+    ↓
+用户的 Emby 配置被重置为模板默认值
+```
+
+**核心问题**：
+- **安装脚本缺少配置保护逻辑**：`fantastic-probe-install.sh` 在更新时直接 `cp config.template $CONFIG_FILE`，覆盖所有用户配置
+
+**修复方案**
+
+✅ **在安装脚本中增加配置保护机制**（`fantastic-probe-install.sh:683-707`）
+- 检测现有配置文件是否存在
+- 如果存在 → 只更新必要字段（STRM_ROOT, FFPROBE），保留其他所有配置
+- 自动备份现有配置：`/etc/fantastic-probe/config.bak.YYYYMMDD_HHMMSS`
+- 如果缺少 Emby 配置项，自动追加（不覆盖现有值）
+- 如果不存在 → 从模板生成新配置
+
+**更新流程优化**：
+```bash
+# 更新前
+if [ -f "$CONFIG_FILE" ]; then
+    # 备份现有配置
+    cp "$CONFIG_FILE" "$CONFIG_FILE.bak.$(date +%Y%m%d_%H%M%S)"
+
+    # 只更新必要字段
+    sed -i "s|^STRM_ROOT=.*|STRM_ROOT=\"$user_strm_root\"|" "$CONFIG_FILE"
+    sed -i "s|^FFPROBE=.*|FFPROBE=\"$user_ffprobe\"|" "$CONFIG_FILE"
+
+    # 补充缺失的 Emby 配置（如果不存在）
+    if ! grep -q "^EMBY_ENABLED=" "$CONFIG_FILE"; then
+        echo "" >> "$CONFIG_FILE"
+        echo "EMBY_ENABLED=false" >> "$CONFIG_FILE"
+        ...
+    fi
+else
+    # 首次安装，从模板生成
+    cp config.template "$CONFIG_FILE"
+fi
+```
+
+### 📝 日志优化
+
+**修复内容**
+- **移除日志重复**（`fantastic-probe-cron-scanner.sh:54-59`）
+  - 之前：同时输出到 stderr 和日志文件，导致重复记录
+  - 现在：只输出到日志文件，避免 crontab 二次捕获
+
+- **空扫描静默处理**（`fantastic-probe-cron-scanner.sh:272-313`）
+  - 之前：每次空扫描输出 10+ 行日志（启动、版本、目录、发现 0 个文件、结束等）
+  - 现在：空扫描只记录一行 `"扫描完成，无待处理文件"`
+  - 有文件时才输出详细信息（扫描启动、版本、失败统计、文件列表）
+
+- **日志文件大小限制**（`logrotate-fantastic-probe.conf:7-11`）
+  - 从 10MB 降至 1MB，总空间从 20MB 降至 2MB
+  - 减少磁盘占用，提高日志可读性
+
+**影响范围**
+- ✅ 日志文件增长速度降低约 90%（空扫描场景）
+- ✅ 关键信息依然完整记录（有文件时）
+- ✅ 磁盘占用大幅降低
+
+### 📋 技术细节
+
+**修改文件**
+- `fantastic-probe-install.sh`: 增加配置保护逻辑（25 行）
+- `fantastic-probe-cron-scanner.sh`: 优化日志输出（8 行）
+- `logrotate-fantastic-probe.conf`: 调整日志大小限制（2 行）
+
+**验证方法**
+```bash
+# 1. 配置 Emby
+sudo fp-config emby
+# 输入 Emby URL 和 API Key
+
+# 2. 验证配置已保存
+grep "^EMBY_" /etc/fantastic-probe/config
+
+# 3. 模拟更新（触发安装脚本）
+sudo bash fantastic-probe-install.sh
+
+# 4. 验证 Emby 配置是否保留
+grep "^EMBY_" /etc/fantastic-probe/config
+# 预期：配置值与步骤 2 一致，未被重置
+
+# 5. 检查备份文件
+ls -lh /etc/fantastic-probe/config.bak.*
+# 预期：存在带时间戳的备份文件
+```
+
+---
+
 ## [3.1.7] - 2026-01-26
 
 ### 🐛 关键修复：Emby 配置持久化问题
