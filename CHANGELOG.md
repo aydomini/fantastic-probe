@@ -67,6 +67,30 @@ sudo fp-config show
 - 配置指南：运行 `fp-config emby` 查看交互式提示
 - API Key 获取：Emby 控制台 → 高级 → 安全 → API 密钥
 
+### 🐛 Bug 修复
+
+**修复版本检测异常**（提交 04e0a31）
+- **问题描述**
+  - 用户反馈：配置面板更新功能异常
+  - 现象：本地版本显示为 `ffprobe-prebuilt-v1.0` 而非项目版本号
+  - 影响：`fp-config check-update` 错误提示有新版本
+
+- **根本原因**
+  - `get-version.sh` 使用 GitHub `/releases/latest` API
+  - GitHub 返回最新创建的 Release（包括 ffprobe 预编译包）
+  - 导致版本比较错误
+
+- **修复方案**
+  - 改用 `/releases` API 获取所有 releases
+  - 过滤条件：非 draft、非 prerelease、不包含 "ffprobe"
+  - 取第一个符合条件的 release 作为项目版本
+  - 与 `fp-config.sh` 的 `check_updates()` 逻辑保持一致
+
+- **验证结果**
+  - ✅ 版本检测正确：显示 3.1.5 而非 ffprobe-prebuilt-v1.0
+  - ✅ 更新检测正常工作
+  - ✅ 所有依赖 `get-version.sh` 的工具受益
+
 ---
 
 ## [3.1.4] - 2026-01-25
