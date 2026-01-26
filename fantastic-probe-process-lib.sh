@@ -10,6 +10,69 @@
 # 使用方式: source fantastic-probe-process-lib.sh
 
 #==============================================================================
+# 通知 Emby 刷新媒体库
+#==============================================================================
+
+notify_emby_refresh() {
+    local json_file="$1"
+
+    # 检查是否启用 Emby 集成
+    if [ "${EMBY_ENABLED:-false}" != "true" ]; then
+        log_debug "  Emby 集成未启用，跳过通知"
+        return 0
+    fi
+
+    # 验证配置完整性
+    if [ -z "${EMBY_URL:-}" ] || [ -z "${EMBY_API_KEY:-}" ]; then
+        log_warn "  ⚠️  Emby 配置不完整（缺少 URL 或 API Key），跳过通知"
+        return 0
+    fi
+
+    # 检查 curl 是否可用
+    if ! command -v curl &> /dev/null; then
+        log_warn "  ⚠️  curl 命令不可用，无法通知 Emby"
+        return 0
+    fi
+
+    local timeout="${EMBY_NOTIFY_TIMEOUT:-5}"
+    local emby_url="${EMBY_URL}"
+    local api_key="${EMBY_API_KEY}"
+
+    # 移除 URL 末尾的斜杠（如果有）
+    emby_url="${emby_url%/}"
+
+    log_info "  📡 通知 Emby 刷新媒体库..."
+    log_debug "  Emby URL: $emby_url"
+
+    # 异步调用 Emby API（不阻塞主流程）
+    (
+        local response
+        local http_code
+
+        # 调用 Emby Library Refresh API
+        response=$(curl -s -w "\n%{http_code}" \
+            --max-time "$timeout" \
+            -X POST "${emby_url}/Library/Refresh" \
+            -H "X-Emby-Token: ${api_key}" \
+            -H "Content-Type: application/json" \
+            -d '{}' 2>&1)
+
+        # 提取 HTTP 状态码
+        http_code=$(echo "$response" | tail -1)
+
+        if [ "$http_code" = "204" ] || [ "$http_code" = "200" ]; then
+            log_success "  ✅ Emby 媒体库刷新请求已发送（HTTP $http_code）"
+        else
+            log_warn "  ⚠️  Emby API 调用失败（HTTP $http_code）"
+            log_debug "  响应: $(echo "$response" | head -n -1)"
+        fi
+    ) &
+
+    # 不等待后台任务完成，立即返回
+    return 0
+}
+
+#==============================================================================
 # 检查磁盘空间
 #==============================================================================
 
@@ -596,6 +659,9 @@ process_iso_strm_full() {
     local subtitle_count=$(echo "$ffprobe_output" | jq '[.streams[] | select(.codec_type=="subtitle")] | length')
 
     log_info "  视频流: $video_count, 音频流: $audio_count, 字幕流: $subtitle_count"
+
+    # 通知 Emby 刷新媒体库（如果已启用）
+    notify_emby_refresh "$json_file"
 
     return 0
 }

@@ -7,6 +7,68 @@
 
 ---
 
+## [3.1.5] - 2026-01-26
+
+### ✨ 新增功能：Emby 媒体库集成
+
+**功能亮点**
+- ✅ **自动通知 Emby 刷新媒体库**
+  - 成功提取 ISO 媒体信息后自动调用 Emby API
+  - 异步执行，不阻塞文件处理流程
+  - 智能错误处理，失败不影响主功能
+
+- ✅ **完善的配置管理**
+  - 新增 `fp-config emby` 命令配置 Emby 集成
+  - 交互式配置向导，支持连接测试
+  - 显示 Emby 服务器名称（连接成功时）
+  - 配置持久化到 `/etc/fantastic-probe/config`
+
+- ✅ **用户友好的界面**
+  - 配置面板菜单集成（配置向导 → Emby 集成）
+  - `fp-config show` 显示 Emby 配置状态
+  - API Key 隐藏显示，保护敏感信息
+
+**配置项**
+```bash
+# Emby 媒体库集成（可选）
+EMBY_ENABLED=false           # 启用/禁用 Emby 集成
+EMBY_URL=""                  # Emby 服务器地址（如：http://127.0.0.1:8096）
+EMBY_API_KEY=""              # Emby API 密钥
+EMBY_NOTIFY_TIMEOUT=5        # API 调用超时时间（秒）
+```
+
+**使用示例**
+```bash
+# 配置 Emby 集成
+sudo fp-config emby
+
+# 查看当前配置
+sudo fp-config show
+
+# 处理 ISO 文件时自动通知 Emby
+# [2026-01-26 10:30:00] ✅ 已生成: /path/to/file-mediainfo.json
+# [2026-01-26 10:30:00] 📡 通知 Emby 刷新媒体库...
+# [2026-01-26 10:30:01] ✅ Emby 媒体库刷新请求已发送（HTTP 204）
+```
+
+**技术实现**
+- 新增 `notify_emby_refresh()` 函数（fantastic-probe-process-lib.sh）
+- 新增 `configure_emby()` 配置管理函数（fp-config.sh）
+- 集成到文件处理流程（JSON 生成后触发）
+- 使用 curl 调用 Emby Library Refresh API
+- HTTP 状态码验证（200/204）
+
+**兼容性**
+- ✅ 可选功能，默认禁用
+- ✅ 需要 curl 命令（大多数系统已预装）
+- ✅ 支持 Cron 模式和 systemd 模式
+
+**相关文档**
+- 配置指南：运行 `fp-config emby` 查看交互式提示
+- API Key 获取：Emby 控制台 → 高级 → 安全 → API 密钥
+
+---
+
 ## [3.1.4] - 2026-01-25
 
 ### 🐛 修复：fp-config 完全适配 Cron 模式，移除 systemd 遗留代码

@@ -73,6 +73,12 @@ show_current_config() {
     echo "  ⏱️  防抖时间: ${DEBOUNCE_TIME}秒"
     echo "  🔄 自动检查更新: ${AUTO_UPDATE_CHECK}"
     echo "  🔄 自动安装更新: ${AUTO_UPDATE_INSTALL}"
+    echo ""
+    echo "  📡 Emby 集成:"
+    echo "    启用状态: ${EMBY_ENABLED:-false}"
+    echo "    Emby URL: ${EMBY_URL:-(未配置)}"
+    echo "    API Key: ${EMBY_API_KEY:+(已配置)}"
+    echo "    通知超时: ${EMBY_NOTIFY_TIMEOUT:-5}秒"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 }
@@ -540,6 +546,148 @@ change_auto_update() {
 
     if [[ "$do_restart" =~ ^[Yy]$ ]]; then
         restart_service
+    fi
+}
+
+# 配置 Emby 集成
+configure_emby() {
+    echo ""
+    echo "📡 配置 Emby 媒体库集成"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   说明："
+    echo "   • 启用后，每次生成媒体信息 JSON 文件时自动通知 Emby 刷新媒体库"
+    echo "   • 需要提供 Emby 服务器地址和 API 密钥"
+    echo "   • API 密钥可在 Emby 控制台 → 高级 → 安全 中生成"
+    echo ""
+    echo "   当前状态："
+    echo "     启用: ${EMBY_ENABLED:-false}"
+    echo "     URL: ${EMBY_URL:-(未配置)}"
+    echo "     API Key: ${EMBY_API_KEY:+(已配置)}"
+    echo ""
+
+    # 询问是否启用
+    local current_enabled="${EMBY_ENABLED:-false}"
+    local enable_prompt="Y/n"
+    if [ "$current_enabled" = "true" ]; then
+        enable_prompt="Y/n"
+    else
+        enable_prompt="y/N"
+    fi
+
+    read -p "   是否启用 Emby 集成？[$enable_prompt]: " enable_emby
+
+    if [ "$current_enabled" = "true" ]; then
+        enable_emby="${enable_emby:-Y}"
+    else
+        enable_emby="${enable_emby:-N}"
+    fi
+
+    if [[ "$enable_emby" =~ ^[Yy]$ ]]; then
+        # 启用 Emby 集成
+        echo ""
+        echo "   配置 Emby 连接信息："
+        echo ""
+
+        # 配置 Emby URL
+        echo "   📍 Emby 服务器地址"
+        echo "      示例: http://127.0.0.1:8096 或 http://192.168.1.100:8096"
+        read -p "      请输入 Emby URL [默认: ${EMBY_URL:-http://127.0.0.1:8096}]: " new_emby_url
+        new_emby_url="${new_emby_url:-${EMBY_URL:-http://127.0.0.1:8096}}"
+
+        # 移除末尾的斜杠
+        new_emby_url="${new_emby_url%/}"
+
+        # 配置 API Key
+        echo ""
+        echo "   🔑 API 密钥"
+        echo "      获取方式: Emby 控制台 → 高级 → 安全 → API 密钥"
+        if [ -n "${EMBY_API_KEY:-}" ]; then
+            read -p "      请输入 API Key [留空保持当前]: " new_api_key
+            new_api_key="${new_api_key:-$EMBY_API_KEY}"
+        else
+            read -p "      请输入 API Key: " new_api_key
+        fi
+
+        # 验证配置
+        if [ -z "$new_api_key" ]; then
+            echo ""
+            echo "   ❌ API Key 不能为空"
+            echo "   ℹ️  操作已取消"
+            return 1
+        fi
+
+        # 测试连接（可选）
+        echo ""
+        read -p "   是否测试 Emby 连接？[Y/n]: " test_connection
+        test_connection="${test_connection:-Y}"
+
+        if [[ "$test_connection" =~ ^[Yy]$ ]]; then
+            echo "   正在测试连接..."
+
+            if command -v curl &> /dev/null; then
+                local test_response
+                test_response=$(curl -s -w "\n%{http_code}" --max-time 5 \
+                    -X GET "${new_emby_url}/System/Info" \
+                    -H "X-Emby-Token: ${new_api_key}" 2>&1)
+
+                local test_http_code=$(echo "$test_response" | tail -1)
+
+                if [ "$test_http_code" = "200" ]; then
+                    echo "   ✅ 连接成功！"
+
+                    # 尝试获取服务器名称
+                    local server_name=$(echo "$test_response" | head -n -1 | grep -o '"ServerName":"[^"]*"' | cut -d'"' -f4 2>/dev/null || echo "")
+                    if [ -n "$server_name" ]; then
+                        echo "   ℹ️  服务器名称: $server_name"
+                    fi
+                else
+                    echo "   ⚠️  连接失败（HTTP $test_http_code）"
+                    echo "   ℹ️  请检查 URL 和 API Key 是否正确"
+                    read -p "   是否仍要保存配置？[y/N]: " save_anyway
+                    save_anyway="${save_anyway:-N}"
+
+                    if [[ ! "$save_anyway" =~ ^[Yy]$ ]]; then
+                        echo "   ℹ️  操作已取消"
+                        return 1
+                    fi
+                fi
+            else
+                echo "   ⚠️  curl 命令不可用，跳过连接测试"
+            fi
+        fi
+
+        # 保存配置
+        echo ""
+        update_config_line "EMBY_ENABLED" "true"
+        update_config_line "EMBY_URL" "$new_emby_url"
+        update_config_line "EMBY_API_KEY" "$new_api_key"
+
+        EMBY_ENABLED="true"
+        EMBY_URL="$new_emby_url"
+        EMBY_API_KEY="$new_api_key"
+
+        echo "   ✅ Emby 集成已启用"
+    else
+        # 禁用 Emby 集成
+        update_config_line "EMBY_ENABLED" "false"
+        EMBY_ENABLED="false"
+        echo "   ✅ Emby 集成已禁用"
+    fi
+
+    # 询问是否重启服务
+    echo ""
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已更新，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+        else
+            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        fi
     fi
 }
 
@@ -1460,7 +1608,7 @@ show_menu() {
     echo ""
     echo "  【配置管理】"
     echo "  1) 查看当前配置"
-    echo "  2) 配置向导（STRM、FFprobe 等）"
+    echo "  2) 配置向导（STRM、FFprobe、Emby 等）"
     echo "  3) 直接编辑配置文件"
     echo ""
     echo "  【失败文件管理】"
@@ -1488,14 +1636,18 @@ show_menu() {
             echo "请选择要配置的项："
             echo "  1) STRM 根目录"
             echo "  2) FFprobe"
+            echo "  3) Emby 集成"
             echo "  0) 返回"
-            read -p "请选择 [0-2]: " config_choice
+            read -p "请选择 [0-3]: " config_choice
             case "$config_choice" in
                 1)
                     change_strm_root
                     ;;
                 2)
                     reconfigure_ffprobe
+                    ;;
+                3)
+                    configure_emby
                     ;;
                 0)
                     ;;
@@ -1561,6 +1713,9 @@ main() {
             ffprobe)
                 reconfigure_ffprobe
                 ;;
+            emby)
+                configure_emby
+                ;;
             edit)
                 edit_config_file
                 ;;
@@ -1613,6 +1768,7 @@ main() {
                 echo "    show            查看当前配置"
                 echo "    strm            修改 STRM 根目录"
                 echo "    ffprobe         重新配置 FFprobe"
+                echo "    emby            配置 Emby 媒体库集成"
                 echo "    update          修改自动更新设置"
                 echo "    edit            直接编辑配置文件"
                 echo ""
