@@ -3,10 +3,12 @@ export LC_ALL=C.UTF-8
 
 #==============================================================================
 # 动态版本号获取脚本
-# 功能：从 Git tags 或 GitHub API 动态获取版本号
+# 功能：从本地 Git tags 或硬编码默认值获取版本号
 # 使用方法：
 #   source ./get-version.sh
 #   echo "当前版本：$VERSION"
+#
+# 注意：此脚本仅用于获取"本地版本"，不从 GitHub API 获取远程版本
 #==============================================================================
 
 # 获取脚本所在目录
@@ -21,10 +23,11 @@ VERSION="3.1.5"
 
 get_version_from_git_tag() {
     if command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-        # 获取最新的 tag（去掉 'v' 前缀）
-        local tag=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null)
+        # 获取最新的项目版本 tag（排除 ffprobe 相关）
+        # 只匹配 v 开头的版本号 tag
+        local tag=$(git -C "$SCRIPT_DIR" tag -l "v*" | sort -V | tail -1)
         if [ -n "$tag" ]; then
-            # 移除 'v' 前缀（如果有）
+            # 移除 'v' 前缀
             echo "${tag#v}"
             return 0
         fi
@@ -33,58 +36,7 @@ get_version_from_git_tag() {
 }
 
 #==============================================================================
-# 方法 2：从 GitHub API 获取最新 release 版本（排除 ffprobe）
-#==============================================================================
-
-get_version_from_github_api() {
-    local repo="${1:-aydomini/fantastic-probe}"
-    local timeout=5
-
-    # 优先使用 curl，回退到 wget
-    if command -v curl &> /dev/null; then
-        # 获取所有 releases，过滤掉 draft、prerelease 和 ffprobe 相关的
-        local response=$(curl -s --max-time $timeout "https://api.github.com/repos/$repo/releases" 2>/dev/null)
-        if [ -n "$response" ]; then
-            # 提取符合条件的第一个 release 的 tag_name
-            # 过滤条件：非 draft、非 prerelease、不包含 "ffprobe"
-            local version=$(echo "$response" | \
-                grep -E '"tag_name":|"draft":|"prerelease":' | \
-                paste -d ' ' - - - | \
-                grep '"draft": false' | \
-                grep '"prerelease": false' | \
-                grep -v 'ffprobe' | \
-                head -1 | \
-                sed -E 's/.*"tag_name": "v?([^"]+)".*/\1/')
-
-            if [ -n "$version" ]; then
-                echo "$version"
-                return 0
-            fi
-        fi
-    elif command -v wget &> /dev/null; then
-        local response=$(wget -q -O- --timeout=$timeout "https://api.github.com/repos/$repo/releases" 2>/dev/null)
-        if [ -n "$response" ]; then
-            local version=$(echo "$response" | \
-                grep -E '"tag_name":|"draft":|"prerelease":' | \
-                paste -d ' ' - - - | \
-                grep '"draft": false' | \
-                grep '"prerelease": false' | \
-                grep -v 'ffprobe' | \
-                head -1 | \
-                sed -E 's/.*"tag_name": "v?([^"]+)".*/\1/')
-
-            if [ -n "$version" ]; then
-                echo "$version"
-                return 0
-            fi
-        fi
-    fi
-
-    return 1
-}
-
-#==============================================================================
-# 方法 3：从当前脚本的注释中读取（备选方案）
+# 方法 2：从当前脚本的注释中读取（备选方案）
 #==============================================================================
 
 get_version_from_script_comment() {
@@ -103,12 +55,12 @@ get_version_from_script_comment() {
 }
 
 #==============================================================================
-# 主函数：尝试多个方法获取版本号
+# 主函数：获取本地版本号
 #==============================================================================
 
-# 尝试获取版本号（按优先级）
+# 获取版本号（按优先级）
+# 注意：不从 GitHub API 获取，那是"远程版本"，应由调用者自行处理
 VERSION=$(get_version_from_git_tag) || \
-VERSION=$(get_version_from_github_api "aydomini/fantastic-probe") || \
 VERSION=$(get_version_from_script_comment "$1") || \
 VERSION="3.1.5"  # 最终回退到硬编码默认值
 
@@ -133,12 +85,15 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
         echo ""
 
         # 显示获取来源
-        if command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ] && git -C "$SCRIPT_DIR" describe --tags &>/dev/null 2>&1; then
-            echo "来源：Git tags ($(git -C "$SCRIPT_DIR" describe --tags --abbrev=0))"
-        elif echo "$VERSION" | grep -qE "^\d+\.\d+\.\d+$"; then
-            echo "来源：GitHub API 或硬编码默认值"
+        if command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
+            git_tag=$(git -C "$SCRIPT_DIR" tag -l "v*" | sort -V | tail -1)
+            if [ -n "$git_tag" ]; then
+                echo "来源：本地 Git tags ($git_tag)"
+            else
+                echo "来源：硬编码默认值"
+            fi
         else
-            echo "来源：硬编码默认值"
+            echo "来源：硬编码默认值（非 Git 仓库）"
         fi
     fi
 fi
