@@ -7,6 +7,76 @@
 
 ---
 
+## [3.1.6] - 2026-01-26
+
+### 🐛 关键修复：版本检测逻辑
+
+**问题描述**
+- `fp-config check-update` 显示本地版本为 `ffprobe-prebuilt-v1.0`
+- 版本检测功能异常，无法正确判断是否需要更新
+- 根本原因：`get-version.sh` 从 GitHub API 获取版本号，导致"本地版本"实际上是"远程最新版本"
+
+**修复方案**
+- ✅ **彻底重构 get-version.sh**
+  - 移除 `get_version_from_github_api()` 函数（删除 64 行代码）
+  - 代码从 127 行简化到 99 行
+  - 明确脚本职责：仅获取"本地版本"，不涉及远程 API
+
+- ✅ **架构改进：职责分离**
+  - **本地版本**（`get-version.sh`）：从本地 Git tags、脚本注释或硬编码默认值获取
+  - **远程版本**（`fp-config.sh`）：从 GitHub Releases API 获取
+  - 清晰的边界，避免混淆
+
+- ✅ **简化版本获取逻辑**
+  ```bash
+  # 优先级 1: 本地 Git tags（v* 格式）
+  git tag -l "v*" | sort -V | tail -1
+
+  # 优先级 2: 脚本注释中的版本号
+  grep -E "版本:|VERSION=" script.sh
+
+  # 优先级 3: 硬编码默认值
+  VERSION="3.1.6"
+  ```
+
+**影响范围**
+- ✅ `fp-config check-update` 现在能正确显示本地版本
+- ✅ 版本比较逻辑恢复正常
+- ✅ 更新检测功能正常工作
+
+**验证方法**
+```bash
+# 更新后运行
+fp-config check-update
+
+# 预期输出
+本地版本: 3.1.6
+最新版本: 3.1.6
+✅ 已是最新版本！
+```
+
+### 📋 技术细节
+
+**修改文件**
+- `get-version.sh`: 127 行 → 99 行（移除 28 行）
+- `fantastic-probe-cron-scanner.sh`: 版本号 3.1.5 → 3.1.6
+- `update.sh`: 版本号 3.1.5 → 3.1.6
+
+**架构对比**
+
+*之前（错误设计）*：
+```
+get-version.sh → GitHub API → 获取远程版本 → 误认为本地版本 ❌
+```
+
+*现在（正确设计）*：
+```
+get-version.sh → 本地 Git tags → 本地版本 ✅
+fp-config.sh → GitHub Releases API → 远程版本 ✅
+```
+
+---
+
 ## [3.1.5] - 2026-01-26
 
 ### ✨ 新增功能：Emby 媒体库集成
