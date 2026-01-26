@@ -7,6 +7,112 @@
 
 ---
 
+## [3.1.7] - 2026-01-26
+
+### 🐛 关键修复：Emby 配置持久化问题
+
+**问题描述**
+- 重启项目后，Emby 相关配置会丢失，需要重新配置
+- 用户通过 `fp-config emby` 配置后，配置无法持久化保存
+- 配置更新静默失败，用户无感知
+
+**根本原因分析**
+
+问题链条：
+```
+配置模板缺少 Emby 配置项
+    ↓
+安装脚本使用模板生成配置文件
+    ↓
+生成的配置文件中没有 EMBY_* 行
+    ↓
+用户通过 fp-config 配置 Emby
+    ↓
+update_config_line 使用 sed 尝试更新配置
+    ↓
+sed 找不到匹配行，操作失败（静默失败）
+    ↓
+配置未保存，重启后丢失
+```
+
+**核心问题**：
+1. **配置模板不完整**：`config/config.template` 缺少 Emby 配置项
+2. **配置更新逻辑缺陷**：`fp-config.sh` 中的 `update_config_line` 函数使用 `sed` 替换，无法添加新配置行
+3. **两种生成方式不一致**：使用模板 vs fallback 生成的配置文件不一致
+
+**修复方案（三管齐下）**
+
+- ✅ **方案 A：完善配置模板（根治问题）**
+  - 在 `config/config.template` 中添加完整的 Emby 配置项
+  - 确保新安装用户的配置文件包含所有必需配置
+  - 配置项：EMBY_ENABLED、EMBY_URL、EMBY_API_KEY、EMBY_NOTIFY_TIMEOUT
+  - 包含详细的中文注释和使用说明
+
+- ✅ **方案 B：增强 update_config_line 函数（修复现有用户）**
+  - 在 `fp-config.sh` 中增强配置更新逻辑
+  - 添加配置行存在性检查：`grep -q "^${key}=" "$CONFIG_FILE"`
+  - 如果配置行存在 → 使用 `sed` 替换
+  - 如果配置行不存在 → 使用 `echo >>` 追加到文件末尾
+  - 消除"静默失败"问题，确保配置能正确保存
+
+- ✅ **方案 C：添加配置验证机制（增强健壮性）**
+  - 新增 `validate_config` 函数，自动检测缺失的配置项
+  - 启动时自动验证并补全缺失的 Emby 配置
+  - 在 `main()` 函数中 `load_config` 后自动调用
+  - 提供友好的提示信息，告知用户自动修复操作
+
+**影响范围**
+- ✅ 现有用户：首次运行 `fp-config` 时自动修复配置文件
+- ✅ 新安装用户：配置文件从模板生成时就包含完整配置
+- ✅ 所有用户：Emby 配置能正确保存，重启后不再丢失
+
+**验证方法**
+```bash
+# 配置 Emby
+fp-config emby
+
+# 重启服务
+systemctl restart fantastic-probe-monitor
+
+# 验证配置是否保留
+fp-config show
+
+# 预期输出
+📡 Emby 集成:
+  启用状态: true
+  Emby URL: http://127.0.0.1:8096
+  API Key: (已配置)
+  通知超时: 5秒
+```
+
+### 📋 技术细节
+
+**修改文件**
+- `config/config.template`: 添加 Emby 配置项（20行）
+- `fp-config.sh`: 增强 `update_config_line` 函数（8行）
+- `fp-config.sh`: 新增 `validate_config` 函数（48行）
+
+**修复对比**
+
+*之前（有缺陷）*：
+```bash
+# update_config_line 直接使用 sed 替换
+sed -i "s|^${key}=.*|${key}=\"${value}\"|" "$CONFIG_FILE"
+# 如果配置行不存在，sed 静默失败 ❌
+```
+
+*现在（已修复）*：
+```bash
+# 检查配置行是否存在
+if grep -q "^${key}=" "$CONFIG_FILE"; then
+    sed -i "s|^${key}=.*|${key}=\"${value}\"|" "$CONFIG_FILE"
+else
+    echo "${key}=\"${value}\"" >> "$CONFIG_FILE"  # 追加新行 ✅
+fi
+```
+
+---
+
 ## [3.1.6] - 2026-01-26
 
 ### 🐛 关键修复：版本检测逻辑

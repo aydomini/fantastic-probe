@@ -60,6 +60,56 @@ load_config() {
     fi
 }
 
+# 验证配置完整性
+validate_config() {
+    local missing_keys=()
+
+    # 必需的配置项列表（Emby 相关）
+    local required_keys=(
+        "EMBY_ENABLED"
+        "EMBY_URL"
+        "EMBY_API_KEY"
+        "EMBY_NOTIFY_TIMEOUT"
+    )
+
+    # 检查缺失的配置项
+    for key in "${required_keys[@]}"; do
+        if ! grep -q "^${key}=" "$CONFIG_FILE"; then
+            missing_keys+=("$key")
+        fi
+    done
+
+    # 如果有缺失，自动补全
+    if [ ${#missing_keys[@]} -gt 0 ]; then
+        echo ""
+        echo "⚠️  检测到缺失的配置项，正在自动修复..."
+
+        for key in "${missing_keys[@]}"; do
+            case "$key" in
+                EMBY_ENABLED)
+                    echo "EMBY_ENABLED=false" >> "$CONFIG_FILE"
+                    ;;
+                EMBY_URL)
+                    echo "EMBY_URL=\"\"" >> "$CONFIG_FILE"
+                    ;;
+                EMBY_API_KEY)
+                    echo "EMBY_API_KEY=\"\"" >> "$CONFIG_FILE"
+                    ;;
+                EMBY_NOTIFY_TIMEOUT)
+                    echo "EMBY_NOTIFY_TIMEOUT=5" >> "$CONFIG_FILE"
+                    ;;
+            esac
+            echo "   ✅ 已添加: $key"
+        done
+
+        echo ""
+        echo "✅ 配置文件已修复，缺失的配置项已自动添加"
+
+        # 重新加载配置
+        source "$CONFIG_FILE"
+    fi
+}
+
 # 显示当前配置
 show_current_config() {
     echo ""
@@ -138,8 +188,14 @@ update_config_line() {
         # 创建备份
         cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
 
-        # 更新配置行
-        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "$CONFIG_FILE"
+        # 检查配置行是否存在
+        if grep -q "^${key}=" "$CONFIG_FILE"; then
+            # 配置行存在，更新它
+            sed -i "s|^${key}=.*|${key}=\"${value}\"|" "$CONFIG_FILE"
+        else
+            # 配置行不存在，追加到文件末尾
+            echo "${key}=\"${value}\"" >> "$CONFIG_FILE"
+        fi
 
         # 删除备份
         rm -f "$CONFIG_FILE.bak"
@@ -1700,6 +1756,7 @@ show_menu() {
 main() {
     check_root
     load_config
+    validate_config
 
     # 如果有参数，直接执行对应功能
     if [ $# -gt 0 ]; then
