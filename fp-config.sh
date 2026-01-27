@@ -1485,6 +1485,43 @@ reset_single_file_failure() {
 # 子菜单函数
 #==============================================================================
 
+# 失败文件管理菜单
+failure_menu() {
+    while true; do
+        echo ""
+        echo "【失败文件管理】"
+        echo "  1) 查看失败文件列表"
+        echo "  2) 清空失败缓存"
+        echo "  3) 重置单个文件的失败记录"
+        echo "  0) 返回主菜单"
+        echo ""
+        read -p "请选择 [0-3]: " fail_choice
+        echo ""
+
+        case "$fail_choice" in
+            1)
+                view_failure_list
+                read -p "按 Enter 继续..."
+                ;;
+            2)
+                clear_failure_cache
+                read -p "按 Enter 继续..."
+                ;;
+            3)
+                reset_single_file_failure
+                read -p "按 Enter 继续..."
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo "❌ 无效选择"
+                read -p "按 Enter 继续..."
+                ;;
+        esac
+    done
+}
+
 # 服务管理菜单
 service_menu() {
     while true; do
@@ -1609,19 +1646,15 @@ show_menu() {
     echo "  2) 配置向导（STRM、FFprobe、Emby 等）"
     echo "  3) 直接编辑配置文件"
     echo ""
-    echo "  【失败文件管理】"
-    echo "  4) 查看失败文件列表"
-    echo "  5) 清空失败缓存"
-    echo "  6) 重置单个文件的失败记录"
-    echo ""
     echo "  【快捷菜单】"
-    echo "  7) 服务管理"
-    echo "  8) 日志管理"
-    echo "  9) 系统管理（更新、卸载）"
+    echo "  4) 失败文件管理"
+    echo "  5) 服务管理"
+    echo "  6) 日志管理"
+    echo "  7) 系统管理（更新、卸载）"
     echo ""
     echo "  0) 退出"
     echo ""
-    read -p "请选择操作 [0-9]: " choice
+    read -p "请选择操作 [0-7]: " choice
     echo ""
 
     case "$choice" in
@@ -1670,24 +1703,15 @@ show_menu() {
             read -p "按 Enter 返回菜单..."
             ;;
         4)
-            view_failure_list
-            read -p "按 Enter 返回菜单..."
+            failure_menu
             ;;
         5)
-            clear_failure_cache
-            read -p "按 Enter 返回菜单..."
-            ;;
-        6)
-            reset_single_file_failure
-            read -p "按 Enter 返回菜单..."
-            ;;
-        7)
             service_menu
             ;;
-        8)
+        6)
             logs_menu
             ;;
-        9)
+        7)
             system_menu
             ;;
         0)

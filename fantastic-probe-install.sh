@@ -678,7 +678,6 @@ if [ "$CONFIG_WIZARD_SKIP" != "true" ]; then
         # 手动生成配置文件
         cat > "$CONFIG_FILE" <<EOF
 # Fantastic-Probe 配置文件
-# 版本：2.2.0
 
 # STRM 根目录
 STRM_ROOT="$user_strm_root"
