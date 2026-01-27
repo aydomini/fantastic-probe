@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.1.8"  # 硬编码默认值
+VERSION="3.1.9"  # 硬编码默认值
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.1.8")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.1.9")
 fi
 
 #==============================================================================
@@ -394,17 +394,38 @@ case "${1:-scan}" in
         # 显示详细信息
         if [ -f "$FAILURE_CACHE_DB" ]; then
             echo ""
-            echo "永久失败的文件列表："
-            sqlite3 "$FAILURE_CACHE_DB" <<SQL
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "永久失败的文件列表（失败次数 >= $MAX_RETRY_COUNT）："
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+
+            # 检查是否有失败文件
+            local failure_count
+            failure_count=$(sqlite3 "$FAILURE_CACHE_DB" \
+                "SELECT COUNT(*) FROM failure_cache WHERE failure_count >= $MAX_RETRY_COUNT;" 2>/dev/null || echo "0")
+
+            if [ "$failure_count" -eq 0 ]; then
+                echo "  ✅ 暂无永久失败的文件"
+            else
+                # 使用格式化输出（表格模式）
+                sqlite3 -header -column "$FAILURE_CACHE_DB" <<SQL
+.width 50 8 20 40
 SELECT
-    substr(file_path, length(file_path) - instr(reverse(file_path), '/') + 2) AS filename,
-    failure_count,
-    datetime(last_failure_time, 'unixepoch', 'localtime') AS last_failure,
-    last_error_message
+    file_path AS '文件路径',
+    failure_count AS '失败次数',
+    datetime(last_failure_time, 'unixepoch', 'localtime') AS '最后失败时间',
+    CASE
+        WHEN length(last_error_message) > 40
+        THEN substr(last_error_message, 1, 37) || '...'
+        ELSE last_error_message
+    END AS '错误信息'
 FROM failure_cache
 WHERE failure_count >= $MAX_RETRY_COUNT
 ORDER BY last_failure_time DESC;
 SQL
+            fi
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         fi
         ;;
     reset-file)

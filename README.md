@@ -1,14 +1,14 @@
 # Fantastic-Probe - ISO 媒体信息实时提取服务
 
-自动监控 strm 目录，实时提取 ISO 文件的媒体信息并生成 Emby 兼容的 JSON 文件。
+自动监控 STRM 目录，实时提取 ISO 文件的媒体信息并生成 Emby 兼容的 JSON 文件。
 
 ---
 
-## 🚀 快速开始
+## 安装流程
 
 ### 一键安装（推荐）
 
-最简单的安装方式，自动检测系统并安装所有依赖：
+使用以下命令自动安装：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh | sudo bash
@@ -20,19 +20,16 @@ curl -fsSL https://raw.githubusercontent.com/aydomini/fantastic-probe/main/insta
 wget -qO- https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh | sudo bash
 ```
 
-安装脚本会自动完成：
-- ✅ 检测系统类型和包管理器
-- ✅ 安装所有必需依赖
-- ✅ 运行交互式配置向导
-- ✅ 配置并启动 systemd 服务
-- ✅ 设置开机自启动
+**安装脚本会自动完成：**
 
-<details>
-<summary><b>📦 其他安装方式</b>（点击展开）</summary>
+1. 检测系统类型（支持 Debian/Ubuntu、RHEL/CentOS/Fedora、Arch Linux、openSUSE）
+2. 安装必需依赖（`sqlite3`、`jq` 等）
+3. 运行交互式配置向导（配置 STRM 根目录、FFprobe 路径等）
+4. 安装预编译 FFprobe（可选，支持 x86_64 和 ARM64 架构）
+5. 配置 Cron 定时任务（默认每分钟扫描一次）
+6. 配置日志轮转（自动管理日志大小）
 
 ### 手动安装
-
-传统的手动安装方式：
 
 ```bash
 # 1. 克隆仓库
@@ -45,95 +42,16 @@ sudo bash fantastic-probe-install.sh
 
 ### 支持的系统
 
-- ✅ **Debian / Ubuntu** (apt)
-- ✅ **RHEL / CentOS / Fedora** (dnf/yum)
-- ✅ **Arch Linux / Manjaro** (pacman)
-- ✅ **openSUSE** (zypper)
-
-</details>
+- ✅ Debian / Ubuntu (apt)
+- ✅ RHEL / CentOS / Fedora (dnf/yum)
+- ✅ Arch Linux / Manjaro (pacman)
+- ✅ openSUSE (zypper)
 
 ---
 
-## 🔧 配置管理
+## 更新流程
 
-### 统一管理工具
-
-安装后会提供统一的管理工具 `fp-config`，集成配置管理、服务管理和日志查看功能：
-
-```bash
-# 交互式菜单（推荐）
-sudo fp-config
-
-# 或直接执行特定操作
-sudo fp-config show       # 查看当前配置
-sudo fp-config strm       # 修改 STRM 根目录
-sudo fp-config ffprobe    # 重新配置 FFprobe
-sudo fp-config status     # 查看服务状态
-sudo fp-config logs       # 查看实时日志
-```
-
-### 常用操作
-
-**配置相关**：
-- **更换 FFprobe 包**：`sudo fp-config ffprobe`
-- **修改监控目录**：`sudo fp-config strm`
-- **直接编辑配置**：`sudo fp-config edit`
-
-**服务管理**：
-- **查看服务状态**：`sudo fp-config status`
-- **重启服务**：`sudo fp-config restart`
-- **启动/停止服务**：`sudo fp-config start/stop`
-
-**日志管理**：
-- **实时监控日志**：`sudo fp-config logs`
-- **查看错误日志**：`sudo fp-config logs-error`
-- **查看系统日志**：`sudo fp-config logs-system`
-- **清空日志文件**：`sudo fp-config logs-clear`
-
-<details>
-<summary><b>📋 配置文件说明</b>（点击展开）</summary>
-
-### 配置文件位置
-
-配置文件：`/etc/fantastic-probe/config`
-
-首次安装后，安装程序会运行交互式配置向导。如需修改配置：
-
-```bash
-sudo nano /etc/fantastic-probe/config
-```
-
-### 主要配置项
-
-| 配置项 | 说明 | 默认值 |
-|-------|------|--------|
-| `STRM_ROOT` | STRM 文件监控目录 | `/mnt/sata1/media/媒体库/strm` |
-| `FFPROBE` | ffprobe 可执行文件路径 | `/usr/bin/ffprobe` |
-| `LOG_FILE` | 主日志文件 | `/var/log/fantastic_probe.log` |
-| `ERROR_LOG_FILE` | 错误日志文件 | `/var/log/fantastic_probe_errors.log` |
-| `FFPROBE_TIMEOUT` | ffprobe 命令超时（秒） | `300` |
-| `MAX_FILE_PROCESSING_TIME` | 任务总超时（秒）<br>**说明**：包括预检查、ffprobe、后处理的总时间 | `600` |
-| `DEBOUNCE_TIME` | 防抖时间（秒） | `5` |
-| `AUTO_UPDATE_CHECK` | 是否自动检查更新 | `true` |
-| `AUTO_UPDATE_INSTALL` | 是否自动安装更新 | `false` |
-
-**文件权限说明**：
-- 生成的 JSON 文件会**自动继承** STRM 文件的所有者和权限
-- 无需手动配置权限，确保与媒体库文件权限一致
-
-### 修改配置后重启服务
-
-```bash
-sudo systemctl restart fantastic-probe-monitor
-```
-
-</details>
-
----
-
-## 🔄 更新
-
-### 方式 1：手动更新（推荐）
+### 手动更新
 
 ```bash
 # 下载并运行更新脚本
@@ -143,29 +61,10 @@ curl -fsSL https://raw.githubusercontent.com/aydomini/fantastic-probe/main/updat
 curl -fsSL https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh | sudo bash
 ```
 
-### 方式 2：自动更新
-
-服务默认每 24 小时检查一次更新，发现新版本时会在日志中提示。
-
-**启用自动安装更新**：
-
-```bash
-# 编辑配置文件
-sudo nano /etc/fantastic-probe/config
-
-# 修改以下配置
-AUTO_UPDATE_CHECK=true
-AUTO_UPDATE_INSTALL=true  # 启用自动安装更新
-
-# 重启服务
-sudo systemctl restart fantastic-probe-monitor
-```
-
-**工作原理**：
-- 主服务检测到新版本后，会启动后台更新助手
-- 更新助手等待任务队列清空（最长等待 1 小时）
-- 队列清空后，停止服务 → 执行更新 → 启动服务
-- 整个过程无需人工干预，且不会丢失任务
+更新过程会：
+- 保留现有配置文件
+- 自动备份并替换主程序
+- 无需重新配置
 
 ### 检查版本
 
@@ -173,13 +72,13 @@ sudo systemctl restart fantastic-probe-monitor
 # 查看当前版本
 /usr/local/bin/get-version.sh
 
-# 或查看日志中的版本信息
-journalctl -u fantastic-probe-monitor | grep "版本"
+# 或查看配置工具显示的版本信息
+sudo fp-config show
 ```
 
 ---
 
-## 🗑️ 卸载
+## 卸载流程
 
 ```bash
 cd /tmp/Fantastic-Probe/
@@ -187,212 +86,153 @@ chmod +x fantastic-probe-uninstall.sh
 sudo bash fantastic-probe-uninstall.sh
 ```
 
-### 卸载过程
+### 卸载过程详解
 
-卸载脚本会执行以下步骤：
+卸载脚本会按以下步骤执行：
 
-1. ✅ **停止并禁用服务**：自动停止运行中的服务
-2. ✅ **删除程序文件**：移除主程序、自动更新助手、配置工具
-3. ✅ **清理临时文件**：清理锁文件、队列文件、临时目录
-4. ✅ **清理 logrotate**：移除日志轮转配置
-5. ❓ **询问删除配置**：保留配置可在重新安装时使用
-6. ❓ **询问删除日志**：用户选择是否删除日志文件
-7. ❓ **询问删除 JSON**：用户选择是否删除生成的媒体信息文件
+**1. 删除脚本和工具**
+- 删除主程序：`fantastic-probe-monitor`、`fantastic-probe-cron-scanner`
+- 删除辅助工具：`fp-config`、`get-version.sh`
+- 删除处理库：`fantastic-probe-process-lib.sh`
 
-**注意**：配置文件、日志文件、JSON 文件默认保留（会询问用户）
+**2. 清理临时文件**
+- 删除锁文件、队列文件、更新标记等
 
----
+**3. 删除 Cron 任务**
+- 移除 `/etc/cron.d/fantastic-probe` 定时任务配置
 
-## 🐛 故障排查与常见问题
+**4. 询问删除失败缓存**
+- 可选择删除失败文件记录数据库 `/var/lib/fantastic-probe/failure_cache.db`
 
-### 服务无法启动
+**5. 清理 logrotate 配置**
+- 删除日志轮转配置 `/etc/logrotate.d/fantastic-probe`
 
-```bash
-# 查看服务状态和详细错误
-sudo fp-config status
-# 或使用系统命令查看更多细节
-systemctl status fantastic-probe-monitor -l
-journalctl -u fantastic-probe-monitor -n 50
+**6. 询问删除配置文件**（可选）
+- 可选择保留 `/etc/fantastic-probe/config` 配置文件
+- 保留配置可在重新安装时使用
 
-# 检查依赖
-which inotifywait  # 应该返回路径
-which jq           # 应该返回路径
-which ffprobe      # 检查 ffprobe
-```
+**7. 询问删除日志文件**（可选）
+- `/var/log/fantastic_probe.log`（主日志）
+- `/var/log/fantastic_probe_errors.log`（错误日志）
 
-**常见问题**：
-- 缺少依赖：根据系统安装 `inotify-tools` 和 `jq`
-- FFprobe 路径错误：运行 `sudo fp-config ffprobe` 重新配置
-- 监控目录不存在：运行 `sudo fp-config show` 检查配置
-
-### 文件未被处理
-
-```bash
-# 1. 确认服务运行
-sudo fp-config status
-
-# 2. 查看实时日志
-sudo fp-config logs
-
-# 3. 手动测试
-touch /mnt/sata1/media/媒体库/strm/test.iso.strm
-# 立即查看日志，应该看到处理记录
-
-# 4. 检查文件名
-# 必须以 .iso.strm 结尾
-# 路径必须在监控目录内
-```
-
-### 权限问题
-
-**症状**：无法向监控目录写入文件，或服务无法读取文件。
-
-**诊断步骤**：
-
-1. **检查监控目录权限**：
-   ```bash
-   ls -ld /mnt/sata1/media/媒体库/strm
-   ```
-   应该显示您期望的所有者（如 `emby emby` 或您的用户名）
-
-2. **检查当前用户是否可以写入**：
-   ```bash
-   # 以目标用户身份测试（如 emby）
-   sudo -u emby touch /mnt/sata1/media/媒体库/strm/test.txt
-
-   # 如果成功，清理测试文件
-   sudo -u emby rm /mnt/sata1/media/媒体库/strm/test.txt
-   ```
-
-3. **修复权限问题**：
-   ```bash
-   # 推荐：设置为特定用户所有
-   sudo chown -R emby:emby /mnt/sata1/media/媒体库/strm
-
-   # 或设置为您的用户名
-   sudo chown -R $USER:$USER /mnt/sata1/media/媒体库/strm
-   ```
-
-4. **检查生成的 JSON 文件权限**：
-   ```bash
-   ls -l /mnt/sata1/media/媒体库/strm/*.json
-   ```
-   JSON 文件会自动继承 STRM 文件的所有者和权限
-
-### JSON 格式错误
-
-```bash
-# 验证 JSON 格式
-jq . /path/to/xxx.iso-mediainfo.json
-
-# 查看错误日志
-sudo fp-config logs-error
-```
-
-### 磁盘空间不足
-
-```bash
-# 检查可用空间
-df -h /mnt/sata1/media/媒体库/strm/
-
-# 清理日志释放空间
-sudo fp-config logs-clear
-```
-
-### 常见问题解答
-
-**Q: 实时监控会影响系统性能吗？**
-
-A: 几乎不会。inotify 是内核级别的监控机制，空闲时 CPU 占用接近 0%，比定时全量扫描更高效。
-
-**Q: 可以同时监控多个目录吗？**
-
-A: 当前版本只监控单个根目录，但会递归监控所有子目录。
-
-**Q: 服务崩溃了怎么办？**
-
-A: systemd 会自动重启服务（延迟 10 秒）。查看日志了解崩溃原因：
-```bash
-journalctl -u fantastic-probe-monitor --since "1 hour ago"
-```
-
-**Q: 能否处理已有的文件？**
-
-A: 可以！服务启动时会自动扫描现有文件，处理所有未生成 JSON 的 `.iso.strm` 文件。也可以手动重启服务来触发扫描：
-```bash
-systemctl restart fantastic-probe-monitor
-```
-
-**Q: 如何暂停监控？**
-
-A: 停止服务即可：
-```bash
-systemctl stop fantastic-probe-monitor
-```
-
-需要时重新启动：
-```bash
-systemctl start fantastic-probe-monitor
-```
-
-**Q: 日志文件会无限增长吗？**
-
-A: 不会。已配置 logrotate 自动管理：
-- 单个文件最大 10MB
-- 保留 1 个备份
-- 总空间约 20MB
+**8. 询问删除生成的 JSON 文件**（可选）
+- 删除所有 `*.iso-mediainfo.json` 文件
+- ⚠️ 注意：删除后 Emby 需要重新扫描媒体库
 
 ---
 
-<details>
-<summary><b>📦 预编译 FFprobe</b>（点击展开）</summary>
+## 配置管理工具（fp-config）
 
-项目在 GitHub Release 中提供了预编译的 ffprobe 二进制文件，方便用户快速部署。首次安装时会自动从 Release 下载并缓存到本地。
+### 统一管理工具
 
-### 支持的架构
+安装后提供统一的管理工具 `fp-config`，集成配置管理、日志查看和故障排查功能：
 
-- **x86_64** (64位 Intel/AMD): `ffprobe_linux_x64.zip`
-- **ARM64** (64位 ARM): `ffprobe_linux_arm64.zip`
+```bash
+# 交互式菜单（推荐）
+sudo fp-config
 
-### FFprobe 安装选项
-
-运行安装脚本时，如果检测到预编译包，会提供三种选项：
-
-```
-   🎬 FFprobe 路径配置
-
-      ✅ 检测到预编译 ffprobe（x86_64）
-
-      选项：
-        1) 使用项目提供的预编译 ffprobe（推荐，已优化）
-        2) 使用系统已安装的 ffprobe
-        3) 手动指定 ffprobe 路径
-
-      请选择 [1/2/3，默认: 1]:
+# 或直接执行特定操作
+sudo fp-config show       # 查看当前配置
+sudo fp-config strm       # 修改 STRM 根目录
+sudo fp-config ffprobe    # 重新配置 FFprobe
+sudo fp-config logs       # 查看实时日志
 ```
 
-**选项说明**：
+### 核心功能
 
-| 选项 | 说明 | 适用场景 |
-|------|------|---------|
-| **1** | 使用预编译 ffprobe | 系统未安装 ffprobe，或希望使用统一版本 |
-| **2** | 使用系统 ffprobe | 已通过 `apt install ffmpeg` 等方式安装 |
-| **3** | 手动指定路径 | 自己编译的 ffprobe 或特殊路径 |
+#### 配置管理
 
-### 预编译版本优势
+```bash
+sudo fp-config show       # 查看当前配置
+sudo fp-config strm       # 修改 STRM 根目录
+sudo fp-config ffprobe    # 重新配置 FFprobe 路径
+sudo fp-config emby       # 配置 Emby 媒体库集成
+sudo fp-config edit       # 直接编辑配置文件
+```
 
-- ✅ **免编译**：无需安装完整 ffmpeg 包
-- ✅ **体积小**：只包含 ffprobe，不含 ffmpeg 和其他工具
-- ✅ **版本统一**：确保兼容性
-- ✅ **静态链接**：无额外依赖
-- ✅ **跨发行版**：可在所有 Linux 发行版运行
+#### 失败文件管理（Cron 模式）
 
-### 手动安装预编译 ffprobe
+```bash
+sudo fp-config failure-list      # 查看失败文件列表
+sudo fp-config failure-clear     # 清空失败缓存
+sudo fp-config failure-reset     # 重置单个文件的失败记录
+```
 
-**自动安装（推荐）**：
-运行安装脚本时选择"选项1"，会自动从 GitHub Release 下载并安装。
+#### 日志管理
 
-**手动安装**：
+```bash
+sudo fp-config logs              # 查看实时主日志
+sudo fp-config logs-error        # 查看错误日志
+sudo fp-config logs-clear        # 清空日志文件
+```
+
+#### 服务管理
+
+```bash
+sudo fp-config status            # 查看服务状态
+sudo fp-config restart           # 重启服务
+sudo fp-config start             # 启动服务
+sudo fp-config stop              # 停止服务
+```
+
+#### 系统管理
+
+```bash
+sudo fp-config check-update      # 检查更新
+sudo fp-config install-update    # 安装更新
+sudo fp-config uninstall         # 卸载服务
+```
+
+### FFprobe 配置详解
+
+#### 核心要求
+
+⚠️ **重要**：ffprobe 必须**编译支持 bluray 和 dvd 协议**才能读取 ISO 文件。
+
+本项目使用 ffprobe 的 `bluray:` 和 `dvd:` 协议直接读取 ISO 文件内容：
+```bash
+# 核心命令示例
+ffprobe -protocol_whitelist "file,bluray" -i "bluray:/path/to/file.iso"
+ffprobe -protocol_whitelist "file,dvd" -i "dvd:/path/to/file.iso"
+```
+
+**为什么需要预编译包？**
+- 系统自带的 ffprobe（`apt install ffmpeg`）**通常不支持** bluray/dvd 协议
+- 需要在编译 ffmpeg 时启用 `--enable-libbluray` 和 `--enable-libdvdread`
+- 本项目提供的预编译包已包含这些协议支持
+
+#### 预编译 FFprobe 包
+
+项目在 GitHub Release 中提供预编译的 ffprobe 二进制文件：
+
+- **x86_64**（64位 Intel/AMD）：`ffprobe_linux_x64.zip`
+- **ARM64**（64位 ARM）：`ffprobe_linux_arm64.zip`
+
+**优势：**
+- ✅ **已编译支持 bluray/dvd 协议**（核心功能）
+- 免编译，无需安装完整 ffmpeg 包
+- 体积小，只包含 ffprobe
+- 静态链接，无额外依赖
+- 跨发行版兼容
+
+#### 安装选项
+
+运行 `sudo fp-config ffprobe` 时，提供三种选项：
+
+1. **使用预编译 ffprobe**（推荐）
+   - 自动从 GitHub Release 下载
+   - 或使用本地缓存（如已下载）
+   - 安装到 `/usr/local/bin/ffprobe`
+
+2. **使用系统 ffprobe**
+   - 使用系统已安装的 ffmpeg 包
+   - 需先安装：`sudo apt-get install -y ffmpeg`
+
+3. **手动指定路径**
+   - 适用于自己编译的 ffprobe
+   - 或特殊路径（如 Docker 容器内）
+
+#### 离线安装预编译包
 
 ```bash
 # 1. 从 GitHub Release 下载对应架构的包
@@ -409,111 +249,300 @@ sudo chmod +x /usr/local/bin/ffprobe
 ffprobe -version
 ```
 
-**离线安装**：
-1. 从其他电脑下载 Release 中的 zip 文件
-2. 放置到项目根目录的 `static/` 文件夹（会被忽略）
-3. 运行安装脚本，会自动检测并使用本地文件
+### Emby 媒体库集成
 
-</details>
+启用后，每次生成媒体信息 JSON 文件时自动通知 Emby 刷新媒体库。
 
-<details>
-<summary><b>✨ 核心特性</b>（点击展开）</summary>
-
-| 特性 | 说明 |
-|------|------|
-| ⚡ **实时响应** | 新增 .iso.strm 文件后秒级响应并加入队列 |
-| 🔄 **自动重启** | 服务崩溃自动恢复（10秒延迟） |
-| 📊 **日志管理** | 自动轮转（10MB/1备份，总空间约20MB） |
-| 🛡️ **高可靠性** | 启动扫描 + 防抖机制 + 容错处理 |
-| 💾 **低资源占用** | 空闲时 CPU 0% / 内存 ~15MB |
-| 🎯 **智能检测** | 自动识别 Bluray/DVD 协议 |
-| 🚦 **任务队列** | 串行处理，防止高并发场景下资源耗尽 |
-| 🎬 **MPLS 语言提取** | 从蓝光播放列表提取准确的音轨/字幕语言信息 |
-
-</details>
-
-<details>
-<summary><b>🎯 工作原理</b>（点击展开）</summary>
-
-### 监控逻辑
-
-**监控的事件**：
-- `CREATE` - 新文件创建
-- `MOVED_TO` - 文件移动到监控目录
-- 只处理以 `.iso.strm` 结尾的文件
-
-### 任务队列机制
-
-**为什么需要任务队列？**
-- 防止高并发场景下资源耗尽（每个 ISO 处理需要 1-5 分钟）
-- 保证一次只处理一个文件，避免系统崩溃
-
-**队列工作原理**：
-```
-inotify 监控 → 防抖检查 → 加入队列 → 队列处理器（串行）→ 生成 JSON
+```bash
+# 配置 Emby 集成
+sudo fp-config emby
 ```
 
-**处理流程**：
-1. **服务启动**：扫描现有文件 → 创建任务队列 → 启动队列处理器 → 监控文件系统
-2. **检测新文件**：inotify 检测到文件 → 防抖检查 → 添加到队列
-3. **队列处理**：串行处理，等待文件稳定（10秒）→ 预检查 → 提取媒体信息 → 生成 JSON
+**配置步骤：**
 
-**优势**：
-- ✅ 保证一次只处理一个文件
-- ✅ 避免资源耗尽
-- ✅ 智能预检查，避免无效处理
-- ✅ 超时保护，卡死任务自动终止
-- ✅ 错误隔离，单个任务失败不影响后续
+1. 选择是否启用 Emby 集成
+2. 输入 Emby 服务器地址（如 `http://127.0.0.1:8096`）
+3. 输入 Emby API 密钥（在 Emby 控制台 → 高级 → 安全 → API 密钥中生成）
+4. 测试连接（可选，推荐）
+5. 保存配置
 
-### 生成的文件
+**配置示例：**
 
-对于 `xxx.iso.strm` 文件，会生成 `xxx.iso-mediainfo.json`，包含：
-- `Size` - ISO 文件实际大小（字节）
-- `RunTimeTicks` - 媒体时长
-- `MediaStreams` - 视频/音频/字幕流信息
-- `Chapters` - 章节信息
-
-</details>
-
-<details>
-<summary><b>📊 性能数据</b>（点击展开）</summary>
-
-### 资源占用
-
-| 状态 | CPU | 内存 | 磁盘 I/O |
-|------|-----|------|---------|
-| **空闲** | 0% | 15-20 MB | 0 |
-| **处理中** | 根据 ISO 大小 | 20-50 MB | 读取 ISO |
-
-### 处理速度
-
-| ISO 大小 | 处理时间（参考） |
-|---------|-----------------|
-| < 10 GB | 10-30 秒 |
-| 10-30 GB | 30-60 秒 |
-| 30-50 GB | 1-2 分钟 |
-| > 50 GB | 2-5 分钟 |
-
-*实际时间取决于 ISO 内容、磁盘速度和 CPU 性能*
-
-</details>
+```bash
+EMBY_ENABLED=true
+EMBY_URL="http://127.0.0.1:8096"
+EMBY_API_KEY="your-api-key-here"
+EMBY_NOTIFY_TIMEOUT=5
+```
 
 ---
 
-## 📚 文档
+## 配置文件说明
 
-- **[CHANGELOG.md](CHANGELOG.md)** - 版本历史和更新日志
+### 配置文件位置
+
+`/etc/fantastic-probe/config`
+
+### 主要配置项
+
+| 配置项 | 说明 | 默认值 |
+|-------|------|--------|
+| `STRM_ROOT` | STRM 文件监控目录 | `/mnt/sata1/media/媒体库/strm` |
+| `FFPROBE` | ffprobe 可执行文件路径 | `/usr/bin/ffprobe` |
+| `LOG_FILE` | 主日志文件 | `/var/log/fantastic_probe.log` |
+| `ERROR_LOG_FILE` | 错误日志文件 | `/var/log/fantastic_probe_errors.log` |
+| `FFPROBE_TIMEOUT` | ffprobe 命令超时（秒） | `300` |
+| `MAX_FILE_PROCESSING_TIME` | 任务总超时（秒）<br>包括预检查、ffprobe、后处理的总时间 | `600` |
+| `DEBOUNCE_TIME` | 防抖时间（秒） | `5` |
+| `CRON_MAX_RETRY_COUNT` | Cron 模式最大重试次数 | `3` |
+| `CRON_SCAN_BATCH_SIZE` | Cron 单次扫描文件限制 | `10` |
+| `EMBY_ENABLED` | 是否启用 Emby 集成 | `false` |
+| `EMBY_URL` | Emby 服务器地址 | `""` |
+| `EMBY_API_KEY` | Emby API 密钥 | `""` |
+
+**文件权限说明：**
+- 生成的 JSON 文件会**自动继承** STRM 文件的所有者和权限
+- 无需手动配置权限，确保与媒体库文件权限一致
+
+### 修改配置后应用
+
+```bash
+# Cron 模式（默认）：配置会自动生效，无需重启
+# 配置将在下次 Cron 任务执行时自动应用（最多等待 1 分钟）
+```
 
 ---
 
-**项目**: Fantastic-Probe
+## ffprobe 可以从 ISO.strm 文件中提取的信息
 
-**作者**: aydomini
+根据 `fantastic-probe-process-lib.sh` 的实现，ffprobe 可以从 ISO 文件中提取以下媒体信息：
 
-**仓库**: https://github.com/aydomini/fantastic-probe
+### 1. 格式信息（Container）
 
-**许可**: MIT License
+- **容器格式**（Container）：如 `mpegts`、`matroska` 等
+- **时长**（Duration）：媒体总时长（转换为 Emby 的 RunTimeTicks 格式）
+- **比特率**（Bitrate）：整体比特率
+- **文件大小**（Size）：ISO 文件实际大小
 
-**更新**: 2026-01-25
+### 2. 视频流信息
+
+- **编解码器**（Codec）：如 `H264`、`HEVC`、`VC1` 等
+- **分辨率**（Width/Height）：视频宽度和高度
+- **帧率**（FrameRate）：平均帧率和实际帧率
+- **HDR 类型**（VideoRange）：
+  - `SDR`：标准动态范围
+  - `HDR10`：HDR10 格式
+  - `DolbyVision`：杜比视界（包括 Profile 信息）
+  - `HLG`：混合对数伽马
+- **色彩信息**：
+  - 色彩传输特性（ColorTransfer）：如 `smpte2084`（HDR10）、`arib-std-b67`（HLG）
+  - 色彩原色（ColorPrimaries）
+  - 色彩空间（ColorSpace）
+- **编码信息**：
+  - 编码配置（Profile）：如 `High`、`Main` 等
+  - 编码级别（Level）
+  - 参考帧数（RefFrames）
+  - 比特深度（BitDepth）
+  - 像素格式（PixelFormat）
+- **画面特性**：
+  - 宽高比（AspectRatio）
+  - 是否隔行扫描（IsInterlaced）
+
+### 3. 音频流信息
+
+- **编解码器**（Codec）：如 `DTS`、`AC3`、`TRUEHD`、`AAC` 等
+- **语言**（Language）：音轨语言代码（自动转换为完整语言名称）
+  - 支持语言：Chinese、English、Japanese、Korean、Spanish、French、German、Italian、Portuguese、Russian、Arabic、Hindi、Thai、Vietnamese
+- **声道**（Channels）：声道数（如 2、6、8）
+  - 自动识别：mono（单声道）、stereo（立体声）、5.1、7.1 等
+- **采样率**（SampleRate）：音频采样率
+- **比特率**（BitRate）：音频比特率
+- **声道布局**（ChannelLayout）：如 `5.1(side)`
+- **标记**（Disposition）：
+  - 是否默认音轨（IsDefault）
+  - 是否强制音轨（IsForced）
+
+### 4. 字幕流信息
+
+- **格式**（Codec）：如 `PGSSUB`（蓝光字幕）、`DVDSUB`、`SUBRIP`、`ASS`、`WEBVTT` 等
+- **语言**（Language）：字幕语言
+  - 智能识别简繁体中文：
+    - `Chinese Simplified`（简体中文）
+    - `Chinese Traditional`（繁体中文）
+    - `Chinese`（粤语或未区分简繁）
+- **标题**（Title）：字幕标题（如 "中文字幕"、"English (SDH)"）
+- **类型识别**：
+  - 是否文本字幕（IsTextSubtitleStream）
+  - 是否听障字幕（IsHearingImpaired）：自动识别 SDH 标记
+- **标记**（Disposition）：
+  - 是否默认字幕（IsDefault）
+  - 是否强制字幕（IsForced）
+
+### 5. 章节信息
+
+- **章节时间**（StartPositionTicks）：章节起始时间（Emby Ticks 格式）
+- **章节名称**（Name）：章节标题（如 "Chapter 01"、自定义章节名）
+- **章节索引**（ChapterIndex）：章节编号
+
+### 6. 流元数据
+
+- **流索引**（Index）：流在文件中的索引
+- **时间基**（TimeBase）：流的时间基准
+- **Disposition 标记**：
+  - `default`：默认流
+  - `forced`：强制流
+  - `hearing_impaired`：听障辅助
+  - 其他自定义标记
+
+### 7. 高级媒体特性
+
+- **杜比视界信息**（Dolby Vision）：
+  - 自动检测 DV Profile（如 Profile 5、Profile 7）
+  - 提取 DV Level 信息
+  - 生成完整描述（ExtendedVideoSubTypeDescription）
+- **HDR 元数据**：
+  - 自动识别 HDR10、HLG、SDR
+  - 提取色彩传输特性
+- **音频标题智能处理**：
+  - 显示语言 + 编解码器 + 声道布局
+  - 自动标注默认音轨
+- **字幕智能处理**：
+  - 自动识别简繁体中文
+  - 智能标注 SDH（听障字幕）
+  - 显示默认字幕标记
+
+### 输出格式
+
+所有提取的信息会被转换为 Emby `MediaSourceInfo` 格式，保存为 JSON 文件：
+
+```
+xxx.iso.strm → xxx.iso-mediainfo.json
+```
+
+JSON 文件包含：
+- `MediaSourceInfo`：媒体源信息（容器、时长、比特率等）
+- `MediaStreams`：所有流信息（视频、音频、字幕）
+- `Chapters`：章节信息
 
 ---
+
+## 运行模式
+
+### Cron 模式（默认，推荐）
+
+- 定时扫描模式，每分钟执行一次
+- 不依赖 `inotifywait`，更稳定
+- 自动失败重试机制（最多 3 次）
+- 失败文件缓存数据库（避免重复处理）
+
+**查看 Cron 配置：**
+
+```bash
+cat /etc/cron.d/fantastic-probe
+```
+
+**查看运行日志：**
+
+```bash
+sudo fp-config logs
+# 或
+tail -f /var/log/fantastic_probe.log
+```
+
+---
+
+## 日志管理
+
+### 日志文件
+
+- **主日志**：`/var/log/fantastic_probe.log`（所有操作记录）
+- **错误日志**：`/var/log/fantastic_probe_errors.log`（仅错误记录）
+
+### 日志轮转
+
+已配置 logrotate 自动管理：
+- 单个文件最大 1MB
+- 保留 1 个备份
+- 总空间约 2MB
+
+### 查看日志
+
+```bash
+# 实时主日志
+sudo fp-config logs
+
+# 错误日志
+sudo fp-config logs-error
+
+# 清空日志
+sudo fp-config logs-clear
+```
+
+---
+
+## 故障排查
+
+### 常见问题
+
+**Q1: 文件未被处理？**
+
+```bash
+# 1. 查看运行日志
+sudo fp-config logs
+
+# 2. 检查文件名格式（必须以 .iso.strm 结尾）
+ls /path/to/strm/
+
+# 3. 查看失败文件列表（Cron 模式）
+sudo fp-config failure-list
+```
+
+**Q2: 权限问题？**
+
+```bash
+# 检查监控目录权限
+ls -ld /path/to/strm/
+
+# 检查生成的 JSON 文件权限（应与 STRM 文件一致）
+ls -l /path/to/strm/*.json
+```
+
+**Q3: FFprobe 路径错误？**
+
+```bash
+# 重新配置 FFprobe
+sudo fp-config ffprobe
+```
+
+**Q4: JSON 格式错误？**
+
+```bash
+# 验证 JSON 格式
+jq . /path/to/xxx.iso-mediainfo.json
+
+# 查看错误日志
+sudo fp-config logs-error
+```
+
+### 日志文件会无限增长吗？
+
+不会。已配置 logrotate 自动管理：
+- 单个文件最大 1MB
+- 保留 1 个备份
+- 总空间约 2MB
+
+---
+
+## 项目信息
+
+**项目名称**：Fantastic-Probe
+
+**作者**：aydomini
+
+**仓库地址**：https://github.com/aydomini/fantastic-probe
+
+**许可证**：MIT License
+
+**文档**：[CHANGELOG.md](CHANGELOG.md) - 版本历史和更新日志
+
+**最后更新**：2026-01-27

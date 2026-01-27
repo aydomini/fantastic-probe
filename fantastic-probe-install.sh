@@ -78,9 +78,6 @@ get_package_name() {
     local package_type="$2"
 
     case "$package_type" in
-        inotify-tools)
-            echo "inotify-tools"
-            ;;
         jq)
             echo "jq"
             ;;
@@ -91,13 +88,6 @@ get_package_name() {
                 echo "sqlite"
             else
                 echo "sqlite3"
-            fi
-            ;;
-        genisoimage)
-            if [ "$pkg_manager" = "pacman" ]; then
-                echo "cdrtools"  # Arch Linux 使用 cdrtools
-            else
-                echo "genisoimage"
             fi
             ;;
         p7zip)
@@ -150,9 +140,8 @@ if [ "$PKG_MANAGER" = "unknown" ]; then
     echo "  - openSUSE (zypper)"
     echo ""
     echo "请手动安装以下依赖："
-    echo "  - inotify-tools"
     echo "  - jq"
-    echo "  - genisoimage"
+    echo "  - sqlite3"
     echo ""
     exit 1
 fi
@@ -183,20 +172,6 @@ if ! command -v jq &> /dev/null; then
     PACKAGES_TO_INSTALL+=($pkg_name)
 fi
 
-# 检查 isoinfo（genisoimage 或 cdrtools）
-if ! command -v isoinfo &> /dev/null; then
-    pkg_name=$(get_package_name "$PKG_MANAGER" "genisoimage")
-    echo "   需要安装: $pkg_name (提供 isoinfo 命令)"
-    PACKAGES_TO_INSTALL+=($pkg_name)
-fi
-
-# 检查 inotify-tools（inotify 模式可选，Cron 模式不需要）
-if ! command -v inotifywait &> /dev/null; then
-    echo "   ⚠️  inotify-tools 未安装（仅 inotify 模式需要，Cron 模式不需要）"
-    echo "      默认使用 Cron 模式，跳过 inotify-tools 安装"
-    echo "      如需使用 inotify 模式，请手动安装: apt-get install inotify-tools"
-fi
-
 # 安装依赖
 if [ ${#PACKAGES_TO_INSTALL[@]} -gt 0 ]; then
     echo ""
@@ -222,18 +197,6 @@ else
     echo "   ⚠️  版本号获取脚本不存在（不影响正常使用，将使用硬编码版本号）"
 fi
 echo ""
-
-# 安装自动更新助手
-AUTO_UPDATE_HELPER="$SCRIPT_DIR/auto-update-helper.sh"
-TARGET_HELPER="/usr/local/bin/fantastic-probe-auto-update"
-
-if [ -f "$AUTO_UPDATE_HELPER" ]; then
-    cp "$AUTO_UPDATE_HELPER" "$TARGET_HELPER"
-    chmod +x "$TARGET_HELPER"
-    echo "   ✅ 自动更新助手已安装到: $TARGET_HELPER"
-else
-    echo "   ⚠️  未找到自动更新助手（跳过，不影响正常使用）"
-fi
 
 # 安装配置工具
 CONFIG_TOOL="$SCRIPT_DIR/fp-config.sh"
@@ -741,10 +704,6 @@ MAX_FILE_PROCESSING_TIME=600
 
 # 防抖时间（秒）
 DEBOUNCE_TIME=5
-
-# 自动更新配置
-AUTO_UPDATE_CHECK=true
-AUTO_UPDATE_INSTALL=false
 
 # Emby 媒体库集成（可选）
 EMBY_ENABLED=false

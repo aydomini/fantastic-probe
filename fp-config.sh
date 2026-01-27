@@ -121,8 +121,6 @@ show_current_config() {
     echo "  ⏱️  FFprobe 超时: ${FFPROBE_TIMEOUT}秒"
     echo "  ⏱️  最大处理时间: ${MAX_FILE_PROCESSING_TIME}秒"
     echo "  ⏱️  防抖时间: ${DEBOUNCE_TIME}秒"
-    echo "  🔄 自动检查更新: ${AUTO_UPDATE_CHECK}"
-    echo "  🔄 自动安装更新: ${AUTO_UPDATE_INSTALL}"
     echo ""
     echo "  📡 Emby 集成:"
     echo "    启用状态: ${EMBY_ENABLED:-false}"
@@ -554,54 +552,6 @@ reconfigure_ffprobe() {
         else
             echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
         fi
-    fi
-}
-
-# 修改自动更新设置
-change_auto_update() {
-    echo ""
-    echo "🔄 修改自动更新设置"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "   当前设置："
-    echo "     自动检查更新: ${AUTO_UPDATE_CHECK}"
-    echo "     自动安装更新: ${AUTO_UPDATE_INSTALL}"
-    echo ""
-
-    # 修改自动检查更新
-    read -p "   是否启用自动检查更新？[Y/n]: " check_update
-    check_update="${check_update:-Y}"
-
-    if [[ "$check_update" =~ ^[Yy]$ ]]; then
-        update_config_line "AUTO_UPDATE_CHECK" "true"
-        AUTO_UPDATE_CHECK="true"
-    else
-        update_config_line "AUTO_UPDATE_CHECK" "false"
-        AUTO_UPDATE_CHECK="false"
-    fi
-
-    # 修改自动安装更新
-    echo ""
-    echo "   ⚠️  注意: 自动安装更新会在队列清空后自动更新服务"
-    read -p "   是否启用自动安装更新？[y/N]: " install_update
-    install_update="${install_update:-N}"
-
-    if [[ "$install_update" =~ ^[Yy]$ ]]; then
-        update_config_line "AUTO_UPDATE_INSTALL" "true"
-        AUTO_UPDATE_INSTALL="true"
-    else
-        update_config_line "AUTO_UPDATE_INSTALL" "false"
-        AUTO_UPDATE_INSTALL="false"
-    fi
-
-    echo ""
-    echo "   ✅ 自动更新设置已更新"
-
-    # 询问是否重启服务
-    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
-    do_restart="${do_restart:-Y}"
-
-    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
-        restart_service
     fi
 }
 
@@ -1389,53 +1339,6 @@ view_error_logs() {
     echo ""
 }
 
-# 查看系统日志（增强版）
-view_system_logs() {
-    clear
-    echo ""
-    echo "╔════════════════════════════════════════════════════════════════════════╗"
-    echo "║                    🖥️  系统日志 - Systemd Journal                     ║"
-    echo "╚════════════════════════════════════════════════════════════════════════╝"
-    echo ""
-    echo "💡 提示："
-    echo "   • 按 Ctrl+C 退出实时日志"
-    echo "   • 当前监控服务: $SERVICE_NAME"
-    echo "   • 显示最近 50 行并跟踪新日志"
-    echo ""
-    echo "📍 日志级别说明："
-    echo "   • INFO    - 信息（蓝色/白色）"
-    echo "   • WARNING - 警告（黄色）"
-    echo "   • ERROR   - 错误（红色）"
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-
-    # 检查 journalctl 是否可用
-    if ! command -v journalctl &> /dev/null; then
-        echo "❌ journalctl 命令不可用"
-        echo ""
-        echo "💡 解决方案："
-        echo "   • Cron 模式不使用 systemd 服务"
-        echo "   • 请使用主日志查看：fp-config logs"
-        echo ""
-        return
-    fi
-
-    # 检查服务是否存在
-    if ! systemctl list-unit-files | grep -q "$SERVICE_NAME"; then
-        echo "ℹ️  systemd 服务不存在: $SERVICE_NAME"
-        echo ""
-        echo "💡 提示："
-        echo "   • Cron 模式不使用 systemd 服务"
-        echo "   • 日志直接写入文件：$LOG_FILE"
-        echo "   • 请使用主日志查看：fp-config logs"
-        echo ""
-        return
-    fi
-
-    journalctl -u "$SERVICE_NAME" -n 50 -f
-}
-
 # 清空日志文件
 clear_logs() {
     echo ""
@@ -1511,27 +1414,70 @@ reset_single_file_failure() {
         return 1
     fi
 
-    read -p "   请输入文件完整路径: " file_path
-
-    if [ -z "$file_path" ]; then
-        echo "   ⚠️  文件路径为空，操作已取消"
-        return 1
+    # 检查失败缓存数据库
+    local db_path="/var/lib/fantastic-probe/failure_cache.db"
+    if [ ! -f "$db_path" ]; then
+        echo "   ℹ️  失败缓存数据库不存在，暂无失败文件"
+        return 0
     fi
 
-    if [ ! -f "$file_path" ]; then
-        echo "   ⚠️  警告: 文件不存在: $file_path"
-        read -p "   是否仍要重置记录？[y/N]: " confirm
-        confirm="${confirm:-N}"
+    # 读取失败文件列表
+    local files=()
+    local file_info=()
 
-        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-            echo "   ℹ️  操作已取消"
-            return 1
+    while IFS='|' read -r file_path failure_count last_failure; do
+        files+=("$file_path")
+        file_info+=("$(basename "$file_path") (失败 ${failure_count} 次, 最后: ${last_failure})")
+    done < <(sqlite3 -separator '|' "$db_path" "SELECT file_path, failure_count, datetime(last_failure_time, 'unixepoch', 'localtime') FROM failure_cache ORDER BY last_failure_time DESC;" 2>/dev/null)
+
+    # 检查是否有失败文件
+    if [ ${#files[@]} -eq 0 ]; then
+        echo "   ✅ 暂无失败文件记录"
+        return 0
+    fi
+
+    echo "   失败文件列表（共 ${#files[@]} 个）："
+    echo ""
+
+    # 显示选择菜单
+    PS3="   请选择要重置的文件 [1-${#files[@]}，0 取消]: "
+    select choice in "${file_info[@]}"; do
+        if [ -z "$REPLY" ]; then
+            echo "   ⚠️  无效选择，请重试"
+            continue
         fi
-    fi
 
-    fantastic-probe-cron-scanner reset-file "$file_path"
-    echo "   ✅ 文件失败记录已重置: $file_path"
-    echo "   ℹ️  该文件将在下次 Cron 扫描时重新处理"
+        # 检查是否取消
+        if [ "$REPLY" = "0" ]; then
+            echo "   ℹ️  操作已取消"
+            return 0
+        fi
+
+        # 验证选择范围
+        if [ "$REPLY" -lt 1 ] || [ "$REPLY" -gt ${#files[@]} ]; then
+            echo "   ⚠️  无效选择，请输入 1-${#files[@]} 或 0 取消"
+            continue
+        fi
+
+        # 获取选中的文件路径
+        local selected_index=$((REPLY - 1))
+        local file_path="${files[$selected_index]}"
+
+        echo ""
+        echo "   选中文件: $file_path"
+        read -p "   确定要重置此文件的失败记录吗？[y/N]: " confirm
+
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            fantastic-probe-cron-scanner reset-file "$file_path"
+            echo "   ✅ 文件失败记录已重置: $(basename "$file_path")"
+            echo "   ℹ️  该文件将在下次 Cron 扫描时重新处理"
+        else
+            echo "   ℹ️  操作已取消"
+        fi
+
+        break
+    done
+
     echo ""
 }
 
@@ -1588,10 +1534,9 @@ logs_menu() {
         echo "【日志管理】"
         echo "  1) 查看实时日志"
         echo "  2) 查看错误日志"
-        echo "  3) 查看系统日志"
         echo "  0) 返回主菜单"
         echo ""
-        read -p "请选择 [0-3]: " log_choice
+        read -p "请选择 [0-2]: " log_choice
         echo ""
 
         case "$log_choice" in
@@ -1601,9 +1546,6 @@ logs_menu() {
             2)
                 view_error_logs
                 read -p "按 Enter 继续..."
-                ;;
-            3)
-                view_system_logs
                 ;;
             0)
                 return
@@ -1688,30 +1630,40 @@ show_menu() {
             read -p "按 Enter 返回菜单..."
             ;;
         2)
-            echo "【配置向导】"
-            echo "请选择要配置的项："
-            echo "  1) STRM 根目录"
-            echo "  2) FFprobe"
-            echo "  3) Emby 集成"
-            echo "  0) 返回"
-            read -p "请选择 [0-3]: " config_choice
-            case "$config_choice" in
-                1)
-                    change_strm_root
-                    ;;
-                2)
-                    reconfigure_ffprobe
-                    ;;
-                3)
-                    configure_emby
-                    ;;
-                0)
-                    ;;
-                *)
-                    echo "❌ 无效选择"
-                    ;;
-            esac
-            read -p "按 Enter 返回菜单..."
+            # 配置向导循环菜单
+            while true; do
+                echo ""
+                echo "【配置向导】"
+                echo "  1) 修改 STRM 根目录"
+                echo "  2) 重新配置 FFprobe"
+                echo "  3) 配置 Emby 集成"
+                echo "  0) 返回主菜单"
+                echo ""
+                read -p "请选择 [0-3]: " config_choice
+                echo ""
+
+                case "$config_choice" in
+                    1)
+                        change_strm_root
+                        read -p "按 Enter 继续..."
+                        ;;
+                    2)
+                        reconfigure_ffprobe
+                        read -p "按 Enter 继续..."
+                        ;;
+                    3)
+                        configure_emby
+                        read -p "按 Enter 继续..."
+                        ;;
+                    0)
+                        break  # 直接返回主菜单，无需按 Enter
+                        ;;
+                    *)
+                        echo "❌ 无效选择"
+                        read -p "按 Enter 继续..."
+                        ;;
+                esac
+            done
             ;;
         3)
             edit_config_file
@@ -1794,9 +1746,6 @@ main() {
             logs-error)
                 view_error_logs
                 ;;
-            logs-system)
-                view_system_logs
-                ;;
             failure-list)
                 view_failure_list
                 ;;
@@ -1826,7 +1775,6 @@ main() {
                 echo "    strm            修改 STRM 根目录"
                 echo "    ffprobe         重新配置 FFprobe"
                 echo "    emby            配置 Emby 媒体库集成"
-                echo "    update          修改自动更新设置"
                 echo "    edit            直接编辑配置文件"
                 echo ""
                 echo "  Cron 模式管理："
@@ -1843,7 +1791,6 @@ main() {
                 echo "  日志管理："
                 echo "    logs            查看实时日志"
                 echo "    logs-error      查看错误日志"
-                echo "    logs-system     查看系统日志"
                 echo "    logs-clear      清空日志文件"
                 echo ""
                 echo "  系统管理："
