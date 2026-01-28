@@ -11,6 +11,22 @@
 
 ---
 
+## [3.4.2] - 2026-01-29
+
+### 修复
+- **媒体信息提取错误**：修复阶段2调用已删除的 `extract_video_mediainfo()` 函数导致的全部失败问题，改用 `analyze_http_media()` 和 `analyze_local_media()`
+
+### 新增
+- **完整图片支持**：新增横幅图（banner.jpg）和徽标（logo.png）下载，电影和剧集现支持完整的图片类型
+  - 电影/剧集：poster.jpg、fanart.jpg、banner.jpg、logo.png
+  - 季度：season-poster.jpg、season-banner.jpg、season-fanart.jpg
+- **季度横幅图/背景图**：使用 TMDB 季度图片 API 下载专属图片，回退到剧集图片
+
+### 改进
+- **卸载脚本优化**：自动清理旧版本 JSON 文件（v3.4.0+ 已废弃），不再询问用户
+
+---
+
 ## [3.4.1] - 2026-01-28
 
 ### 修复

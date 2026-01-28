@@ -1944,7 +1944,6 @@ uninstall_service() {
     echo "   可选择保留："
     echo "      - 配置文件 (/etc/fantastic-probe/)"
     echo "      - 日志文件 (/var/log/fantastic_probe*.log)"
-    echo "      - 生成的 JSON 文件 (*.iso-mediainfo.json)"
     echo ""
     read -p "   确认卸载？请输入 YES 确认: " confirm
 
@@ -2053,22 +2052,22 @@ uninstall_service() {
         echo "      ℹ️  日志文件保留"
     fi
 
-    # 10. 询问是否删除生成的 JSON 文件
+    # 10. 清理旧版本遗留的 JSON 文件（v3.4.0+ 已废弃）
     echo ""
-    echo "   🔟 生成的 JSON 文件处理..."
-    echo "      ⚠️  注意：删除 JSON 文件会导致 Emby 需要重新扫描媒体库"
-    read -p "      是否删除所有 .iso-mediainfo.json 文件？[y/N]: " delete_json
+    echo "   🔟 清理旧版本遗留文件..."
+    echo "      ℹ️  v3.4.0+ 版本已将所有信息统一存储在 NFO 中"
+    echo "      ℹ️  自动清理旧版本的 .iso-mediainfo.json 文件"
 
-    if [[ "$delete_json" =~ ^[Yy]$ ]] && [ -d "$STRM_ROOT" ]; then
+    if [ -d "$STRM_ROOT" ]; then
         JSON_COUNT=$(find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" 2>/dev/null | wc -l)
         if [ "$JSON_COUNT" -gt 0 ]; then
             find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" -delete
-            echo "      ✅ 已删除 $JSON_COUNT 个 JSON 文件"
+            echo "      ✅ 已清理 $JSON_COUNT 个旧版本 JSON 文件"
         else
-            echo "      ℹ️  没有找到 JSON 文件"
+            echo "      ✅ 没有发现旧版本文件"
         fi
     else
-        echo "      ℹ️  JSON 文件保留"
+        echo "      ℹ️  STRM 目录不存在，跳过清理"
     fi
 
     echo ""

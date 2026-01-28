@@ -749,7 +749,13 @@ append_media_info_to_nfo() {
         fi
 
         # 提取媒体信息
-        media_info=$(extract_video_mediainfo "$video_path")
+        if [[ "$link_type" == "http" || "$link_type" == "alist" ]]; then
+            # 远程 HTTP 分析
+            media_info=$(analyze_http_media "$video_path")
+        else
+            # 本地文件分析
+            media_info=$(analyze_local_media "$video_path")
+        fi
     fi
 
     if [ -z "$media_info" ]; then
@@ -3090,6 +3096,68 @@ download_backdrop() {
 }
 
 #------------------------------------------------------------------------------
+# 下载季度横幅图/背景图（Season Banner/Fanart）
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: TMDB 剧集 ID
+#   $2: 季号（去除前导零，如 "1", "2"）
+#   $3: 输出文件路径（banner 或 fanart）
+# 返回：
+#   退出码：0=成功，1=失败
+#------------------------------------------------------------------------------
+
+download_season_backdrop() {
+    local show_id="$1"
+    local season_number="$2"
+    local output_file="$3"
+    local api_key="${TMDB_API_KEY}"
+
+    if [[ -z "$show_id" || "$show_id" == "null" ]]; then
+        log_error "  无法获取 TMDB 剧集 ID"
+        return 1
+    fi
+
+    log_info "  下载季度横幅/背景图: Season ${season_number}"
+
+    # 调用季度图片 API
+    local images_url="https://api.themoviedb.org/3/tv/${show_id}/season/${season_number}/images?api_key=${api_key}"
+    local images_data
+    images_data=$(tmdb_api_call_with_retry "$images_url" "获取季度图片列表")
+
+    if [[ "$images_data" == "{}" ]]; then
+        log_warn "  ⚠️  获取季度图片列表失败，尝试使用剧集背景图"
+        # 回退方案：使用剧集级别的背景图
+        local show_images_url="https://api.themoviedb.org/3/tv/${show_id}/images?api_key=${api_key}"
+        images_data=$(tmdb_api_call_with_retry "$show_images_url" "获取剧集图片列表")
+
+        if [[ "$images_data" == "{}" ]]; then
+            log_error "  获取剧集图片列表也失败"
+            return 1
+        fi
+    fi
+
+    # 提取背景图路径（backdrops 用作横幅图，按评分排序）
+    local backdrop_path=$(echo "$images_data" | jq -r '
+        .backdrops
+        | sort_by(.vote_average)
+        | reverse
+        | .[0].file_path // empty
+    ')
+
+    if [[ -z "$backdrop_path" || "$backdrop_path" == "null" ]]; then
+        log_warn "  ⚠️  未找到季度横幅图路径"
+        return 1
+    fi
+
+    local backdrop_url="https://image.tmdb.org/t/p/original${backdrop_path}"
+    log_debug "  季度横幅图 URL: $backdrop_url"
+
+    # 使用带重试的下载函数
+    download_image_with_retry "$backdrop_url" "$output_file" "季度横幅图"
+    return $?
+}
+
+#------------------------------------------------------------------------------
 # 下载单集缩略图（Episode Thumb）
 #------------------------------------------------------------------------------
 # 参数：
@@ -3118,6 +3186,142 @@ download_episode_thumb() {
 
     # 使用带重试的下载函数
     download_image_with_retry "$thumb_url" "$output_file" "单集缩略图"
+    return $?
+}
+
+#------------------------------------------------------------------------------
+# 下载徽标（Logo/ClearLogo）
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: TMDB JSON 数据
+#   $2: 输出文件路径
+# 返回：
+#   退出码：0=成功，1=失败
+#------------------------------------------------------------------------------
+
+download_logo() {
+    local tmdb_data="$1"
+    local output_file="$2"
+    local api_key="${TMDB_API_KEY}"
+
+    # 提取 ID、类型和原语言
+    local tmdb_id=$(echo "$tmdb_data" | jq -r '.id // empty')
+    local original_language=$(echo "$tmdb_data" | jq -r '.original_language // "en"')
+    local media_type="movie"  # 默认为电影
+
+    # 判断是电影还是电视剧
+    if echo "$tmdb_data" | jq -e '.name' >/dev/null 2>&1; then
+        media_type="tv"
+    fi
+
+    if [[ -z "$tmdb_id" || "$tmdb_id" == "null" ]]; then
+        log_error "  无法获取 TMDB ID"
+        return 1
+    fi
+
+    log_info "  下载徽标: $output_file (原语言: $original_language)"
+
+    # 调用 /images API 获取 logos（使用重试机制）
+    local images_url="https://api.themoviedb.org/3/${media_type}/${tmdb_id}/images?api_key=${api_key}&include_image_language=${original_language},en,null"
+    local images_data
+    images_data=$(tmdb_api_call_with_retry "$images_url" "获取徽标列表")
+
+    if [[ "$images_data" == "{}" ]]; then
+        log_warn "  ⚠️  获取图片列表失败"
+        return 1
+    fi
+
+    # 提取 logo 路径（优先原语言，其次英文，最后无语言标记，按 vote_average 排序）
+    local logo_path=$(echo "$images_data" | jq -r '
+        .logos
+        | sort_by(.vote_average)
+        | reverse
+        | map(select(.iso_639_1 == "'$original_language'" or .iso_639_1 == "en" or .iso_639_1 == null))
+        | .[0].file_path // empty
+    ')
+
+    if [[ -z "$logo_path" || "$logo_path" == "null" ]]; then
+        log_warn "  ⚠️  未找到徽标路径"
+        return 1
+    fi
+
+    local logo_url="https://image.tmdb.org/t/p/original${logo_path}"
+    log_debug "  徽标 URL: $logo_url"
+
+    # 使用带重试的下载函数
+    download_image_with_retry "$logo_url" "$output_file" "徽标"
+    return $?
+}
+
+#------------------------------------------------------------------------------
+# 下载横幅图（Banner）
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: TMDB JSON 数据
+#   $2: 输出文件路径
+# 返回：
+#   退出码：0=成功，1=失败
+# 说明：
+#   TMDB 没有专门的 banner 类型，使用 backdrop（横版图）作为横幅
+#------------------------------------------------------------------------------
+
+download_banner() {
+    local tmdb_data="$1"
+    local output_file="$2"
+    local api_key="${TMDB_API_KEY}"
+
+    # 提取 ID、类型和原语言
+    local tmdb_id=$(echo "$tmdb_data" | jq -r '.id // empty')
+    local original_language=$(echo "$tmdb_data" | jq -r '.original_language // "en"')
+    local media_type="movie"  # 默认为电影
+
+    # 判断是电影还是电视剧
+    if echo "$tmdb_data" | jq -e '.name' >/dev/null 2>&1; then
+        media_type="tv"
+    fi
+
+    if [[ -z "$tmdb_id" || "$tmdb_id" == "null" ]]; then
+        log_error "  无法获取 TMDB ID"
+        return 1
+    fi
+
+    log_info "  下载横幅图: $output_file (原语言: $original_language)"
+
+    # 调用 /images API 获取 backdrops（使用重试机制）
+    local images_url="https://api.themoviedb.org/3/${media_type}/${tmdb_id}/images?api_key=${api_key}&include_image_language=${original_language},null"
+    local images_data
+    images_data=$(tmdb_api_call_with_retry "$images_url" "获取横幅图片列表")
+
+    if [[ "$images_data" == "{}" ]]; then
+        log_error "  获取图片列表失败"
+        return 1
+    fi
+
+    # 提取横幅图路径（使用 backdrops，优先原语言，按 vote_average 排序）
+    local banner_path=$(echo "$images_data" | jq -r '
+        .backdrops
+        | sort_by(.vote_average)
+        | reverse
+        | map(select(.iso_639_1 == "'$original_language'" or .iso_639_1 == null))
+        | .[0].file_path // empty
+    ')
+
+    # 如果没有找到，回退到主查询的默认背景图
+    if [[ -z "$banner_path" || "$banner_path" == "null" ]]; then
+        log_warn "  ⚠️  未找到原语言横幅图，使用默认背景图"
+        banner_path=$(echo "$tmdb_data" | jq -r '.backdrop_path // empty')
+    fi
+
+    if [[ -z "$banner_path" || "$banner_path" == "null" ]]; then
+        log_warn "  ⚠️  未找到横幅图路径"
+        return 1
+    fi
+
+    local banner_url="https://image.tmdb.org/t/p/original${banner_path}"
+    log_debug "  横幅图 URL: $banner_url"
+
+    # 使用带重试的下载函数
+    download_image_with_retry "$banner_url" "$output_file" "横幅图"
     return $?
 }
 
@@ -3243,6 +3447,8 @@ scrape_metadata_full() {
         # 4.1 下载剧集级图片到剧集根目录（只下载一次）
         local series_poster="${series_dir}/poster.jpg"
         local series_fanart="${series_dir}/fanart.jpg"
+        local series_banner="${series_dir}/banner.jpg"
+        local series_logo="${series_dir}/logo.png"
 
         if [[ ! -f "$series_poster" ]]; then
             log_info "  下载剧集海报"
@@ -3260,11 +3466,32 @@ scrape_metadata_full() {
             log_debug "  跳过（已有剧集背景图）"
         fi
 
+        if [[ ! -f "$series_banner" ]]; then
+            log_info "  下载剧集横幅图"
+            download_banner "$tmdb_data" "$series_banner" &
+            local series_banner_pid=$!
+        else
+            log_debug "  跳过（已有剧集横幅图）"
+        fi
+
+        if [[ ! -f "$series_logo" ]]; then
+            log_info "  下载剧集徽标"
+            download_logo "$tmdb_data" "$series_logo" &
+            local series_logo_pid=$!
+        else
+            log_debug "  跳过（已有剧集徽标）"
+        fi
+
         # 4.2 下载季级图片到季文件夹（每个季只下载一次）
         local season_poster="${season_dir}/season-poster.jpg"
+        local season_banner="${season_dir}/season-banner.jpg"
         local season_fanart="${season_dir}/season-fanart.jpg"
 
-        # 从 tmdb_data 中提取季海报路径
+        # 从 tmdb_data 中提取剧集 ID 和季号
+        local show_id=$(echo "$tmdb_data" | jq -r '.id // empty')
+        local season_int=$((10#$season))  # 去除前导零
+
+        # 下载季海报（poster）
         local season_poster_path=$(echo "$tmdb_data" | jq -r '.season.poster_path // empty')
         if [[ ! -f "$season_poster" && -n "$season_poster_path" && "$season_poster_path" != "null" ]]; then
             log_info "  下载季海报 (Season $season)"
@@ -3275,8 +3502,23 @@ scrape_metadata_full() {
             log_debug "  跳过（已有季海报或无季海报路径）"
         fi
 
-        # 季级背景图（可选，通常使用剧集级背景图）
-        # 这里暂不下载季级独立背景图，使用剧集级背景图
+        # 下载季横幅图（banner） - 使用 backdrop 作为横幅
+        if [[ ! -f "$season_banner" && -n "$show_id" && "$show_id" != "null" ]]; then
+            log_info "  下载季横幅图 (Season $season)"
+            download_season_backdrop "$show_id" "$season_int" "$season_banner" &
+            local season_banner_pid=$!
+        else
+            log_debug "  跳过（已有季横幅图或缺少剧集 ID）"
+        fi
+
+        # 下载季背景图（fanart） - 也使用 backdrop
+        if [[ ! -f "$season_fanart" && -n "$show_id" && "$show_id" != "null" ]]; then
+            log_info "  下载季背景图 (Season $season)"
+            download_season_backdrop "$show_id" "$season_int" "$season_fanart" &
+            local season_fanart_pid=$!
+        else
+            log_debug "  跳过（已有季背景图或缺少剧集 ID）"
+        fi
 
         # 4.3 下载单集缩略图到单集文件旁边
         local episode_thumb="${strm_dir}/${strm_name}.jpg"
@@ -3306,16 +3548,40 @@ scrape_metadata_full() {
         # 4. 下载图片
         local poster_file="${strm_dir}/poster.jpg"
         local fanart_file="${strm_dir}/fanart.jpg"
+        local banner_file="${strm_dir}/banner.jpg"
+        local logo_file="${strm_dir}/logo.png"
 
         # 并行下载图片（后台任务）
         if [[ ! -f "$poster_file" ]]; then
+            log_info "  下载电影海报"
             download_poster "$tmdb_data" "$poster_file" &
             local poster_pid=$!
+        else
+            log_debug "  跳过（已有电影海报）"
         fi
 
         if [[ ! -f "$fanart_file" ]]; then
+            log_info "  下载电影背景图"
             download_backdrop "$tmdb_data" "$fanart_file" &
             local fanart_pid=$!
+        else
+            log_debug "  跳过（已有电影背景图）"
+        fi
+
+        if [[ ! -f "$banner_file" ]]; then
+            log_info "  下载电影横幅图"
+            download_banner "$tmdb_data" "$banner_file" &
+            local banner_pid=$!
+        else
+            log_debug "  跳过（已有电影横幅图）"
+        fi
+
+        if [[ ! -f "$logo_file" ]]; then
+            log_info "  下载电影徽标"
+            download_logo "$tmdb_data" "$logo_file" &
+            local logo_pid=$!
+        else
+            log_debug "  跳过（已有电影徽标）"
         fi
 
         # 等待下载完成
