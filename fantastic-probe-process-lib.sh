@@ -687,6 +687,242 @@ convert_to_emby_format() {
 }
 
 #==============================================================================
+# 追加媒体信息到 NFO
+#==============================================================================
+# 功能：提取视频流信息并追加到现有 NFO 文件
+# 参数：
+#   $1: STRM 文件路径
+# 返回：
+#   退出码：0=成功，1=失败
+#==============================================================================
+
+append_media_info_to_nfo() {
+    local strm_file="$1"
+    local strm_dir="$(dirname "$strm_file")"
+    local strm_name="$(basename "$strm_file" .strm)"
+
+    # 获取 NFO 文件路径
+    local nfo_file=$(get_nfo_path "$strm_file")
+
+    if [ ! -f "$nfo_file" ]; then
+        log_warn "  ⚠️  NFO 文件不存在，创建基础 NFO: $nfo_file"
+        # 创建基础 NFO（只包含文件名）
+        if is_tv_show "$strm_name"; then
+            create_basic_episode_nfo "$strm_file"
+        else
+            create_basic_movie_nfo "$strm_file"
+        fi
+    fi
+
+    log_info "  追加视频流信息到 NFO: $nfo_file"
+
+    # 检测 STRM 类型
+    local strm_type=$(detect_strm_type "$strm_file")
+
+    # 提取媒体信息
+    local media_info=""
+    if [ "$strm_type" = "iso" ]; then
+        # ISO.STRM 处理
+        local iso_path=$(head -1 "$strm_file" | tr -d '\r\n')
+        if [ -z "$iso_path" ] || [ ! -f "$iso_path" ]; then
+            log_error "  ISO 文件不存在: $iso_path"
+            return 1
+        fi
+
+        # 检测 ISO 类型并提取信息
+        local iso_type=$(detect_iso_type_smart "$iso_path")
+        media_info=$(extract_mediainfo "$iso_path" "$iso_type")
+    else
+        # 普通 STRM 处理
+        local video_path=$(head -1 "$strm_file" | tr -d '\r\n')
+        if [ -z "$video_path" ]; then
+            log_error "  STRM 内容为空"
+            return 1
+        fi
+
+        # 检测链接类型
+        local link_type=$(detect_link_type "$video_path")
+
+        # 如果是 Alist 链接，尝试获取 raw_url
+        if [ "$link_type" = "alist" ] && [ -n "${ALIST_ADDR:-}" ]; then
+            video_path=$(get_alist_raw_url "$video_path")
+        fi
+
+        # 提取媒体信息
+        media_info=$(extract_video_mediainfo "$video_path")
+    fi
+
+    if [ -z "$media_info" ]; then
+        log_error "  媒体信息提取失败"
+        return 1
+    fi
+
+    # 生成 <fileinfo> XML 片段
+    local fileinfo_xml=$(generate_fileinfo_xml "$media_info")
+
+    if [ -z "$fileinfo_xml" ]; then
+        log_error "  fileinfo XML 生成失败"
+        return 1
+    fi
+
+    # 检查 NFO 中是否已有 <fileinfo>
+    if grep -q "<fileinfo>" "$nfo_file"; then
+        log_warn "  NFO 已包含 <fileinfo>，跳过追加"
+        return 0
+    fi
+
+    # 追加到 NFO（在结束标签前）
+    local temp_nfo="${nfo_file}.tmp"
+
+    # 识别 NFO 类型并插入
+    if grep -q "</movie>" "$nfo_file"; then
+        sed "/<\/movie>/i\\
+$fileinfo_xml" "$nfo_file" > "$temp_nfo"
+    elif grep -q "</tvshow>" "$nfo_file"; then
+        sed "/<\/tvshow>/i\\
+$fileinfo_xml" "$nfo_file" > "$temp_nfo"
+    elif grep -q "</episodedetails>" "$nfo_file"; then
+        sed "/<\/episodedetails>/i\\
+$fileinfo_xml" "$nfo_file" > "$temp_nfo"
+    else
+        log_error "  无法识别 NFO 类型"
+        return 1
+    fi
+
+    # 原子替换
+    if [ -f "$temp_nfo" ]; then
+        mv "$temp_nfo" "$nfo_file"
+        log_success "  ✅ 视频流信息已追加到 NFO"
+        return 0
+    else
+        log_error "  临时文件生成失败"
+        return 1
+    fi
+}
+
+#------------------------------------------------------------------------------
+# 创建基础电影 NFO
+#------------------------------------------------------------------------------
+create_basic_movie_nfo() {
+    local strm_file="$1"
+    local strm_name="$(basename "$strm_file" .strm)"
+    local nfo_file=$(get_nfo_path "$strm_file")
+
+    cat > "$nfo_file" << EOF
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<movie>
+    <title>$strm_name</title>
+</movie>
+EOF
+    log_info "  创建基础 NFO: $nfo_file"
+}
+
+#------------------------------------------------------------------------------
+# 创建基础剧集 NFO
+#------------------------------------------------------------------------------
+create_basic_episode_nfo() {
+    local strm_file="$1"
+    local strm_name="$(basename "$strm_file" .strm)"
+    local nfo_file=$(get_nfo_path "$strm_file")
+
+    # 提取季集号
+    local season_num=0
+    local episode_num=0
+    if [[ "$strm_name" =~ S([0-9]{1,2})E([0-9]{1,2}) ]]; then
+        season_num=$((10#${BASH_REMATCH[1]}))
+        episode_num=$((10#${BASH_REMATCH[2]}))
+    fi
+
+    cat > "$nfo_file" << EOF
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<episodedetails>
+    <title>$strm_name</title>
+    <season>$season_num</season>
+    <episode>$episode_num</episode>
+</episodedetails>
+EOF
+    log_info "  创建基础剧集 NFO: $nfo_file"
+}
+
+#------------------------------------------------------------------------------
+# 生成 fileinfo XML 片段
+#------------------------------------------------------------------------------
+generate_fileinfo_xml() {
+    local ffprobe_json="$1"
+
+    local xml_output="    <fileinfo>
+        <streamdetails>"
+
+    # 提取视频流（只取第一个）
+    local video_stream=$(echo "$ffprobe_json" | jq -r '.streams[] | select(.codec_type=="video") | @json' | head -1)
+
+    if [ -n "$video_stream" ]; then
+        local codec=$(echo "$video_stream" | jq -r '.codec_name // ""')
+        local width=$(echo "$video_stream" | jq -r '.width // 0')
+        local height=$(echo "$video_stream" | jq -r '.height // 0')
+        local aspect=$(echo "$video_stream" | jq -r '.display_aspect_ratio // ""')
+        local duration=$(echo "$ffprobe_json" | jq -r '.format.duration // 0' | awk '{print int($1)}')
+
+        xml_output+="
+            <video>"
+        [ -n "$codec" ] && [ "$codec" != "null" ] && xml_output+="
+                <codec>$codec</codec>"
+        [ "$width" != "0" ] && xml_output+="
+                <width>$width</width>"
+        [ "$height" != "0" ] && xml_output+="
+                <height>$height</height>"
+        [ -n "$aspect" ] && [ "$aspect" != "null" ] && xml_output+="
+                <aspect>$aspect</aspect>"
+        [ "$duration" != "0" ] && xml_output+="
+                <durationinseconds>$duration</durationinseconds>"
+        xml_output+="
+            </video>"
+    fi
+
+    # 提取音频流（所有音轨）- 使用数组避免子shell问题
+    local audio_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="audio")] | length')
+    for ((i=0; i<audio_count; i++)); do
+        local audio_stream=$(echo "$ffprobe_json" | jq -r ".streams[] | select(.codec_type==\"audio\") | @json" | sed -n "$((i+1))p")
+        local codec=$(echo "$audio_stream" | jq -r '.codec_name // ""')
+        local language=$(echo "$audio_stream" | jq -r '.tags.language // ""')
+        local channels=$(echo "$audio_stream" | jq -r '.channels // 0')
+
+        xml_output+="
+            <audio>"
+        [ -n "$codec" ] && [ "$codec" != "null" ] && xml_output+="
+                <codec>$codec</codec>"
+        [ -n "$language" ] && [ "$language" != "null" ] && xml_output+="
+                <language>$language</language>"
+        [ "$channels" != "0" ] && xml_output+="
+                <channels>$channels</channels>"
+        xml_output+="
+            </audio>"
+    done
+
+    # 提取字幕流（所有字幕）- 使用数组避免子shell问题
+    local subtitle_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="subtitle")] | length')
+    for ((i=0; i<subtitle_count; i++)); do
+        local subtitle_stream=$(echo "$ffprobe_json" | jq -r ".streams[] | select(.codec_type==\"subtitle\") | @json" | sed -n "$((i+1))p")
+        local language=$(echo "$subtitle_stream" | jq -r '.tags.language // ""')
+
+        if [ -n "$language" ] && [ "$language" != "null" ]; then
+            xml_output+="
+            <subtitle>"
+            xml_output+="
+                <language>$language</language>"
+            xml_output+="
+            </subtitle>"
+        fi
+    done
+
+    xml_output+="
+        </streamdetails>
+    </fileinfo>"
+
+    echo "$xml_output"
+}
+
+#==============================================================================
 # 处理单个 ISO strm 文件（完整流程）
 #==============================================================================
 
@@ -900,6 +1136,32 @@ is_tv_show() {
 }
 
 #------------------------------------------------------------------------------
+# 获取 NFO 文件路径
+#------------------------------------------------------------------------------
+# 功能：智能识别 STRM 对应的 NFO 文件路径
+# 参数：
+#   $1: STRM 文件路径
+# 返回：
+#   输出 NFO 文件路径
+#------------------------------------------------------------------------------
+
+get_nfo_path() {
+    local strm_file="$1"
+    local strm_dir="$(dirname "$strm_file")"
+    local strm_name="$(basename "$strm_file" .strm)"
+
+    # 判断是否为电视剧
+    if is_tv_show "$strm_name"; then
+        # 电视剧：返回单集 NFO 路径
+        # 格式：S01E01.nfo 或 剧集名 S01E01.nfo
+        echo "${strm_dir}/${strm_name}.nfo"
+    else
+        # 电影：返回 movie.nfo
+        echo "${strm_dir}/${strm_name}.nfo"
+    fi
+}
+
+#------------------------------------------------------------------------------
 # 分析电视剧目录结构
 #------------------------------------------------------------------------------
 # 功能：提前检测电视剧目录结构，识别 series_dir、season_dir
@@ -998,68 +1260,55 @@ plan_strm_tasks() {
 
     log_debug "  规划处理任务..."
 
-    # 1. 检查是否需要阶段1（媒体信息提取）
-    local json_file="${strm_dir}/${strm_name}-mediainfo.json"
-    if [[ ! -f "$json_file" ]]; then
-        tasks="$tasks stage1"
-        log_debug "    需要执行: 阶段1（媒体信息提取）"
+    # 获取 NFO 文件路径
+    local nfo_file=$(get_nfo_path "$strm_file")
+
+    # 检查 NFO 是否存在
+    if [[ ! -f "$nfo_file" ]]; then
+        # NFO 不存在，规划完整流程
+        log_debug "    NFO 不存在: $nfo_file"
+
+        # 先阶段1（生成 NFO 元数据）
+        if [[ "${STAGE1_ENABLED:-true}" == "true" ]]; then
+            tasks="$tasks stage1"
+            log_debug "    需要执行: 阶段1（元数据刮削 - 生成 NFO）"
+        fi
+
+        # 再阶段2（追加视频流信息到 NFO）
+        if [[ "${STAGE2_ENABLED:-true}" == "true" ]]; then
+            tasks="$tasks stage2"
+            log_debug "    需要执行: 阶段2（媒体信息提取 - 追加到 NFO）"
+        fi
     else
-        log_debug "    跳过阶段1（已有 JSON）"
-    fi
+        # NFO 存在，检查是否缺少视频流信息
+        log_debug "    NFO 已存在: $nfo_file"
 
-    # 2. 检查是否需要阶段2（NFO 生成）
-    if [[ "${ENABLE_NFO:-true}" == "true" ]]; then
-        local nfo_file="${strm_dir}/${strm_name}.nfo"
-        if [[ ! -f "$nfo_file" ]]; then
-            tasks="$tasks stage2_nfo"
-            log_debug "    需要执行: 阶段2-NFO（NFO 生成）"
-        else
-            log_debug "    跳过 NFO 生成（已存在）"
-        fi
-    fi
-
-    # 3. 检查是否需要下载图片
-    if [[ "${DOWNLOAD_IMAGES:-true}" == "true" ]] && [[ "${ENABLE_NFO:-true}" == "true" ]]; then
-        local needs_images=false
-
-        # 对于电视剧，检查多层级图片
-        if is_tv_show "$strm_name"; then
-            local structure_info=$(analyze_tv_show_structure "$strm_file" 2>/dev/null)
-            if [[ $? -eq 0 ]]; then
-                local series_dir=$(echo "$structure_info" | cut -d'|' -f1)
-                local season_dir=$(echo "$structure_info" | cut -d'|' -f2)
-
-                # 检查剧集级图片
-                if [[ ! -f "${series_dir}/poster.jpg" ]] || [[ ! -f "${series_dir}/fanart.jpg" ]]; then
-                    needs_images=true
-                fi
-
-                # 检查季级图片
-                if [[ ! -f "${season_dir}/season-poster.jpg" ]]; then
-                    needs_images=true
-                fi
-
-                # 检查单集缩略图
-                if [[ ! -f "${strm_dir}/${strm_name}.jpg" ]]; then
-                    needs_images=true
-                fi
+        if [[ "${STAGE2_ENABLED:-true}" == "true" ]]; then
+            # 检查 NFO 中是否有 <fileinfo> 标签
+            if ! grep -q "<fileinfo>" "$nfo_file" 2>/dev/null; then
+                tasks="$tasks stage2"
+                log_debug "    需要执行: 阶段2（追加视频流信息到现有 NFO）"
             else
-                # 目录结构分析失败，但仍需下载图片
-                needs_images=true
-            fi
-        else
-            # 对于电影，检查海报和背景图
-            if [[ ! -f "${strm_dir}/${strm_name}-poster.jpg" ]] || \
-               [[ ! -f "${strm_dir}/${strm_name}-fanart.jpg" ]]; then
-                needs_images=true
+                log_debug "    跳过阶段2（NFO 已包含视频流信息）"
             fi
         fi
 
-        if [[ "$needs_images" == true ]]; then
-            tasks="$tasks stage2_images"
-            log_debug "    需要执行: 阶段2-图片（图片下载）"
-        else
-            log_debug "    跳过图片下载（已存在）"
+        # 检查是否需要重新生成 NFO（阶段1）
+        # 一般情况下，NFO 存在就不重新生成，除非用户手动删除
+        log_debug "    跳过阶段1（NFO 已存在）"
+    fi
+
+    # 对于电视剧，检查是否需要生成 tvshow.nfo（总剧集 NFO）
+    if is_tv_show "$strm_name"; then
+        local structure_info=$(analyze_tv_show_structure "$strm_file" 2>/dev/null)
+        if [[ $? -eq 0 ]]; then
+            local series_dir=$(echo "$structure_info" | cut -d'|' -f1)
+            local tvshow_nfo="${series_dir}/tvshow.nfo"
+
+            if [[ ! -f "$tvshow_nfo" ]] && [[ "${STAGE1_ENABLED:-true}" == "true" ]]; then
+                tasks="$tasks stage1_tvshow"
+                log_debug "    需要执行: 阶段1（生成 tvshow.nfo）"
+            fi
         fi
     fi
 
@@ -2268,21 +2517,51 @@ EOF
 
     # 添加演员信息（前10位主演）
     if [[ -n "$credits_data" && "$credits_data" != "{}" ]]; then
+        # 创建 .actors 目录用于存放演员头像
+        local actors_dir="${nfo_dir}/.actors"
+        mkdir -p "$actors_dir" 2>/dev/null || true
+
         # 添加编剧信息
-        echo "$credits_data" | jq -r '.crew | map(select(.job == "Screenplay" or .job == "Writer")) | unique_by(.name) | .[] |
+        echo "$credits_data" | jq -r '(.crew // []) | map(select(.job == "Screenplay" or .job == "Writer")) | unique_by(.name) | .[] |
             "    <writer>" + .name + "</writer>"' >> "$output_file"
 
-        # 添加演员
-        echo "$credits_data" | jq -r '.cast[:10] | .[] |
-            "    <actor>\n" +
-            "        <name>" + (.name // "") + "</name>\n" +
-            "        <role>" + (.character // "") + "</role>\n" +
-            "        <type>Actor</type>\n" +
-            (if .profile_path then "        <thumb>https://image.tmdb.org/t/p/w185" + .profile_path + "</thumb>\n" else "" end) +
-            "    </actor>"' >> "$output_file"
+        # 添加演员并下载头像
+        echo "$credits_data" | jq -r '(.cast // [])[:10] | .[] | @json' | while IFS= read -r actor_json; do
+            local actor_name=$(echo "$actor_json" | jq -r '.name // ""')
+            local actor_role=$(echo "$actor_json" | jq -r '.character // ""')
+            local profile_path=$(echo "$actor_json" | jq -r '.profile_path // ""')
+
+            # 写入演员信息到 NFO
+            echo "    <actor>" >> "$output_file"
+            echo "        <name>$actor_name</name>" >> "$output_file"
+            echo "        <role>$actor_role</role>" >> "$output_file"
+            echo "        <type>Actor</type>" >> "$output_file"
+
+            # 下载演员头像（如果有）
+            if [[ -n "$profile_path" && "$profile_path" != "null" ]]; then
+                local thumb_url="https://image.tmdb.org/t/p/w185${profile_path}"
+                local thumb_file="${actors_dir}/${actor_name}.jpg"
+
+                # 如果头像不存在，则下载
+                if [[ ! -f "$thumb_file" ]]; then
+                    log_debug "  下载演员头像: $actor_name"
+                    if download_image_with_retry "$thumb_url" "$thumb_file" "演员头像"; then
+                        echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
+                    else
+                        # 下载失败，使用 URL
+                        echo "        <thumb>$thumb_url</thumb>" >> "$output_file"
+                    fi
+                else
+                    # 使用本地文件
+                    echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
+                fi
+            fi
+
+            echo "    </actor>" >> "$output_file"
+        done
 
         # 添加导演信息
-        echo "$credits_data" | jq -r '.crew | map(select(.job == "Director")) | .[] |
+        echo "$credits_data" | jq -r '(.crew // []) | map(select(.job == "Director")) | .[] |
             "    <director>" + .name + "</director>"' >> "$output_file"
     fi
 
@@ -2381,7 +2660,7 @@ generate_series_nfo() {
     local genres=$(echo "$tmdb_data" | jq -r '.genres[]?.name' | head -5)
 
     # 提取制作国家
-    local countries=$(echo "$tmdb_data" | jq -r '.origin_country[] // .production_countries[]?.name' | head -3)
+    local countries=$(echo "$tmdb_data" | jq -r '.origin_country[]? // .production_countries[]?.name' | head -3)
 
     # 获取剧集演职人员信息
     local credits_data=$(get_tv_credits "$tmdb_id")
@@ -2442,16 +2721,47 @@ EOF
 
     # 添加演员信息（前15位主演）
     if [[ -n "$credits_data" && "$credits_data" != "{}" ]]; then
-        echo "$credits_data" | jq -r '.cast[:15] | .[] |
-            "    <actor>\n" +
-            "        <name>" + (.name // "") + "</name>\n" +
-            "        <role>" + (.character // "") + "</role>\n" +
-            "        <type>Actor</type>\n" +
-            (if .profile_path then "        <thumb>https://image.tmdb.org/t/p/w185" + .profile_path + "</thumb>\n" else "" end) +
-            "    </actor>"' >> "$output_file"
+        # 创建 .actors 目录用于存放演员头像
+        local actors_dir="${nfo_dir}/.actors"
+        mkdir -p "$actors_dir" 2>/dev/null || true
+
+        # 添加演员并下载头像
+        echo "$credits_data" | jq -r '(.cast // [])[:15] | .[] | @json' | while IFS= read -r actor_json; do
+            local actor_name=$(echo "$actor_json" | jq -r '.name // ""')
+            local actor_role=$(echo "$actor_json" | jq -r '.character // ""')
+            local profile_path=$(echo "$actor_json" | jq -r '.profile_path // ""')
+
+            # 写入演员信息到 NFO
+            echo "    <actor>" >> "$output_file"
+            echo "        <name>$actor_name</name>" >> "$output_file"
+            echo "        <role>$actor_role</role>" >> "$output_file"
+            echo "        <type>Actor</type>" >> "$output_file"
+
+            # 下载演员头像（如果有）
+            if [[ -n "$profile_path" && "$profile_path" != "null" ]]; then
+                local thumb_url="https://image.tmdb.org/t/p/w185${profile_path}"
+                local thumb_file="${actors_dir}/${actor_name}.jpg"
+
+                # 如果头像不存在，则下载
+                if [[ ! -f "$thumb_file" ]]; then
+                    log_debug "  下载演员头像: $actor_name"
+                    if download_image_with_retry "$thumb_url" "$thumb_file" "演员头像"; then
+                        echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
+                    else
+                        # 下载失败，使用 URL
+                        echo "        <thumb>$thumb_url</thumb>" >> "$output_file"
+                    fi
+                else
+                    # 使用本地文件
+                    echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
+                fi
+            fi
+
+            echo "    </actor>" >> "$output_file"
+        done
 
         # 添加导演信息（电视剧可能有多个导演）
-        echo "$credits_data" | jq -r '.crew | map(select(.job == "Executive Producer" or .job == "Creator")) | unique_by(.name) | .[] |
+        echo "$credits_data" | jq -r '(.crew // []) | map(select(.job == "Executive Producer" or .job == "Creator")) | unique_by(.name) | .[] |
             "    <director>" + .name + "</director>"' >> "$output_file"
     fi
 
@@ -2816,8 +3126,8 @@ scrape_metadata_full() {
     log_info "开始刮削元数据: $strm_file"
 
     # 检查配置
-    if [[ "${ENABLE_NFO:-true}" != "true" ]]; then
-        log_warn "  NFO 生成已禁用，跳过"
+    if [[ "${STAGE1_ENABLED:-true}" != "true" ]]; then
+        log_warn "  阶段1已禁用，跳过元数据刮削"
         return 0
     fi
 
@@ -2909,59 +3219,57 @@ scrape_metadata_full() {
         log_info "  生成单集 NFO (S${season}E${episode})"
         generate_tv_nfo "$tmdb_data" "$nfo_file"
 
-        # 4. 下载图片（如果启用）
-        if [[ "${DOWNLOAD_IMAGES:-true}" == "true" ]]; then
-            # 4.1 下载剧集级图片到剧集根目录（只下载一次）
-            local series_poster="${series_dir}/poster.jpg"
-            local series_fanart="${series_dir}/fanart.jpg"
+        # 4. 下载图片
+        # 4.1 下载剧集级图片到剧集根目录（只下载一次）
+        local series_poster="${series_dir}/poster.jpg"
+        local series_fanart="${series_dir}/fanart.jpg"
 
-            if [[ ! -f "$series_poster" ]]; then
-                log_info "  下载剧集海报"
-                download_poster "$tmdb_data" "$series_poster" &
-                local series_poster_pid=$!
-            else
-                log_debug "  跳过（已有剧集海报）"
-            fi
-
-            if [[ ! -f "$series_fanart" ]]; then
-                log_info "  下载剧集背景图"
-                download_backdrop "$tmdb_data" "$series_fanart" &
-                local series_fanart_pid=$!
-            else
-                log_debug "  跳过（已有剧集背景图）"
-            fi
-
-            # 4.2 下载季级图片到季文件夹（每个季只下载一次）
-            local season_poster="${season_dir}/season-poster.jpg"
-            local season_fanart="${season_dir}/season-fanart.jpg"
-
-            # 从 tmdb_data 中提取季海报路径
-            local season_poster_path=$(echo "$tmdb_data" | jq -r '.season.poster_path // empty')
-            if [[ ! -f "$season_poster" && -n "$season_poster_path" && "$season_poster_path" != "null" ]]; then
-                log_info "  下载季海报 (Season $season)"
-                local season_poster_url="https://image.tmdb.org/t/p/original${season_poster_path}"
-                download_image_with_retry "$season_poster_url" "$season_poster" "季海报" &
-                local season_poster_pid=$!
-            else
-                log_debug "  跳过（已有季海报或无季海报路径）"
-            fi
-
-            # 季级背景图（可选，通常使用剧集级背景图）
-            # 这里暂不下载季级独立背景图，使用剧集级背景图
-
-            # 4.3 下载单集缩略图到单集文件旁边
-            local episode_thumb="${strm_dir}/${strm_name}.jpg"
-            if [[ ! -f "$episode_thumb" ]]; then
-                log_info "  下载单集缩略图 (S${season}E${episode})"
-                download_episode_thumb "$tmdb_data" "$episode_thumb" &
-                local episode_thumb_pid=$!
-            else
-                log_debug "  跳过（已有单集缩略图）"
-            fi
-
-            # 等待所有后台下载任务完成
-            wait 2>/dev/null || true
+        if [[ ! -f "$series_poster" ]]; then
+            log_info "  下载剧集海报"
+            download_poster "$tmdb_data" "$series_poster" &
+            local series_poster_pid=$!
+        else
+            log_debug "  跳过（已有剧集海报）"
         fi
+
+        if [[ ! -f "$series_fanart" ]]; then
+            log_info "  下载剧集背景图"
+            download_backdrop "$tmdb_data" "$series_fanart" &
+            local series_fanart_pid=$!
+        else
+            log_debug "  跳过（已有剧集背景图）"
+        fi
+
+        # 4.2 下载季级图片到季文件夹（每个季只下载一次）
+        local season_poster="${season_dir}/season-poster.jpg"
+        local season_fanart="${season_dir}/season-fanart.jpg"
+
+        # 从 tmdb_data 中提取季海报路径
+        local season_poster_path=$(echo "$tmdb_data" | jq -r '.season.poster_path // empty')
+        if [[ ! -f "$season_poster" && -n "$season_poster_path" && "$season_poster_path" != "null" ]]; then
+            log_info "  下载季海报 (Season $season)"
+            local season_poster_url="https://image.tmdb.org/t/p/original${season_poster_path}"
+            download_image_with_retry "$season_poster_url" "$season_poster" "季海报" &
+            local season_poster_pid=$!
+        else
+            log_debug "  跳过（已有季海报或无季海报路径）"
+        fi
+
+        # 季级背景图（可选，通常使用剧集级背景图）
+        # 这里暂不下载季级独立背景图，使用剧集级背景图
+
+        # 4.3 下载单集缩略图到单集文件旁边
+        local episode_thumb="${strm_dir}/${strm_name}.jpg"
+        if [[ ! -f "$episode_thumb" ]]; then
+            log_info "  下载单集缩略图 (S${season}E${episode})"
+            download_episode_thumb "$tmdb_data" "$episode_thumb" &
+            local episode_thumb_pid=$!
+        else
+            log_debug "  跳过（已有单集缩略图）"
+        fi
+
+        # 等待所有后台下载任务完成
+        wait 2>/dev/null || true
 
     else
         # 电影：单层级处理
@@ -2975,25 +3283,23 @@ scrape_metadata_full() {
             return 1
         fi
 
-        # 4. 下载图片（如果启用）
-        if [[ "${DOWNLOAD_IMAGES:-true}" == "true" ]]; then
-            local poster_file="${strm_dir}/poster.jpg"
-            local fanart_file="${strm_dir}/fanart.jpg"
+        # 4. 下载图片
+        local poster_file="${strm_dir}/poster.jpg"
+        local fanart_file="${strm_dir}/fanart.jpg"
 
-            # 并行下载图片（后台任务）
-            if [[ ! -f "$poster_file" ]]; then
-                download_poster "$tmdb_data" "$poster_file" &
-                local poster_pid=$!
-            fi
-
-            if [[ ! -f "$fanart_file" ]]; then
-                download_backdrop "$tmdb_data" "$fanart_file" &
-                local fanart_pid=$!
-            fi
-
-            # 等待下载完成
-            wait 2>/dev/null || true
+        # 并行下载图片（后台任务）
+        if [[ ! -f "$poster_file" ]]; then
+            download_poster "$tmdb_data" "$poster_file" &
+            local poster_pid=$!
         fi
+
+        if [[ ! -f "$fanart_file" ]]; then
+            download_backdrop "$tmdb_data" "$fanart_file" &
+            local fanart_pid=$!
+        fi
+
+        # 等待下载完成
+        wait 2>/dev/null || true
     fi
 
     log_success "✅ 元数据刮削完成: $strm_file"

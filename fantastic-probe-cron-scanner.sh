@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.3.8"  # 硬编码默认值 - 修复 URL 编码和 TMDB ID 提取
+VERSION="3.4.0"  # 硬编码默认值 - 阶段顺序互换：NFO 优先架构
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.3.2")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.4.0")
 fi
 
 #==============================================================================
@@ -244,13 +244,6 @@ process_iso_strm() {
     log_info "开始处理: $(basename "$strm_file")"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # 检查配置开关
-    local enable_strm="${ENABLE_STRM:-true}"
-    if [ "$enable_strm" != "true" ]; then
-        log_warn "STRM 处理已禁用，跳过"
-        return 0
-    fi
-
     # ==================== 步骤1：任务规划 ====================
     log_info "[步骤1/4] 任务规划"
 
@@ -280,48 +273,23 @@ process_iso_strm() {
     strm_type=$(detect_strm_type "$strm_file")
     log_debug "  STRM 类型: $strm_type"
 
-    # ==================== 步骤2：阶段1 - 媒体信息提取 ====================
-    local stage1_success=true
-
+    # ==================== 步骤2：阶段1 - 元数据刮削（生成 NFO） ====================
     if echo "$tasks" | grep -q "stage1"; then
-        log_info "[步骤2/4] 阶段1 - 媒体信息提取"
-
-        set +e
-        if [ "$strm_type" = "iso" ]; then
-            if [ "${ENABLE_ISO_STRM:-true}" = "true" ]; then
-                process_iso_strm_full "$strm_file"
-                if [ $? -ne 0 ]; then
-                    stage1_success=false
-                fi
-            else
-                log_warn "  ISO.STRM 处理已禁用，跳过"
-            fi
-        else
-            if [ "${ENABLE_VIDEO_STRM:-true}" = "true" ]; then
-                process_video_strm_full "$strm_file"
-                if [ $? -ne 0 ]; then
-                    stage1_success=false
-                fi
-            else
-                log_warn "  普通 STRM 处理已禁用，跳过"
-            fi
+        # 检查阶段1开关
+        if [ "${STAGE1_ENABLED:-true}" != "true" ]; then
+            log_warn "  ⏸️  阶段1已禁用，跳过元数据刮削"
+            return 0
         fi
-        set -e
 
-        if [ "$stage1_success" = false ]; then
-            log_error "  ❌ 阶段1失败"
-            record_failure "$strm_file" "阶段1失败"
+        # 检查 TMDB API Key 依赖
+        if [ -z "${TMDB_API_KEY:-}" ]; then
+            log_error "  ❌ TMDB API Key 未配置，无法执行阶段1"
+            log_error "  请运行配置工具：sudo fantastic-probe-config"
+            record_failure "$strm_file" "TMDB API Key 未配置"
             return 1
         fi
 
-        log_success "  ✅ 阶段1完成"
-    else
-        log_info "[步骤2/4] 跳过阶段1（已有媒体信息）"
-    fi
-
-    # ==================== 步骤3：阶段2 - 元数据刮削 ====================
-    if echo "$tasks" | grep -q "stage2"; then
-        log_info "[步骤3/4] 阶段2 - 元数据刮削"
+        log_info "[步骤2/4] 阶段1 - 元数据刮削（生成 NFO + 图片）"
 
         set +e
         # 传递目录结构信息（如果是电视剧）
@@ -332,33 +300,66 @@ process_iso_strm() {
         fi
 
         if [ $? -ne 0 ]; then
-            log_warn "  ⚠️  阶段2失败"
-            # 检查阶段1是否完成（有 JSON 文件）
-            if [ -f "${strm_dir}/${strm_name}-mediainfo.json" ]; then
-                # 阶段1完成 + 阶段2失败 → 记录为失败，防止无限重试
-                record_failure "$strm_file" "阶段2失败（NFO或图片）"
-            fi
+            log_error "  ❌ 阶段1失败"
+            record_failure "$strm_file" "阶段1失败（NFO或图片）"
             set -e
             return 1
         else
-            log_success "  ✅ 阶段2完成"
+            log_success "  ✅ 阶段1完成（NFO + 图片）"
         fi
         set -e
     else
-        log_info "[步骤3/4] 跳过阶段2（已有元数据）"
+        log_info "[步骤2/4] 跳过阶段1（已有元数据）"
+    fi
+
+    # ==================== 步骤3：阶段2 - 媒体信息提取（追加到 NFO） ====================
+    local stage2_success=true
+
+    if echo "$tasks" | grep -q "stage2"; then
+        # 检查阶段2开关
+        if [ "${STAGE2_ENABLED:-true}" != "true" ]; then
+            log_warn "  ⏸️  阶段2已禁用，跳过媒体信息提取"
+            return 0
+        fi
+
+        # 检查 FFprobe 依赖
+        if ! command -v ffprobe &> /dev/null; then
+            log_error "  ❌ FFprobe 未配置，无法执行阶段2"
+            log_error "  请运行配置工具：sudo fantastic-probe-config"
+            record_failure "$strm_file" "FFprobe 未配置"
+            return 1
+        fi
+
+        log_info "[步骤3/4] 阶段2 - 媒体信息提取（追加视频流到 NFO）"
+
+        set +e
+        # 调用新函数：追加视频流信息到 NFO
+        append_media_info_to_nfo "$strm_file"
+        if [ $? -ne 0 ]; then
+            stage2_success=false
+        fi
+        set -e
+
+        if [ "$stage2_success" = false ]; then
+            log_error "  ❌ 阶段2失败"
+            record_failure "$strm_file" "阶段2失败"
+            return 1
+        fi
+
+        log_success "  ✅ 阶段2完成（视频流信息已追加）"
+    else
+        log_info "[步骤3/4] 跳过阶段2（已有媒体信息）"
     fi
 
     # ==================== 步骤4：通知 Emby 刷新 ====================
     if [ "${EMBY_ENABLED:-false}" = "true" ]; then
         log_info "[步骤4/4] 通知 Emby 刷新媒体库"
 
-        # 构造 JSON 文件路径
-        local strm_dir="$(dirname "$strm_file")"
-        local strm_name="$(basename "$strm_file" .strm)"
-        local json_file="${strm_dir}/${strm_name}-mediainfo.json"
+        # 获取 NFO 文件路径
+        local nfo_file=$(get_nfo_path "$strm_file")
 
         # 调用通知函数（来自 process-lib.sh）
-        notify_emby_refresh "$json_file"
+        notify_emby_refresh "$nfo_file"
     else
         log_info "[步骤4/4] 跳过 Emby 通知（未启用）"
     fi
@@ -384,20 +385,17 @@ scan_and_process() {
     # 初始化失败缓存（静默）
     init_failure_cache
 
-    # 查找所有没有 JSON 的 .iso.strm 文件
+    # 查找所有没有 NFO 的 .strm 文件
     local pending_files=()
 
     while IFS= read -r -d '' strm_file; do
-        local strm_dir
-        local strm_name
-        local json_file
+        local nfo_file
 
-        strm_dir="$(dirname "$strm_file")"
-        strm_name="$(basename "$strm_file" .strm)"
-        json_file="${strm_dir}/${strm_name}-mediainfo.json"
+        # 获取对应的 NFO 路径（智能识别电影/剧集）
+        nfo_file=$(get_nfo_path "$strm_file")
 
-        # 检查是否已有 JSON
-        if [ ! -f "$json_file" ]; then
+        # 检查是否已有 NFO
+        if [ ! -f "$nfo_file" ]; then
             pending_files+=("$strm_file")
         fi
     done < <(find "$STRM_ROOT" -type f -name "*.strm" -print0 2>/dev/null)
@@ -441,8 +439,9 @@ scan_and_process() {
         ((processed++)) || true
 
         # 任务间隔（防止频繁访问网盘触发限流）
+        local interval="${SCAN_TASK_INTERVAL:-5}"
         if [ $processed -lt $SCAN_BATCH_SIZE ] && [ $processed -lt $total_pending ]; then
-            sleep 5
+            sleep "$interval"
         fi
     done
 

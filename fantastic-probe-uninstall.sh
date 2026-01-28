@@ -198,35 +198,6 @@ else
 fi
 echo ""
 
-# 10. 询问是否删除生成的 JSON 文件
-echo "8️⃣  生成的 JSON 文件处理..."
-echo "   ⚠️  注意：删除 JSON 文件会导致 Emby 需要重新扫描媒体库"
-read -p "   是否删除所有生成的 .iso-mediainfo.json 文件？ (y/N): " -n 1 -r
-echo ""
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    # 尝试从配置文件读取 STRM_ROOT
-    STRM_ROOT="/mnt/sata1/media/媒体库/strm"  # 默认值
-    if [ -f "/etc/fantastic-probe/config" ]; then
-        # shellcheck source=/dev/null
-        source "/etc/fantastic-probe/config"
-    fi
-
-    if [ -d "$STRM_ROOT" ]; then
-        JSON_COUNT=$(find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" 2>/dev/null | wc -l)
-        if [ "$JSON_COUNT" -gt 0 ]; then
-            find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" -delete
-            echo "   ✅ 已删除 $JSON_COUNT 个 JSON 文件"
-        else
-            echo "   ℹ️  没有找到 JSON 文件"
-        fi
-    else
-        echo "   ℹ️  STRM 目录不存在: $STRM_ROOT"
-    fi
-else
-    echo "   ℹ️  JSON 文件保留"
-fi
-echo ""
-
 # 卸载完成
 echo "=========================================="
 echo "✅ 卸载完成！"

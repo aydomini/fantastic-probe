@@ -11,6 +11,82 @@
 
 ---
 
+## [3.4.0] - 2026-01-28
+
+### 重大架构重构：阶段顺序互换（NFO 优先）
+
+**重要说明**：v3.4.0 是阶段定义的重大重构版本，强烈建议全新安装。
+
+#### 阶段定义（全新设计）
+- **阶段1** = 元数据刮削（TMDB，生成 NFO + 图片 + 演员头像）
+- **阶段2** = 媒体信息提取（FFprobe，追加视频流到 NFO）
+- **执行顺序**：阶段1 → 阶段2（完美对齐！）
+
+#### 新流程
+- **扫描逻辑变更**：扫描查找缺失 NFO 文件（不再是 JSON 文件）
+- **阶段执行顺序**：
+  1. 阶段1（元数据刮削）先执行，生成 NFO + 图片
+  2. 阶段2（媒体信息提取）后执行，直接追加 `<fileinfo>` 到 NFO
+  3. 最后统一通知 Emby 刷新
+- **消除冗余文件**：彻底删除 `mediainfo.json` 中间文件，所有信息统一存储在 NFO 中
+
+#### 新增函数
+- `get_nfo_path()`：智能识别电影/剧集 NFO 路径
+- `append_media_info_to_nfo()`：追加视频流信息到现有 NFO
+- `generate_fileinfo_xml()`：FFprobe JSON 转 NFO XML 格式
+- `create_basic_movie_nfo()`：创建基础电影 NFO（阶段1独立运行时）
+- `create_basic_episode_nfo()`：创建基础剧集 NFO（阶段1独立运行时）
+
+#### 改进
+- **用户灵活性增强**：支持3种组合
+  - 仅阶段1：元数据刮削，无视频流信息
+  - 仅阶段2：仅视频流信息，无 TMDB 元数据
+  - 阶段1+2：完整处理（元数据+视频流）
+- **配置简化**：阶段1开启即自动下载全套元数据（NFO + 海报 + 背景图 + 演员头像），不再需要单独配置
+- **任务间隔可配置**：新增 `SCAN_TASK_INTERVAL` 配置项，用户可在配置面板中调整扫描任务间隔（默认 5 秒）
+- **XML 生成优化**：修复 `generate_fileinfo_xml()` 的 while 循环子shell问题，使用 for 循环确保音频/字幕信息正确输出
+- **NFO 完整性保障**：阶段1运行时若 NFO 不存在，自动创建基础 NFO 结构
+
+#### 技术细节
+- **NFO 插入位置**：`<fileinfo>` 插入在 `</movie>`、`</tvshow>` 或 `</episodedetails>` 前
+- **原子操作**：使用临时文件 + mv 确保 NFO 更新的原子性
+- **电视剧支持**：正确处理多层级 NFO（tvshow.nfo、season.nfo、episode.nfo）
+
+#### 删除
+- 删除所有 NFO 生成函数中的 `<fileinfo>` 生成代码（职责分离）
+- 删除 JSON 读取和转换逻辑（NFO 生成函数仅处理 TMDB 元数据）
+- 删除废弃的 `PARALLEL_STAGE_PROCESSING` 配置项（v3.4.0 改为严格顺序执行）
+- 删除废弃的 `DOWNLOAD_IMAGES` 配置项（阶段1自动下载全套元数据，简化配置）
+- 删除废弃的 `TASK_PROCESSING_INTERVAL` 和 `STORAGE_TYPE` 配置项（替换为 `SCAN_TASK_INTERVAL`，更清晰）
+- 删除冗余的 `configure_tmdb()` 配置函数（与 `configure_stage1()` 功能重复）
+- 删除废弃的 `ENABLE_NFO` 配置项（统一使用 `STAGE1_ENABLED`，消除配置混乱）
+
+---
+
+## [3.3.9] - 2026-01-28
+
+### 新增
+
+- **NFO 视频流信息集成**：从 mediainfo.json 提取视频流信息写入 NFO 的 `<fileinfo><streamdetails>` 标签，Emby 可正确识别分辨率、编码、音轨、字幕等
+- **演员头像本地化**：自动下载演员头像到 `.actors/` 目录，确保 Emby 能正常显示演员照片
+
+### 改进
+
+- **配置面板重构**：简化为两大板块（阶段1媒体信息提取、阶段2元数据刮削），支持一键开启/关闭
+- **配置项绑定优化**：NFO+图片绑定处理、所有 STRM 类型统一处理（不再区分 ISO/普通）
+- **依赖检查增强**：FFprobe 和 TMDB API Key 未配置时自动禁用对应功能并提示用户
+
+### 修复
+
+- **jq null 安全修复**：修复 tvshow.nfo 生成时的 null 迭代错误
+
+### 变更
+
+- 新增：`STAGE1_ENABLED`、`STAGE2_ENABLED` 主开关
+- 删除：`ENABLE_STRM`、`ENABLE_ISO_STRM`、`ENABLE_VIDEO_STRM`、`ENABLE_NFO`、`DOWNLOAD_IMAGES`（被主开关替代）
+
+---
+
 ## [3.3.8] - 2026-01-28
 
 ### 修复

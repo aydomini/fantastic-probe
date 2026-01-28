@@ -67,15 +67,14 @@ validate_config() {
 
     # 必需的配置项列表
     local required_keys=(
+        # 主开关
+        "STAGE1_ENABLED"
+        "STAGE2_ENABLED"
         # Emby 相关
         "EMBY_ENABLED"
         "EMBY_URL"
         "EMBY_API_KEY"
         "EMBY_NOTIFY_TIMEOUT"
-        # STRM 处理
-        "ENABLE_STRM"
-        "ENABLE_ISO_STRM"
-        "ENABLE_VIDEO_STRM"
         # Alist 集成
         "ALIST_ADDR"
         "ALIST_TOKEN"
@@ -90,12 +89,9 @@ validate_config() {
         "FFPROBE_RETRY_COUNT"
         "FFPROBE_RETRY_INTERVALS"
         # TMDB 元数据
-        "ENABLE_NFO"
         "TMDB_API_KEY"
         "TMDB_LANGUAGE"
-        "DOWNLOAD_IMAGES"
         "TMDB_TIMEOUT"
-        "PARALLEL_STAGE_PROCESSING"
         # TMDB 速率限制与重试
         "TMDB_REQUEST_INTERVAL"
         "TMDB_RETRY_COUNT"
@@ -106,13 +102,12 @@ validate_config() {
         "TMDB_PROXY_URL"
         "TMDB_PROXY_TIMEOUT"
         "TMDB_PROXY_FALLBACK"
-        # 任务处理配置
-        "TASK_PROCESSING_INTERVAL"
-        "STORAGE_TYPE"
         # 图片下载重试
         "IMAGE_DOWNLOAD_RETRY_COUNT"
         "IMAGE_DOWNLOAD_RETRY_DELAY"
         "IMAGE_DOWNLOAD_MIN_SIZE"
+        # 扫描任务间隔
+        "SCAN_TASK_INTERVAL"
     )
 
     # 检查缺失的配置项
@@ -129,6 +124,13 @@ validate_config() {
 
         for key in "${missing_keys[@]}"; do
             case "$key" in
+                # 主开关
+                STAGE1_ENABLED)
+                    echo "STAGE1_ENABLED=true" >> "$CONFIG_FILE"
+                    ;;
+                STAGE2_ENABLED)
+                    echo "STAGE2_ENABLED=true" >> "$CONFIG_FILE"
+                    ;;
                 # Emby 配置
                 EMBY_ENABLED)
                     echo "EMBY_ENABLED=false" >> "$CONFIG_FILE"
@@ -141,16 +143,6 @@ validate_config() {
                     ;;
                 EMBY_NOTIFY_TIMEOUT)
                     echo "EMBY_NOTIFY_TIMEOUT=5" >> "$CONFIG_FILE"
-                    ;;
-                # STRM 处理配置
-                ENABLE_STRM)
-                    echo "ENABLE_STRM=true" >> "$CONFIG_FILE"
-                    ;;
-                ENABLE_ISO_STRM)
-                    echo "ENABLE_ISO_STRM=true" >> "$CONFIG_FILE"
-                    ;;
-                ENABLE_VIDEO_STRM)
-                    echo "ENABLE_VIDEO_STRM=true" >> "$CONFIG_FILE"
                     ;;
                 # Alist 集成
                 ALIST_ADDR)
@@ -179,23 +171,14 @@ validate_config() {
                     echo "VALIDATE_HTTP_LINK=false" >> "$CONFIG_FILE"
                     ;;
                 # TMDB 元数据配置
-                ENABLE_NFO)
-                    echo "ENABLE_NFO=true" >> "$CONFIG_FILE"
-                    ;;
                 TMDB_API_KEY)
                     echo "TMDB_API_KEY=\"\"" >> "$CONFIG_FILE"
                     ;;
                 TMDB_LANGUAGE)
                     echo "TMDB_LANGUAGE=\"zh-CN\"" >> "$CONFIG_FILE"
                     ;;
-                DOWNLOAD_IMAGES)
-                    echo "DOWNLOAD_IMAGES=true" >> "$CONFIG_FILE"
-                    ;;
                 TMDB_TIMEOUT)
                     echo "TMDB_TIMEOUT=30" >> "$CONFIG_FILE"
-                    ;;
-                PARALLEL_STAGE_PROCESSING)
-                    echo "PARALLEL_STAGE_PROCESSING=true" >> "$CONFIG_FILE"
                     ;;
                 # FFprobe 重试配置
                 FFPROBE_RETRY_COUNT)
@@ -230,13 +213,6 @@ validate_config() {
                 TMDB_PROXY_FALLBACK)
                     echo "TMDB_PROXY_FALLBACK=\"direct\"" >> "$CONFIG_FILE"
                     ;;
-                # 任务处理配置
-                TASK_PROCESSING_INTERVAL)
-                    echo "TASK_PROCESSING_INTERVAL=10" >> "$CONFIG_FILE"
-                    ;;
-                STORAGE_TYPE)
-                    echo "STORAGE_TYPE=auto" >> "$CONFIG_FILE"
-                    ;;
                 # 图片下载重试
                 IMAGE_DOWNLOAD_RETRY_COUNT)
                     echo "IMAGE_DOWNLOAD_RETRY_COUNT=2" >> "$CONFIG_FILE"
@@ -246,6 +222,10 @@ validate_config() {
                     ;;
                 IMAGE_DOWNLOAD_MIN_SIZE)
                     echo "IMAGE_DOWNLOAD_MIN_SIZE=1024" >> "$CONFIG_FILE"
+                    ;;
+                # 扫描任务间隔
+                SCAN_TASK_INTERVAL)
+                    echo "SCAN_TASK_INTERVAL=5" >> "$CONFIG_FILE"
                     ;;
             esac
             echo "   ✅ 已添加: $key"
@@ -271,11 +251,46 @@ show_current_config() {
     echo "  ⏱️  最大处理时间: ${MAX_FILE_PROCESSING_TIME}秒"
     echo "  ⏱️  防抖时间: ${DEBOUNCE_TIME}秒"
     echo ""
-    echo "  🎞️  STRM 处理配置:"
-    echo "    STRM 处理: ${ENABLE_STRM:-true}"
-    echo "    ISO.STRM: ${ENABLE_ISO_STRM:-true}"
-    echo "    普通 STRM: ${ENABLE_VIDEO_STRM:-true}"
+
+    # 阶段1：元数据刮削
+    echo "  🎬 阶段1：元数据刮削"
+    local stage1_status="${STAGE1_ENABLED:-true}"
+    if [ "$stage1_status" = "true" ]; then
+        if [ -z "${TMDB_API_KEY:-}" ]; then
+            echo "    状态: ❌ 已启用（TMDB API Key 未配置，功能无法使用）"
+        else
+            echo "    状态: ✅ 已启用"
+        fi
+    else
+        echo "    状态: ⏸️  已禁用"
+    fi
+    echo "    处理范围: NFO 文件 + 海报 + 背景图 + 演员头像"
+    echo "    执行顺序: 阶段1（生成NFO）→ 阶段2（追加视频流）"
+    echo "    API Key: ${TMDB_API_KEY:+(已配置)}"
+    echo "    语言偏好: ${TMDB_LANGUAGE:-zh-CN}"
+    echo "    请求间隔: ${TMDB_REQUEST_INTERVAL:-500}ms"
+    echo "    重试次数: ${TMDB_RETRY_COUNT:-3}"
+    echo "    代理启用: ${TMDB_PROXY_ENABLED:-false}"
+    echo "    代理地址: ${TMDB_PROXY_URL:-(未配置)}"
+    echo "    代理超时: ${TMDB_PROXY_TIMEOUT:-60}秒"
+    echo "    降级策略: ${TMDB_PROXY_FALLBACK:-direct}"
     echo ""
+
+    # 阶段2：媒体信息提取
+    echo "  🎞️  阶段2：媒体信息提取"
+    local stage2_status="${STAGE2_ENABLED:-true}"
+    if [ "$stage2_status" = "true" ]; then
+        if ! command -v ffprobe &> /dev/null; then
+            echo "    状态: ❌ 已启用（FFprobe 未配置，功能无法使用）"
+        else
+            echo "    状态: ✅ 已启用"
+        fi
+    else
+        echo "    状态: ⏸️  已禁用"
+    fi
+    echo "    处理范围: 所有 .strm 文件（含 .iso.strm）"
+    echo ""
+
     echo "  🌐 Alist 集成:"
     echo "    服务器地址: ${ALIST_ADDR:-(未配置)}"
     echo "    API Token: ${ALIST_TOKEN:+(已配置)}"
@@ -287,23 +302,9 @@ show_current_config() {
     echo "    本地分析时长: ${FFPROBE_LOCAL_ANALYZEDURATION:-10M}"
     echo "    本地探测大小: ${FFPROBE_LOCAL_PROBESIZE:-20M}"
     echo ""
-    echo "  🎬 TMDB 元数据刮削:"
-    echo "    启用 NFO: ${ENABLE_NFO:-true}"
-    echo "    API Key: ${TMDB_API_KEY:+(已配置)}"
-    echo "    语言偏好: ${TMDB_LANGUAGE:-zh-CN}"
-    echo "    下载图片: ${DOWNLOAD_IMAGES:-true}"
-    echo "    并行处理: ${PARALLEL_STAGE_PROCESSING:-true}"
-    echo "    请求间隔: ${TMDB_REQUEST_INTERVAL:-500}ms"
-    echo "    重试次数: ${TMDB_RETRY_COUNT:-3}"
-    echo "    代理启用: ${TMDB_PROXY_ENABLED:-false}"
-    echo "    代理地址: ${TMDB_PROXY_URL:-(未配置)}"
-    echo "    代理超时: ${TMDB_PROXY_TIMEOUT:-60}秒"
-    echo "    降级策略: ${TMDB_PROXY_FALLBACK:-direct}"
-    echo ""
     echo "  ⚡ 重试与性能配置:"
     echo "    FFprobe重试: ${FFPROBE_RETRY_COUNT:-3}次 (${FFPROBE_RETRY_INTERVALS:-10 5 3}秒)"
-    echo "    任务处理间隔: ${TASK_PROCESSING_INTERVAL:-10}秒"
-    echo "    存储类型: ${STORAGE_TYPE:-auto}"
+    echo "    扫描任务间隔: ${SCAN_TASK_INTERVAL:-5}秒"
     echo "    图片下载重试: ${IMAGE_DOWNLOAD_RETRY_COUNT:-2}次 (${IMAGE_DOWNLOAD_RETRY_DELAY:-2}秒)"
     echo ""
     echo "  📡 Emby 集成:"
@@ -891,64 +892,90 @@ configure_emby() {
     fi
 }
 
-# 配置 STRM 处理选项
-configure_strm() {
+# 配置阶段1：元数据刮削
+configure_stage1() {
     echo ""
-    echo "🎞️  配置 STRM 文件处理"
+    echo "🎬 配置阶段1：元数据刮削"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "   说明："
-    echo "   • STRM 处理：总开关，控制所有 STRM 文件处理"
-    echo "   • ISO.STRM：处理 .iso.strm 文件（挂载 ISO 提取媒体信息）"
-    echo "   • 普通 STRM：处理普通 .strm 文件（HTTP/Alist/本地路径）"
-    echo ""
-    echo "   当前状态："
-    echo "     STRM 处理: ${ENABLE_STRM:-true}"
-    echo "     ISO.STRM: ${ENABLE_ISO_STRM:-true}"
-    echo "     普通 STRM: ${ENABLE_VIDEO_STRM:-true}"
+    echo "   • 生成 Kodi/Emby 兼容的 NFO 文件"
+    echo "   • 下载海报、背景图和演员头像"
+    echo "   • 需要配置 TMDB API Key（免费注册）"
+    echo "   • API Key 获取：https://www.themoviedb.org/settings/api"
+    echo "   • 执行顺序：阶段1（生成NFO）→ 阶段2（追加视频流）"
     echo ""
 
-    # 配置总开关
-    read -p "   是否启用 STRM 处理？[Y/n]: " enable_strm
-    enable_strm="${enable_strm:-Y}"
-
-    if [[ "$enable_strm" =~ ^[Yy]$ ]]; then
-        # 启用 STRM 处理
-        update_config_line "ENABLE_STRM" "true"
-        ENABLE_STRM="true"
-
-        echo ""
-        echo "   配置具体类型："
-        echo ""
-
-        # 配置 ISO.STRM
-        read -p "   启用 ISO.STRM 处理？[Y/n]: " enable_iso
-        enable_iso="${enable_iso:-Y}"
-        if [[ "$enable_iso" =~ ^[Yy]$ ]]; then
-            update_config_line "ENABLE_ISO_STRM" "true"
-            ENABLE_ISO_STRM="true"
-        else
-            update_config_line "ENABLE_ISO_STRM" "false"
-            ENABLE_ISO_STRM="false"
-        fi
-
-        # 配置普通 STRM
-        read -p "   启用普通 STRM 处理？[Y/n]: " enable_video
-        enable_video="${enable_video:-Y}"
-        if [[ "$enable_video" =~ ^[Yy]$ ]]; then
-            update_config_line "ENABLE_VIDEO_STRM" "true"
-            ENABLE_VIDEO_STRM="true"
-        else
-            update_config_line "ENABLE_VIDEO_STRM" "false"
-            ENABLE_VIDEO_STRM="false"
-        fi
-
-        echo ""
-        echo "   ✅ STRM 处理配置已更新"
+    # 检查 TMDB API Key 依赖
+    local tmdb_ok=false
+    if [ -n "${TMDB_API_KEY:-}" ]; then
+        tmdb_ok=true
+        echo "   ✅ TMDB API Key 已配置"
     else
-        # 禁用 STRM 处理
-        update_config_line "ENABLE_STRM" "false"
-        ENABLE_STRM="false"
-        echo "   ✅ STRM 处理已禁用"
+        echo "   ❌ TMDB API Key 未配置"
+    fi
+
+    echo ""
+    echo "   当前状态: ${STAGE1_ENABLED:-true}"
+    echo "   语言偏好: ${TMDB_LANGUAGE:-zh-CN}"
+    echo ""
+
+    if [ "$tmdb_ok" = false ]; then
+        echo "   ⚠️  警告：TMDB API Key 未配置，无法启用阶段1"
+        echo ""
+        read -p "   是否现在配置 TMDB API Key？[Y/n]: " configure_now
+        configure_now="${configure_now:-Y}"
+
+        if [[ "$configure_now" =~ ^[Yy]$ ]]; then
+            echo ""
+            echo "   📍 TMDB API Key"
+            echo "      获取方式: https://www.themoviedb.org/settings/api"
+            echo "      注册免费账号后，在「设置 → API」中生成 Key"
+            echo ""
+            read -p "      请输入 TMDB API Key: " new_tmdb_key
+
+            if [ -n "$new_tmdb_key" ]; then
+                update_config_line "TMDB_API_KEY" "$new_tmdb_key"
+                TMDB_API_KEY="$new_tmdb_key"
+                tmdb_ok=true
+                echo "   ✅ TMDB API Key 已保存"
+            else
+                echo "   ⚠️  未输入 API Key，无法启用阶段1"
+                echo ""
+                read -p "   按 Enter 返回..."
+                return 0
+            fi
+        else
+            echo "   ℹ️  请稍后在主菜单选择「配置向导 → 配置 TMDB 元数据刮削」"
+            echo ""
+            read -p "   按 Enter 返回..."
+            return 0
+        fi
+    fi
+
+    # 配置开关
+    echo ""
+    local current_enabled="${STAGE1_ENABLED:-true}"
+    local enable_prompt="Y/n"
+    if [ "$current_enabled" != "true" ]; then
+        enable_prompt="y/N"
+    fi
+
+    read -p "   是否启用阶段1（元数据刮削：NFO + 图片）？[$enable_prompt]: " enable_stage1
+
+    if [ "$current_enabled" = "true" ]; then
+        enable_stage1="${enable_stage1:-Y}"
+    else
+        enable_stage1="${enable_stage1:-N}"
+    fi
+
+    if [[ "$enable_stage1" =~ ^[Yy]$ ]]; then
+        update_config_line "STAGE1_ENABLED" "true"
+        STAGE1_ENABLED="true"
+        echo "   ✅ 阶段1已启用（NFO + 图片 + 演员头像）"
+    else
+        update_config_line "STAGE1_ENABLED" "false"
+        STAGE1_ENABLED="false"
+        echo "   ⏸️  阶段1已禁用"
     fi
 
     # 询问是否重启服务
@@ -961,11 +988,99 @@ configure_strm() {
     else
         echo "   ⚠️  配置已更新，但需要应用后才能生效"
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
-            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 3 分钟）"
         else
             echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
         fi
     fi
+}
+
+# 配置阶段2：媒体信息提取
+configure_stage2() {
+    echo ""
+    echo "🎞️  配置阶段2：媒体信息提取"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   说明："
+    echo "   • 处理所有 .strm 文件（含 .iso.strm）"
+    echo "   • 使用 FFprobe 提取媒体信息（分辨率、编码、音轨、字幕等）"
+    echo "   • 追加 <fileinfo> 视频流信息到 NFO 文件"
+    echo "   • 执行顺序：阶段1（生成NFO）→ 阶段2（追加视频流）"
+    echo ""
+
+    # 检查 FFprobe 依赖
+    local ffprobe_ok=false
+    if command -v ffprobe &> /dev/null; then
+        ffprobe_ok=true
+        echo "   ✅ FFprobe 已配置: $(command -v ffprobe)"
+    else
+        echo "   ❌ FFprobe 未配置"
+    fi
+
+    echo ""
+    echo "   当前状态: ${STAGE2_ENABLED:-true}"
+    echo ""
+
+    if [ "$ffprobe_ok" = false ]; then
+        echo "   ⚠️  警告：FFprobe 未配置，无法启用阶段2"
+        echo "   请先在主菜单选择「配置向导 → 重新配置 FFprobe」"
+        echo ""
+        read -p "   按 Enter 返回..."
+        return 0
+    fi
+
+    # 配置开关
+    local current_enabled="${STAGE2_ENABLED:-true}"
+    local enable_prompt="Y/n"
+    if [ "$current_enabled" != "true" ]; then
+        enable_prompt="y/N"
+    fi
+
+    read -p "   是否启用阶段2（媒体信息提取）？[$enable_prompt]: " enable_stage2
+
+    if [ "$current_enabled" = "true" ]; then
+        enable_stage2="${enable_stage2:-Y}"
+    else
+        enable_stage2="${enable_stage2:-N}"
+    fi
+
+    if [[ "$enable_stage2" =~ ^[Yy]$ ]]; then
+        update_config_line "STAGE2_ENABLED" "true"
+        STAGE2_ENABLED="true"
+        echo "   ✅ 阶段2已启用"
+    else
+        update_config_line "STAGE2_ENABLED" "false"
+        STAGE2_ENABLED="false"
+        echo "   ⏸️  阶段2已禁用"
+    fi
+
+    # 询问是否重启服务
+    echo ""
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已更新，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 3 分钟）"
+        else
+            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        fi
+    fi
+}
+
+# 配置 STRM 处理选项（已废弃，保留向后兼容）
+configure_strm() {
+    echo ""
+    echo "⚠️  此配置项已废弃"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   STRM 处理已合并到「阶段2：媒体信息提取」"
+    echo "   请使用配置向导中的新选项："
+    echo "   • 阶段1：元数据刮削（一键开启/关闭）"
+    echo "   • 阶段2：媒体信息提取（一键开启/关闭）"
+    echo ""
+    read -p "   按 Enter 返回..."
 }
 
 # 配置 Alist 集成
@@ -1048,133 +1163,6 @@ configure_alist() {
 }
 
 # 配置 TMDB 元数据刮削
-configure_tmdb() {
-    echo ""
-    echo "🎬 配置 TMDB 元数据刮削"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "   说明："
-    echo "   • 启用后，会生成 Kodi/Emby 兼容的 NFO 文件"
-    echo "   • 需要提供 TMDB API Key（免费注册）"
-    echo "   • API Key 获取方式：https://www.themoviedb.org/settings/api"
-    echo "   • 可下载海报和背景图"
-    echo ""
-    echo "   当前状态："
-    echo "     启用 NFO: ${ENABLE_NFO:-true}"
-    echo "     API Key: ${TMDB_API_KEY:+(已配置)}"
-    echo "     语言偏好: ${TMDB_LANGUAGE:-zh-CN}"
-    echo "     下载图片: ${DOWNLOAD_IMAGES:-true}"
-    echo "     并行处理: ${PARALLEL_STAGE_PROCESSING:-true}"
-    echo ""
-
-    # 询问是否启用
-    local current_enabled="${ENABLE_NFO:-true}"
-    local enable_prompt="Y/n"
-    if [ "$current_enabled" != "true" ]; then
-        enable_prompt="y/N"
-    fi
-
-    read -p "   是否启用 TMDB 元数据刮削？[$enable_prompt]: " enable_nfo
-
-    if [ "$current_enabled" = "true" ]; then
-        enable_nfo="${enable_nfo:-Y}"
-    else
-        enable_nfo="${enable_nfo:-N}"
-    fi
-
-    if [[ "$enable_nfo" =~ ^[Yy]$ ]]; then
-        # 启用 TMDB 集成
-        echo ""
-        echo "   配置 TMDB API："
-        echo ""
-
-        # 配置 API Key
-        echo "   🔑 TMDB API Key"
-        echo "      获取方式: https://www.themoviedb.org/settings/api"
-        if [ -n "${TMDB_API_KEY:-}" ]; then
-            read -p "      请输入 API Key [留空保持当前]: " new_tmdb_key
-            new_tmdb_key="${new_tmdb_key:-$TMDB_API_KEY}"
-        else
-            read -p "      请输入 API Key: " new_tmdb_key
-        fi
-
-        # 验证配置
-        if [ -z "$new_tmdb_key" ]; then
-            echo ""
-            echo "   ❌ API Key 不能为空"
-            echo "   ℹ️  操作已取消"
-            return 1
-        fi
-
-        # 配置语言
-        echo ""
-        echo "   🌐 语言偏好"
-        echo "      zh-CN: 简体中文（推荐）"
-        echo "      en-US: 英语"
-        echo "      ja-JP: 日语"
-        read -p "      请选择语言 [默认: ${TMDB_LANGUAGE:-zh-CN}]: " new_tmdb_lang
-        new_tmdb_lang="${new_tmdb_lang:-${TMDB_LANGUAGE:-zh-CN}}"
-
-        # 配置图片下载
-        echo ""
-        read -p "   是否下载海报和背景图？[Y/n]: " download_images
-        download_images="${download_images:-Y}"
-
-        # 配置并行处理
-        echo ""
-        read -p "   是否启用并行处理（阶段1和阶段2同时执行）？[Y/n]: " parallel_processing
-        parallel_processing="${parallel_processing:-Y}"
-
-        # 保存配置
-        echo ""
-        update_config_line "ENABLE_NFO" "true"
-        update_config_line "TMDB_API_KEY" "$new_tmdb_key"
-        update_config_line "TMDB_LANGUAGE" "$new_tmdb_lang"
-
-        if [[ "$download_images" =~ ^[Yy]$ ]]; then
-            update_config_line "DOWNLOAD_IMAGES" "true"
-            DOWNLOAD_IMAGES="true"
-        else
-            update_config_line "DOWNLOAD_IMAGES" "false"
-            DOWNLOAD_IMAGES="false"
-        fi
-
-        if [[ "$parallel_processing" =~ ^[Yy]$ ]]; then
-            update_config_line "PARALLEL_STAGE_PROCESSING" "true"
-            PARALLEL_STAGE_PROCESSING="true"
-        else
-            update_config_line "PARALLEL_STAGE_PROCESSING" "false"
-            PARALLEL_STAGE_PROCESSING="false"
-        fi
-
-        ENABLE_NFO="true"
-        TMDB_API_KEY="$new_tmdb_key"
-        TMDB_LANGUAGE="$new_tmdb_lang"
-
-        echo "   ✅ TMDB 元数据刮削已启用"
-    else
-        # 禁用 TMDB 集成
-        update_config_line "ENABLE_NFO" "false"
-        ENABLE_NFO="false"
-        echo "   ✅ TMDB 元数据刮削已禁用"
-    fi
-
-    # 询问是否重启服务
-    echo ""
-    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
-    do_restart="${do_restart:-Y}"
-
-    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
-        restart_service
-    else
-        echo "   ⚠️  配置已更新，但需要应用后才能生效"
-        if [ -f "/etc/cron.d/fantastic-probe" ]; then
-            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
-        else
-            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
-        fi
-    fi
-}
-
 # 配置性能与重试参数
 configure_performance() {
     echo ""
@@ -1184,7 +1172,7 @@ configure_performance() {
     echo "   • FFprobe 重试：普通 STRM 文件 FFprobe 失败后的重试机制"
     echo "   • TMDB 速率限制：防止触发 TMDB API 限流（40请求/10秒）"
     echo "   • TMDB 重试：TMDB API 调用失败后的重试机制"
-    echo "   • 任务处理间隔：不同文件之间的等待时间（防止云盘限流）"
+    echo "   • 扫描任务间隔：处理不同 STRM 文件之间的等待时间（防止云盘限流）"
     echo "   • 图片下载重试：海报/背景图下载失败后的重试机制"
     echo ""
     echo "   当前配置："
@@ -1194,8 +1182,7 @@ configure_performance() {
     echo "     TMDB重试次数: ${TMDB_RETRY_COUNT:-3}"
     echo "     TMDB 429错误等待: ${TMDB_RETRY_DELAY_429:-10} 秒"
     echo "     TMDB其他错误等待: ${TMDB_RETRY_DELAY_OTHER:-3} 秒"
-    echo "     任务处理间隔: ${TASK_PROCESSING_INTERVAL:-10} 秒"
-    echo "     存储类型检测: ${STORAGE_TYPE:-auto}"
+    echo "     扫描任务间隔: ${SCAN_TASK_INTERVAL:-5} 秒"
     echo "     图片下载重试: ${IMAGE_DOWNLOAD_RETRY_COUNT:-2} 次"
     echo "     图片重试间隔: ${IMAGE_DOWNLOAD_RETRY_DELAY:-2} 秒"
     echo ""
@@ -1246,24 +1233,16 @@ configure_performance() {
     read -p "      其他错误等待时间(秒) [默认: 3]: " tmdb_delay_other
     tmdb_delay_other="${tmdb_delay_other:-3}"
 
-    # 4. 任务处理间隔配置
+    # 4. 扫描任务间隔配置
     echo ""
-    echo "   4️⃣  任务处理间隔配置"
-    echo "      说明：处理不同文件之间的等待时间（防止云盘限流）"
+    echo "   4️⃣  扫描任务间隔配置"
+    echo "      说明：处理不同 STRM 文件之间的等待时间（防止云盘限流）"
     echo "      推荐值："
-    echo "        • 0-5秒：本地NAS（无限制，快速处理）"
-    echo "        • 10秒：Alist/CloudDrive（当前默认，防止云盘限流）"
-    echo "        • 30秒：ISO处理（等待FUSE缓存）"
-    read -p "      任务处理间隔(秒) [默认: 10]: " task_interval
-    task_interval="${task_interval:-10}"
-
-    echo "      存储类型检测："
-    echo "        • auto：自动检测（推荐，根据ALIST_ADDR判断）"
-    echo "        • local：本地/NAS存储（使用0秒间隔）"
-    echo "        • cloud：云盘存储（使用10秒间隔）"
-    echo "        • fuse：FUSE挂载（使用30秒间隔）"
-    read -p "      存储类型 [默认: auto]: " storage_type
-    storage_type="${storage_type:-auto}"
+    echo "        • 1-3秒：本地NAS（快速处理）"
+    echo "        • 5秒：云盘挂载（默认，防止限流）"
+    echo "        • 10-15秒：慢速网络/FUSE（更保守）"
+    read -p "      扫描任务间隔(秒) [默认: 5]: " scan_interval
+    scan_interval="${scan_interval:-5}"
 
     # 5. 图片下载重试配置
     echo ""
@@ -1285,8 +1264,7 @@ configure_performance() {
     update_config_line "TMDB_RETRY_COUNT" "$tmdb_retry"
     update_config_line "TMDB_RETRY_DELAY_429" "$tmdb_delay_429"
     update_config_line "TMDB_RETRY_DELAY_OTHER" "$tmdb_delay_other"
-    update_config_line "TASK_PROCESSING_INTERVAL" "$task_interval"
-    update_config_line "STORAGE_TYPE" "$storage_type"
+    update_config_line "SCAN_TASK_INTERVAL" "$scan_interval"
     update_config_line "IMAGE_DOWNLOAD_RETRY_COUNT" "$image_retry"
     update_config_line "IMAGE_DOWNLOAD_RETRY_DELAY" "$image_delay"
     update_config_line "IMAGE_DOWNLOAD_MIN_SIZE" "$image_min_size"
@@ -2410,90 +2388,6 @@ reset_single_file_failure() {
 # 子菜单函数
 #==============================================================================
 
-# 失败文件管理菜单
-failure_menu() {
-    while true; do
-        echo ""
-        echo "【故障排查】"
-        echo "  1) 查看失败文件列表"
-        echo "  2) 清空失败缓存"
-        echo "  3) 重置单个文件的失败记录"
-        echo "  4) 清空任务队列（解锁）"
-        echo "  0) 返回主菜单"
-        echo ""
-        read -p "请选择 [0-4]: " fail_choice
-        echo ""
-
-        case "$fail_choice" in
-            1)
-                view_failure_list
-                read -p "按 Enter 继续..."
-                ;;
-            2)
-                clear_failure_cache
-                read -p "按 Enter 继续..."
-                ;;
-            3)
-                reset_single_file_failure
-                read -p "按 Enter 继续..."
-                ;;
-            4)
-                clear_queue
-                read -p "按 Enter 继续..."
-                ;;
-            0)
-                return
-                ;;
-            *)
-                echo "❌ 无效选择"
-                read -p "按 Enter 继续..."
-                ;;
-        esac
-    done
-}
-
-# 服务管理菜单
-service_menu() {
-    while true; do
-        echo ""
-        echo "【服务管理】"
-        echo "  1) 查看服务状态"
-        echo "  2) 启动服务"
-        echo "  3) 停止服务"
-        echo "  4) 重启服务"
-        echo "  0) 返回主菜单"
-        echo ""
-        read -p "请选择 [0-4]: " svc_choice
-        echo ""
-
-        case "$svc_choice" in
-            1)
-                show_service_status
-                read -p "按 Enter 继续..."
-                ;;
-            2)
-                start_service
-                read -p "按 Enter 继续..."
-                ;;
-            3)
-                stop_service
-                read -p "按 Enter 继续..."
-                ;;
-            4)
-                restart_service
-                read -p "按 Enter 继续..."
-                ;;
-            0)
-                return
-                ;;
-            *)
-                echo "❌ 无效选择"
-                read -p "按 Enter 继续..."
-                ;;
-        esac
-    done
-}
-
 # 日志管理菜单
 logs_menu() {
     while true; do
@@ -2525,29 +2419,79 @@ logs_menu() {
     done
 }
 
-# 系统管理菜单
+# 系统管理菜单（合并了服务管理、故障排查、系统更新）
 system_menu() {
     while true; do
         echo ""
         echo "【系统管理】"
-        echo "  1) 检查更新"
-        echo "  2) 安装更新"
-        echo "  3) 卸载服务"
+        echo ""
+        echo "  服务控制："
+        echo "  1) 查看服务状态"
+        echo "  2) 启动服务"
+        echo "  3) 停止服务"
+        echo "  4) 重启服务"
+        echo ""
+        echo "  故障排查："
+        echo "  5) 查看失败文件列表"
+        echo "  6) 清空失败缓存"
+        echo "  7) 重置单个文件的失败记录"
+        echo "  8) 清空任务队列（解锁）"
+        echo ""
+        echo "  系统更新："
+        echo "  9) 检查更新"
+        echo "  10) 安装更新"
+        echo "  11) 卸载服务"
+        echo ""
         echo "  0) 返回主菜单"
         echo ""
-        read -p "请选择 [0-3]: " sys_choice
+        read -p "请选择 [0-11]: " sys_choice
         echo ""
 
         case "$sys_choice" in
+            # 服务控制
             1)
-                check_updates
+                show_service_status
                 read -p "按 Enter 继续..."
                 ;;
             2)
-                install_updates
+                start_service
                 read -p "按 Enter 继续..."
                 ;;
             3)
+                stop_service
+                read -p "按 Enter 继续..."
+                ;;
+            4)
+                restart_service
+                read -p "按 Enter 继续..."
+                ;;
+            # 故障排查
+            5)
+                view_failure_list
+                read -p "按 Enter 继续..."
+                ;;
+            6)
+                clear_failure_cache
+                read -p "按 Enter 继续..."
+                ;;
+            7)
+                reset_single_file_failure
+                read -p "按 Enter 继续..."
+                ;;
+            8)
+                clear_queue
+                read -p "按 Enter 继续..."
+                ;;
+            # 系统更新
+            9)
+                check_updates
+                read -p "按 Enter 继续..."
+                ;;
+            10)
+                install_updates
+                read -p "按 Enter 继续..."
+                ;;
+            11)
                 uninstall_service
                 ;;
             0)
@@ -2571,20 +2515,14 @@ show_menu() {
     echo "║    Fantastic-Probe 管理工具                    ║"
     echo "╚════════════════════════════════════════════════╝"
     echo ""
-    echo "  【配置管理】"
     echo "  1) 查看当前配置"
-    echo "  2) 配置向导（STRM、FFprobe、Emby 等）"
-    echo "  3) 直接编辑配置文件"
-    echo ""
-    echo "  【快捷菜单】"
-    echo "  4) 故障排查"
-    echo "  5) 服务管理"
-    echo "  6) 日志管理"
-    echo "  7) 系统管理（更新、卸载）"
+    echo "  2) 配置向导"
+    echo "  3) 日志管理"
+    echo "  4) 系统管理（安装/更新/卸载）"
     echo ""
     echo "  0) 退出"
     echo ""
-    read -p "请选择操作 [0-7]: " choice
+    read -p "请选择操作 [0-4]: " choice
     echo ""
 
     case "$choice" in
@@ -2597,11 +2535,11 @@ show_menu() {
             while true; do
                 echo ""
                 echo "【配置向导】"
-                echo "  1) 修改 STRM 根目录"
-                echo "  2) 重新配置 FFprobe"
-                echo "  3) 配置 STRM 处理选项"
-                echo "  4) 配置 Alist 集成"
-                echo "  5) 配置 TMDB 元数据刮削"
+                echo "  1) 阶段1：元数据刮削（一键开启/关闭）"
+                echo "  2) 阶段2：媒体信息提取（一键开启/关闭）"
+                echo "  3) 修改 STRM 根目录"
+                echo "  4) 重新配置 FFprobe"
+                echo "  5) 配置 Alist 集成"
                 echo "  6) 配置 TMDB 网络代理"
                 echo "  7) 配置 Emby 媒体库集成"
                 echo "  8) 配置性能与重试参数"
@@ -2612,19 +2550,19 @@ show_menu() {
 
                 case "$config_choice" in
                     1)
-                        change_strm_root
+                        configure_stage1
                         ;;
                     2)
-                        reconfigure_ffprobe
+                        configure_stage2
                         ;;
                     3)
-                        configure_strm
+                        change_strm_root
                         ;;
                     4)
-                        configure_alist
+                        reconfigure_ffprobe
                         ;;
                     5)
-                        configure_tmdb
+                        configure_alist
                         ;;
                     6)
                         configure_tmdb_proxy
@@ -2645,19 +2583,9 @@ show_menu() {
             done
             ;;
         3)
-            edit_config_file
-            read -p "按 Enter 返回菜单..."
-            ;;
-        4)
-            failure_menu
-            ;;
-        5)
-            service_menu
-            ;;
-        6)
             logs_menu
             ;;
-        7)
+        4)
             system_menu
             ;;
         0)
@@ -2666,7 +2594,6 @@ show_menu() {
             ;;
         *)
             echo "❌ 无效选择"
-            read -p "按 Enter 返回菜单..."
             ;;
     esac
 }
