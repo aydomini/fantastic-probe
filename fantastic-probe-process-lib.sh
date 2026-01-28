@@ -14,7 +14,7 @@
 #==============================================================================
 
 # 声明关联数组（Bash 4.0+）
-# 格式：TMDB_ID_CACHE["标题|年份"]="tmdb_id"
+# 格式：TMDB_ID_CACHE[MD5("标题|年份")]="tmdb_id"
 declare -A TMDB_ID_CACHE
 
 #==============================================================================
@@ -1789,8 +1789,10 @@ query_tmdb_movie() {
     fi
 
     # 多轮搜索策略
-    # 生成缓存键
-    local cache_key="${cn_title}|${year}"
+    # 生成缓存键（使用MD5哈希避免特殊字符导致bash解析错误）
+    local cache_key_raw="${cn_title}|${year}"
+    local cache_key
+    cache_key=$(echo -n "$cache_key_raw" | md5sum | awk '{print $1}')
 
     # 检查内存缓存
     if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE["$cache_key"]}" ]]; then
@@ -1926,8 +1928,10 @@ query_tmdb_tv() {
 
     # 如果没有数据，尝试多轮搜索
     if [[ -z "$show_data" ]]; then
-        # 生成缓存键
-        local cache_key="${cn_title}|${year}"
+        # 生成缓存键（使用MD5哈希避免特殊字符导致bash解析错误）
+        local cache_key_raw="${cn_title}|${year}"
+        local cache_key
+        cache_key=$(echo -n "$cache_key_raw" | md5sum | awk '{print $1}')
 
         # 检查内存缓存
         if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE["$cache_key"]}" ]]; then

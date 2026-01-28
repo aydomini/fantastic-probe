@@ -11,7 +11,7 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.3.3"  # 硬编码默认值 - 中文标题 TMDB 查询修复
+VERSION="3.3.4"  # 硬编码默认值 - 中文标题缓存键修复 + 任务间隔优化
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
@@ -442,7 +442,7 @@ scan_and_process() {
 
         # 任务间隔（防止频繁访问网盘触发限流）
         if [ $processed -lt $SCAN_BATCH_SIZE ] && [ $processed -lt $total_pending ]; then
-            sleep 10
+            sleep 5
         fi
     done
 
