@@ -101,6 +101,11 @@ validate_config() {
         "TMDB_RETRY_COUNT"
         "TMDB_RETRY_DELAY_429"
         "TMDB_RETRY_DELAY_OTHER"
+        # TMDB 代理配置
+        "TMDB_PROXY_ENABLED"
+        "TMDB_PROXY_URL"
+        "TMDB_PROXY_TIMEOUT"
+        "TMDB_PROXY_FALLBACK"
         # 任务处理配置
         "TASK_PROCESSING_INTERVAL"
         "STORAGE_TYPE"
@@ -211,6 +216,19 @@ validate_config() {
                     ;;
                 TMDB_RETRY_DELAY_OTHER)
                     echo "TMDB_RETRY_DELAY_OTHER=3" >> "$CONFIG_FILE"
+                    ;;
+                # TMDB 代理配置
+                TMDB_PROXY_ENABLED)
+                    echo "TMDB_PROXY_ENABLED=false" >> "$CONFIG_FILE"
+                    ;;
+                TMDB_PROXY_URL)
+                    echo "TMDB_PROXY_URL=\"\"" >> "$CONFIG_FILE"
+                    ;;
+                TMDB_PROXY_TIMEOUT)
+                    echo "TMDB_PROXY_TIMEOUT=60" >> "$CONFIG_FILE"
+                    ;;
+                TMDB_PROXY_FALLBACK)
+                    echo "TMDB_PROXY_FALLBACK=\"direct\"" >> "$CONFIG_FILE"
                     ;;
                 # 任务处理配置
                 TASK_PROCESSING_INTERVAL)

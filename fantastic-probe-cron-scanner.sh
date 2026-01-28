@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.2.2"  # 硬编码默认值 - 失败缓存全覆盖 + 扫描周期优化
+VERSION="3.3.0"  # 硬编码默认值 - Emby通知优化 + TMDB代理支持
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.2.2")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.3.0")
 fi
 
 #==============================================================================
@@ -352,10 +352,13 @@ process_iso_strm() {
     if [ "${EMBY_ENABLED:-false}" = "true" ]; then
         log_info "[步骤4/4] 通知 Emby 刷新媒体库"
 
-        # 这里需要一个通知 Emby 的函数
-        # 暂时记录日志，实际实现需要调用 Emby API
-        log_info "  通知 Emby 刷新: $(basename "$strm_file")"
-        # TODO: notify_emby_refresh "$strm_file"
+        # 构造 JSON 文件路径
+        local strm_dir="$(dirname "$strm_file")"
+        local strm_name="$(basename "$strm_file" .strm)"
+        local json_file="${strm_dir}/${strm_name}-mediainfo.json"
+
+        # 调用通知函数（来自 process-lib.sh）
+        notify_emby_refresh "$json_file"
     else
         log_info "[步骤4/4] 跳过 Emby 通知（未启用）"
     fi

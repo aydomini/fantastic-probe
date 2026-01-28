@@ -140,6 +140,37 @@ TMDB_RETRY_DELAY_429=10
 # 推荐值：3
 TMDB_RETRY_DELAY_OTHER=3
 
+#------------------------------------------------------------------------------
+# TMDB 网络代理配置（可选）
+#------------------------------------------------------------------------------
+
+# TMDB 代理启用开关
+# 值：true 或 false
+# 说明：启用后，TMDB API 请求和图片下载将通过代理服务器
+TMDB_PROXY_ENABLED=false
+
+# TMDB 代理服务器地址
+# 格式：http://host:port 或 socks5://host:port
+# 示例：
+#   - Clash: http://127.0.0.1:7890
+#   - V2Ray: http://127.0.0.1:10809
+#   - Shadowsocks + Privoxy: http://127.0.0.1:8118
+#   - Shadowsocks SOCKS5: socks5://127.0.0.1:1080
+# 说明：留空则不使用代理
+TMDB_PROXY_URL=""
+
+# TMDB 代理超时时间（秒）
+# 说明：使用代理时的超时时间（通常比直连慢）
+# 推荐值：60秒
+TMDB_PROXY_TIMEOUT=60
+
+# TMDB 代理失败降级策略
+# 值：direct（直连降级）或 fail（直接失败）
+# 说明：代理失败时的处理方式
+#   - direct：代理失败后尝试直连（推荐）
+#   - fail：代理失败直接报错，不尝试直连
+TMDB_PROXY_FALLBACK="direct"
+
 # 并行处理阶段1和阶段2
 # 值：true 或 false
 # 说明：true=同时提取媒体信息和刮削元数据，false=先完成阶段1再做阶段2

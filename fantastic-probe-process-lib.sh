@@ -78,6 +78,12 @@ tmdb_api_call_with_retry() {
     local delay_429="${TMDB_RETRY_DELAY_429:-10}"
     local delay_other="${TMDB_RETRY_DELAY_OTHER:-3}"
 
+    # 代理配置
+    local proxy_enabled="${TMDB_PROXY_ENABLED:-false}"
+    local proxy_url="${TMDB_PROXY_URL:-}"
+    local proxy_timeout="${TMDB_PROXY_TIMEOUT:-60}"
+    local proxy_fallback="${TMDB_PROXY_FALLBACK:-direct}"
+
     local retry_count=0
 
     while [ $retry_count -lt $max_retries ]; do
@@ -92,9 +98,26 @@ tmdb_api_call_with_retry() {
         local response
         local http_code
 
+        # 构建 curl 参数
+        local curl_opts=(-s -w "%{http_code}" -o)
+        local current_timeout="$timeout"
+        local use_proxy=false
+
+        # 判断是否使用代理
+        if [ "$proxy_enabled" = "true" ] && [ -n "$proxy_url" ]; then
+            curl_opts+=(--proxy "$proxy_url")
+            current_timeout="$proxy_timeout"
+            use_proxy=true
+            if [ $retry_count -eq 0 ]; then
+                log_debug "  使用代理: $proxy_url"
+            fi
+        fi
+
+        curl_opts+=(--max-time "$current_timeout")
+
         # 使用临时文件存储响应
         local temp_response=$(mktemp)
-        http_code=$(curl -s -w "%{http_code}" -o "$temp_response" --max-time "$timeout" "$url" 2>&1)
+        http_code=$(curl "${curl_opts[@]}" "$temp_response" "$url" 2>&1)
         local curl_exit=$?
         response=$(cat "$temp_response" 2>/dev/null || echo "{}")
         rm -f "$temp_response"
@@ -102,12 +125,38 @@ tmdb_api_call_with_retry() {
         # 检查curl是否成功
         if [ $curl_exit -ne 0 ]; then
             log_warn "  ${error_msg}失败：网络错误（退出码: $curl_exit）"
-            retry_count=$((retry_count + 1))
-            if [ $retry_count -lt $max_retries ]; then
-                log_debug "  等待${delay_other}秒后重试..."
-                sleep "$delay_other"
+
+            # 代理失败降级逻辑
+            if [ "$use_proxy" = true ] && [ "$proxy_fallback" = "direct" ]; then
+                log_warn "  代理失败，尝试直连..."
+
+                # 使用临时文件存储响应
+                temp_response=$(mktemp)
+                http_code=$(curl -s -w "%{http_code}" -o "$temp_response" --max-time "$timeout" "$url" 2>&1)
+                curl_exit=$?
+                response=$(cat "$temp_response" 2>/dev/null || echo "{}")
+                rm -f "$temp_response"
+
+                if [ $curl_exit -eq 0 ]; then
+                    log_info "  ✅ 直连成功"
+                    # 继续处理响应
+                else
+                    log_warn "  直连也失败（退出码: $curl_exit）"
+                    retry_count=$((retry_count + 1))
+                    if [ $retry_count -lt $max_retries ]; then
+                        log_debug "  等待${delay_other}秒后重试..."
+                        sleep "$delay_other"
+                    fi
+                    continue
+                fi
+            else
+                retry_count=$((retry_count + 1))
+                if [ $retry_count -lt $max_retries ]; then
+                    log_debug "  等待${delay_other}秒后重试..."
+                    sleep "$delay_other"
+                fi
+                continue
             fi
-            continue
         fi
 
         # 检查HTTP状态码
@@ -799,8 +848,7 @@ process_iso_strm_full() {
 
     log_info "  视频流: $video_count, 音频流: $audio_count, 字幕流: $subtitle_count"
 
-    # 通知 Emby 刷新媒体库（如果已启用）
-    notify_emby_refresh "$json_file"
+    # Emby 通知已移至 Cron 扫描器步骤4（阶段2完成后统一通知）
 
     return 0
 }
@@ -1557,8 +1605,7 @@ process_video_strm_full() {
 
     log_info "  视频流: $video_count, 音频流: $audio_count, 字幕流: $subtitle_count"
 
-    # 通知 Emby 刷新媒体库
-    notify_emby_refresh "$json_file"
+    # Emby 通知已移至 Cron 扫描器步骤4（阶段2完成后统一通知）
 
     return 0
 }
@@ -2518,6 +2565,13 @@ download_image_with_retry() {
     local max_retries="${IMAGE_DOWNLOAD_RETRY_COUNT:-2}"
     local retry_delay="${IMAGE_DOWNLOAD_RETRY_DELAY:-2}"
     local min_size="${IMAGE_DOWNLOAD_MIN_SIZE:-1024}"
+
+    # 代理配置
+    local proxy_enabled="${TMDB_PROXY_ENABLED:-false}"
+    local proxy_url="${TMDB_PROXY_URL:-}"
+    local proxy_timeout="${TMDB_PROXY_TIMEOUT:-60}"
+    local proxy_fallback="${TMDB_PROXY_FALLBACK:-direct}"
+
     local retry_count=0
 
     while [ $retry_count -le $max_retries ]; do
@@ -2528,8 +2582,22 @@ download_image_with_retry() {
 
         log_debug "  下载${description}（尝试$((retry_count + 1))/$((max_retries + 1))）: $image_url"
 
+        # 构建 curl 参数
+        local curl_opts=(-s -o "$output_file")
+        local current_timeout="$timeout"
+        local use_proxy=false
+
+        # 判断是否使用代理
+        if [ "$proxy_enabled" = "true" ] && [ -n "$proxy_url" ]; then
+            curl_opts+=(--proxy "$proxy_url")
+            current_timeout="$proxy_timeout"
+            use_proxy=true
+        fi
+
+        curl_opts+=(--max-time "$current_timeout" "$image_url")
+
         # 下载图片
-        curl -s --max-time "$timeout" -o "$output_file" "$image_url" 2>&1
+        curl "${curl_opts[@]}" 2>&1
         local curl_exit=$?
 
         # 验证下载结果
@@ -2542,6 +2610,27 @@ download_image_with_retry() {
             else
                 log_warn "  ⚠️  ${description}文件过小（${file_size}字节 < ${min_size}字节），视为下载失败"
                 rm -f "$output_file"
+            fi
+        else
+            # 代理失败降级逻辑
+            if [ "$use_proxy" = true ] && [ "$proxy_fallback" = "direct" ] && [ $retry_count -eq 0 ]; then
+                log_warn "  代理下载失败，尝试直连..."
+
+                # 直连下载
+                curl -s --max-time "$timeout" -o "$output_file" "$image_url" 2>&1
+                curl_exit=$?
+
+                if [[ $curl_exit -eq 0 && -f "$output_file" ]]; then
+                    local file_size=$(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null || echo "0")
+
+                    if [[ "$file_size" -ge "$min_size" ]]; then
+                        log_success "  ✅ ${description}下载完成（直连成功，大小: ${file_size}字节）"
+                        return 0
+                    else
+                        log_warn "  ⚠️  ${description}文件过小（${file_size}字节 < ${min_size}字节），视为下载失败"
+                        rm -f "$output_file"
+                    fi
+                fi
             fi
         fi
 

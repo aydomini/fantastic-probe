@@ -11,6 +11,19 @@
 
 ---
 
+## [3.3.0] - 2026-01-28
+
+### 新增
+- **TMDB 网络代理支持**：新增 4 个配置项（TMDB_PROXY_ENABLED、TMDB_PROXY_URL、TMDB_PROXY_TIMEOUT、TMDB_PROXY_FALLBACK），支持 HTTP/HTTPS/SOCKS5 代理，解决大陆地区访问超时问题
+
+### 改进
+- **Emby 通知时机优化**：延迟到阶段 2（NFO + 图片）完成后统一通知，确保首次刷新即可获取完整元数据
+
+### 配置项
+- **TMDB 代理**：TMDB_PROXY_ENABLED、TMDB_PROXY_URL、TMDB_PROXY_TIMEOUT、TMDB_PROXY_FALLBACK
+
+---
+
 ## [3.2.2] - 2026-01-28
 
 ### 修复
