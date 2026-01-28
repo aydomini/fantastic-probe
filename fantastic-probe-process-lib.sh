@@ -10,6 +10,145 @@
 # 使用方式: source fantastic-probe-process-lib.sh
 
 #==============================================================================
+# 全局变量 - TMDB ID 内存缓存
+#==============================================================================
+
+# 声明关联数组（Bash 4.0+）
+# 格式：TMDB_ID_CACHE["标题|年份"]="tmdb_id"
+declare -A TMDB_ID_CACHE
+
+#==============================================================================
+# 全局变量 - TMDB 速率限制
+#==============================================================================
+
+# 上次TMDB请求时间戳（毫秒）
+LAST_TMDB_REQUEST_TIME=0
+
+#==============================================================================
+# TMDB 速率限制包装函数
+#==============================================================================
+# 功能：确保TMDB API调用之间有足够间隔，防止触发速率限制
+# 参数：无
+# 返回：无
+#==============================================================================
+
+tmdb_rate_limit() {
+    local interval_ms="${TMDB_REQUEST_INTERVAL:-500}"
+
+    # 获取当前时间戳（毫秒）
+    local current_time=$(date +%s%3N 2>/dev/null || echo "0")
+
+    # 如果date不支持%3N（毫秒），回退到秒级
+    if [[ "$current_time" == "0" || "$current_time" == *"%3N"* ]]; then
+        current_time=$(($(date +%s) * 1000))
+    fi
+
+    local elapsed=$((current_time - LAST_TMDB_REQUEST_TIME))
+
+    if [ $elapsed -lt $interval_ms ] && [ $LAST_TMDB_REQUEST_TIME -gt 0 ]; then
+        local sleep_time=$(awk "BEGIN {printf \"%.3f\", ($interval_ms - $elapsed) / 1000}")
+        log_debug "  TMDB速率限制：等待 ${sleep_time}秒"
+        sleep "$sleep_time"
+    fi
+
+    # 更新上次请求时间
+    LAST_TMDB_REQUEST_TIME=$(date +%s%3N 2>/dev/null || echo "$(($(date +%s) * 1000))")
+    if [[ "$LAST_TMDB_REQUEST_TIME" == *"%3N"* ]]; then
+        LAST_TMDB_REQUEST_TIME=$(($(date +%s) * 1000))
+    fi
+}
+
+#==============================================================================
+# TMDB API 调用重试包装函数
+#==============================================================================
+# 功能：带重试机制的TMDB API调用，自动处理429错误和网络抖动
+# 参数：
+#   $1: API URL
+#   $2: 错误提示信息
+# 返回：
+#   输出：API响应JSON
+#   退出码：0=成功，1=失败
+#==============================================================================
+
+tmdb_api_call_with_retry() {
+    local url="$1"
+    local error_msg="${2:-TMDB API调用}"
+    local timeout="${TMDB_TIMEOUT:-30}"
+    local max_retries="${TMDB_RETRY_COUNT:-3}"
+    local delay_429="${TMDB_RETRY_DELAY_429:-10}"
+    local delay_other="${TMDB_RETRY_DELAY_OTHER:-3}"
+
+    local retry_count=0
+
+    while [ $retry_count -lt $max_retries ]; do
+        if [ $retry_count -gt 0 ]; then
+            log_debug "  ${error_msg}：第${retry_count}次重试"
+        fi
+
+        # 速率限制
+        tmdb_rate_limit
+
+        # API调用
+        local response
+        local http_code
+
+        # 使用临时文件存储响应
+        local temp_response=$(mktemp)
+        http_code=$(curl -s -w "%{http_code}" -o "$temp_response" --max-time "$timeout" "$url" 2>&1)
+        local curl_exit=$?
+        response=$(cat "$temp_response" 2>/dev/null || echo "{}")
+        rm -f "$temp_response"
+
+        # 检查curl是否成功
+        if [ $curl_exit -ne 0 ]; then
+            log_warn "  ${error_msg}失败：网络错误（退出码: $curl_exit）"
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                log_debug "  等待${delay_other}秒后重试..."
+                sleep "$delay_other"
+            fi
+            continue
+        fi
+
+        # 检查HTTP状态码
+        if [[ "$http_code" == "200" ]]; then
+            # 验证JSON有效性
+            if echo "$response" | jq empty 2>/dev/null; then
+                echo "$response"
+                return 0
+            else
+                log_warn "  ${error_msg}失败：响应JSON无效"
+                retry_count=$((retry_count + 1))
+                if [ $retry_count -lt $max_retries ]; then
+                    sleep "$delay_other"
+                fi
+                continue
+            fi
+        elif [[ "$http_code" == "429" ]]; then
+            log_warn "  ${error_msg}失败：触发速率限制（429 Too Many Requests）"
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                log_warn "  等待${delay_429}秒后重试（速率限制恢复）..."
+                sleep "$delay_429"
+            fi
+            continue
+        else
+            log_warn "  ${error_msg}失败：HTTP $http_code"
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                sleep "$delay_other"
+            fi
+            continue
+        fi
+    done
+
+    # 所有重试失败
+    log_error "  ${error_msg}失败（已重试${max_retries}次）"
+    echo "{}"
+    return 1
+}
+
+#==============================================================================
 # 通知 Emby 刷新媒体库
 #==============================================================================
 
@@ -667,7 +806,7 @@ process_iso_strm_full() {
 }
 
 #==============================================================================
-# STRM 文件解析和处理模块（新增 - v3.2.0）
+# STRM 文件解析和处理模块
 #==============================================================================
 
 #------------------------------------------------------------------------------
@@ -1145,43 +1284,67 @@ analyze_http_media() {
     local timeout="${FFPROBE_TIMEOUT:-300}"
     local analyzeduration="${FFPROBE_HTTP_ANALYZEDURATION:-1M}"
     local probesize="${FFPROBE_HTTP_PROBESIZE:-5M}"
+    local max_retries="${FFPROBE_RETRY_COUNT:-3}"
+    local retry_intervals="${FFPROBE_RETRY_INTERVALS:-10 5 3}"
 
     log_info "  开始远程分析 HTTP 媒体..."
     log_debug "  URL: ${url:0:80}..."
     log_debug "  参数: analyzeduration=$analyzeduration, probesize=$probesize, timeout=${timeout}s"
 
-    # FFprobe 远程分析（优化参数，模仿 Emby 行为）
-    local ffprobe_output
-    ffprobe_output=$(timeout "$timeout" \
-        "$FFPROBE" -v quiet -print_format json \
-        -show_streams -show_format \
-        -analyzeduration "$analyzeduration" \
-        -probesize "$probesize" \
-        -fflags nobuffer \
-        -fflags +fastseek \
-        "$url" 2>&1)
+    # 将重试间隔转换为数组
+    local intervals_array=($retry_intervals)
+    local retry_count=0
 
-    local exit_code=$?
+    while [ $retry_count -lt $max_retries ]; do
+        if [ $retry_count -gt 0 ]; then
+            local wait_index=$((retry_count - 1))
+            local wait_time=${intervals_array[$wait_index]:-3}
+            log_warn "  HTTP分析第${retry_count}次失败，等待${wait_time}秒后重试..."
+            sleep "$wait_time"
+        fi
 
-    if [[ $exit_code -eq 124 ]]; then
-        log_error "  FFprobe 远程分析超时（${timeout}s）"
-        return 1
-    elif [[ $exit_code -ne 0 ]]; then
-        log_error "  FFprobe 远程分析失败（退出码: $exit_code）"
-        log_debug "  错误输出: $ffprobe_output"
-        return 1
-    fi
+        log_info "  执行FFprobe（尝试$((retry_count + 1))/$max_retries）..."
 
-    # 验证输出有效性
-    if [[ -z "$ffprobe_output" ]] || ! echo "$ffprobe_output" | jq -e '.streams' >/dev/null 2>&1; then
-        log_error "  FFprobe 输出无效或为空"
-        return 1
-    fi
+        # FFprobe 远程分析（优化参数，模仿 Emby 行为）
+        local ffprobe_output
+        ffprobe_output=$(timeout "$timeout" \
+            "$FFPROBE" -v quiet -print_format json \
+            -show_streams -show_format \
+            -analyzeduration "$analyzeduration" \
+            -probesize "$probesize" \
+            -fflags nobuffer \
+            -fflags +fastseek \
+            "$url" 2>&1)
 
-    log_success "  ✅ 远程媒体分析完成"
+        local exit_code=$?
 
-    echo "$ffprobe_output"
-    return 0
+        if [[ $exit_code -eq 124 ]]; then
+            log_error "  FFprobe 远程分析超时（${timeout}s）"
+            retry_count=$((retry_count + 1))
+            continue
+        elif [[ $exit_code -ne 0 ]]; then
+            log_error "  FFprobe 远程分析失败（退出码: $exit_code）"
+            log_debug "  错误输出: ${ffprobe_output:0:200}"
+            retry_count=$((retry_count + 1))
+            continue
+        fi
+
+        # 验证输出有效性
+        if [[ -z "$ffprobe_output" ]] || ! echo "$ffprobe_output" | jq -e '.streams' >/dev/null 2>&1; then
+            log_error "  FFprobe 输出无效或为空"
+            retry_count=$((retry_count + 1))
+            continue
+        fi
+
+        log_success "  ✅ 远程媒体分析完成（尝试$((retry_count + 1))/$max_retries）"
+
+        echo "$ffprobe_output"
+        return 0
+    done
+
+    # 所有重试失败
+    log_error "  HTTP媒体分析失败（已重试${max_retries}次）"
+    return 1
 }
 
 #------------------------------------------------------------------------------
@@ -1199,41 +1362,65 @@ analyze_local_media() {
     local timeout="${FFPROBE_TIMEOUT:-300}"
     local analyzeduration="${FFPROBE_LOCAL_ANALYZEDURATION:-10M}"
     local probesize="${FFPROBE_LOCAL_PROBESIZE:-20M}"
+    local max_retries="${FFPROBE_RETRY_COUNT:-3}"
+    local retry_intervals="${FFPROBE_RETRY_INTERVALS:-10 5 3}"
 
     log_info "  开始分析本地媒体..."
     log_debug "  路径: $path"
     log_debug "  参数: analyzeduration=$analyzeduration, probesize=$probesize"
 
-    # FFprobe 本地分析（优化参数）
-    local ffprobe_output
-    ffprobe_output=$(timeout "$timeout" \
-        "$FFPROBE" -v quiet -print_format json \
-        -show_streams -show_format \
-        -analyzeduration "$analyzeduration" \
-        -probesize "$probesize" \
-        "$path" 2>&1)
+    # 将重试间隔转换为数组
+    local intervals_array=($retry_intervals)
+    local retry_count=0
 
-    local exit_code=$?
+    while [ $retry_count -lt $max_retries ]; do
+        if [ $retry_count -gt 0 ]; then
+            local wait_index=$((retry_count - 1))
+            local wait_time=${intervals_array[$wait_index]:-3}
+            log_warn "  本地分析第${retry_count}次失败，等待${wait_time}秒后重试..."
+            sleep "$wait_time"
+        fi
 
-    if [[ $exit_code -eq 124 ]]; then
-        log_error "  FFprobe 分析超时（${timeout}s）"
-        return 1
-    elif [[ $exit_code -ne 0 ]]; then
-        log_error "  FFprobe 分析失败（退出码: $exit_code）"
-        log_debug "  错误输出: $ffprobe_output"
-        return 1
-    fi
+        log_info "  执行FFprobe（尝试$((retry_count + 1))/$max_retries）..."
 
-    # 验证输出有效性
-    if [[ -z "$ffprobe_output" ]] || ! echo "$ffprobe_output" | jq -e '.streams' >/dev/null 2>&1; then
-        log_error "  FFprobe 输出无效或为空"
-        return 1
-    fi
+        # FFprobe 本地分析（优化参数）
+        local ffprobe_output
+        ffprobe_output=$(timeout "$timeout" \
+            "$FFPROBE" -v quiet -print_format json \
+            -show_streams -show_format \
+            -analyzeduration "$analyzeduration" \
+            -probesize "$probesize" \
+            "$path" 2>&1)
 
-    log_success "  ✅ 本地媒体分析完成"
+        local exit_code=$?
 
-    echo "$ffprobe_output"
-    return 0
+        if [[ $exit_code -eq 124 ]]; then
+            log_error "  FFprobe 分析超时（${timeout}s）"
+            retry_count=$((retry_count + 1))
+            continue
+        elif [[ $exit_code -ne 0 ]]; then
+            log_error "  FFprobe 分析失败（退出码: $exit_code）"
+            log_debug "  错误输出: ${ffprobe_output:0:200}"
+            retry_count=$((retry_count + 1))
+            continue
+        fi
+
+        # 验证输出有效性
+        if [[ -z "$ffprobe_output" ]] || ! echo "$ffprobe_output" | jq -e '.streams' >/dev/null 2>&1; then
+            log_error "  FFprobe 输出无效或为空"
+            retry_count=$((retry_count + 1))
+            continue
+        fi
+
+        log_success "  ✅ 本地媒体分析完成（尝试$((retry_count + 1))/$max_retries）"
+
+        echo "$ffprobe_output"
+        return 0
+    done
+
+    # 所有重试失败
+    log_error "  本地媒体分析失败（已重试${max_retries}次）"
+    return 1
 }
 
 #------------------------------------------------------------------------------
@@ -1377,7 +1564,7 @@ process_video_strm_full() {
 }
 
 #==============================================================================
-# TMDB 元数据刮削模块（阶段2 - v3.2.0）
+# TMDB 元数据刮削模块
 #==============================================================================
 
 #------------------------------------------------------------------------------
@@ -1394,19 +1581,27 @@ extract_metadata_from_filename() {
 
     log_debug "  解析文件名: $filename"
 
-    # 提取 tmdbid（如果存在）
+    # 提取 tmdbid（从完整路径提取，支持多种格式）
     local tmdbid=""
+    # 格式1: [tmdbid-12345]
     if [[ "$filename" =~ \[tmdbid-([0-9]+)\] ]]; then
         tmdbid="${BASH_REMATCH[1]}"
-        log_info "  ✅ 从文件名提取 TMDB ID: $tmdbid"
+        log_info "  ✅ 从文件名提取 TMDB ID: $tmdbid (格式1)"
+    # 格式2: {tmdbid=12345} 或 {tmdb-12345} 或 {tmdb=12345}
+    elif [[ "$filename" =~ \{tmdb(id)?[=-]([0-9]+)\} ]]; then
+        tmdbid="${BASH_REMATCH[2]}"
+        log_info "  ✅ 从文件名提取 TMDB ID: $tmdbid (格式2)"
     fi
 
-    # 提取年份（支持多种格式）
+    # 提取年份（从完整路径提取，支持多种格式）
     local year=""
     if [[ "$filename" =~ \(([0-9]{4})\) ]] || [[ "$filename" =~ \.([0-9]{4})\. ]]; then
         year="${BASH_REMATCH[1]}"
         log_debug "  提取年份: $year"
     fi
+
+    # 移除路径部分，只保留文件名（处理完整路径的情况）
+    filename=$(basename "$filename")
 
     # 提取季集信息（如果是剧集）
     local season=""
@@ -1420,17 +1615,20 @@ extract_metadata_from_filename() {
     # 提取标题（移除年份、质量标签、tmdbid等）
     local title="$filename"
 
-    # 移除 tmdbid
+    # 移除 tmdbid（支持多种格式）
     title=$(echo "$title" | sed -E 's/\s*-?\s*\[tmdbid-[0-9]+\]//g')
+    title=$(echo "$title" | sed -E 's/\s*\{tmdb(id)?[=-][0-9]+\}//g')
 
-    # 移除年份
-    title=$(echo "$title" | sed -E 's/\s*[\(\.]?[0-9]{4}[\)\.]?//g')
+    # 移除年份（只匹配括号或点号包围的年份，避免误匹配1080p等）
+    # 支持格式：(2023) [2023] .2023.
+    title=$(echo "$title" | sed -E 's/\s*\([0-9]{4}\)//g; s/\s*\[[0-9]{4}\]//g; s/\.[0-9]{4}\./ /g')
 
     # 移除季集信息
     title=$(echo "$title" | sed -E 's/[Ss][0-9]{1,2}[Ee][0-9]{1,2}.*//g')
 
-    # 移除质量标签
-    title=$(echo "$title" | sed -E 's/(1080p|720p|2160p|4K|BluRay|WEB-DL|HDTV|BDRip|DVDRip|x264|x265|HEVC).*//i')
+    # 移除质量标签及之后的所有内容
+    # 补充完整的质量标签列表：分辨率、格式、编码、HDR、音频、来源等
+    title=$(echo "$title" | sed -E 's/[-._[:space:]]+(1080p|720p|2160p|4K|8K|UHD|HDR|HDR10|HDR10\+|DoVi|DV|HLG|BluRay|Blu-ray|BDRip|DVDRip|BRRip|REMUX|WEB-DL|WEBDL|WEB|HDTV|x264|x265|H\.264|H\.265|HEVC|AVC|10bit|8bit|DD|DDP|DD\+|TrueHD|Atmos|DTS|DTS-HD|LPCM|AAC|AC3|FLAC|SDR|iTunes|Amazon|AMZN|Netflix|NF|Hulu|Disney|AppleTV|HBO|MAX).*//i')
 
     # 替换分隔符为空格
     title=$(echo "$title" | sed -E 's/[\.\-_]+/ /g')
@@ -1438,10 +1636,42 @@ extract_metadata_from_filename() {
     # 去除首尾空格
     title=$(echo "$title" | xargs)
 
-    log_info "  解析结果: 标题='$title', 年份='$year', TMDB ID='$tmdbid', 季='$season', 集='$episode'"
+    # 移除末尾可能残留的分隔符
+    title=$(echo "$title" | sed -E 's/[-._[:space:]]+$//')
 
-    # 输出格式：title|year|tmdbid|season|episode
-    echo "${title}|${year}|${tmdbid}|${season}|${episode}"
+    # 分离中文名和英文名
+    local cn_title=""
+    local en_title=""
+
+    # 检查是否包含非ASCII字符（可能是中文）
+    if echo "$title" | LC_ALL=C grep -q '[^[:print:][:space:]]'; then
+        # 包含非ASCII字符，尝试分离中英文
+        # 使用空格分割，假设中文在前，英文在后
+        local parts=($title)
+
+        # 遍历每个部分，分类到中文或英文
+        for part in "${parts[@]}"; do
+            if echo "$part" | LC_ALL=C grep -q '[^[:print:][:space:]]'; then
+                # 包含非ASCII字符，归类为中文
+                cn_title="$cn_title $part"
+            else
+                # 纯ASCII字符，归类为英文
+                en_title="$en_title $part"
+            fi
+        done
+
+        # 去除首尾空格
+        cn_title=$(echo "$cn_title" | xargs)
+        en_title=$(echo "$en_title" | xargs)
+    else
+        # 纯ASCII标题
+        en_title="$title"
+    fi
+
+    log_info "  解析结果: 中文标题='$cn_title', 英文标题='$en_title', 年份='$year', TMDB ID='$tmdbid', 季='$season', 集='$episode'"
+
+    # 输出格式：cn_title|en_title|year|tmdbid|season|episode
+    echo "${cn_title}|${en_title}|${year}|${tmdbid}|${season}|${episode}"
     return 0
 }
 
@@ -1479,12 +1709,12 @@ urlencode() {
 #------------------------------------------------------------------------------
 
 query_tmdb_movie() {
-    local title="$1"
-    local year="${2:-}"
-    local tmdb_id="${3:-}"
+    local cn_title="$1"
+    local en_title="$2"
+    local year="${3:-}"
+    local tmdb_id="${4:-}"
     local api_key="${TMDB_API_KEY}"
     local language="${TMDB_LANGUAGE:-zh-CN}"
-    local timeout="${TMDB_TIMEOUT:-30}"
 
     if [[ -z "$api_key" ]]; then
         log_error "  TMDB API Key 未配置"
@@ -1493,79 +1723,136 @@ query_tmdb_movie() {
 
     local tmdb_data=""
 
-    # 如果有 tmdb_id，直接查询
+    # 如果有 tmdb_id，直接查询（最高优先级）
     if [[ -n "$tmdb_id" ]]; then
         log_info "  使用 TMDB ID 查询: $tmdb_id"
 
-        tmdb_data=$(curl -s --max-time "$timeout" \
-            "https://api.themoviedb.org/3/movie/${tmdb_id}?api_key=${api_key}&language=${language}")
+        tmdb_data=$(tmdb_api_call_with_retry \
+            "https://api.themoviedb.org/3/movie/${tmdb_id}?api_key=${api_key}&language=${language}" \
+            "通过ID查询电影")
 
-        if [[ $? -eq 0 ]] && echo "$tmdb_data" | jq -e '.id' >/dev/null 2>&1; then
+        if [[ "$tmdb_data" != "{}" ]] && echo "$tmdb_data" | jq -e '.id' >/dev/null 2>&1; then
             log_success "  ✅ TMDB 查询成功（ID: $tmdb_id）"
             echo "$tmdb_data"
             return 0
         else
             log_warn "  ⚠️  TMDB ID 查询失败，尝试搜索"
+            tmdb_data=""
         fi
     fi
 
-    # 搜索电影
-    log_info "  搜索 TMDB 电影: $title${year:+ ($year)}"
+    # 多轮搜索策略
+    # 生成缓存键
+    local cache_key="${cn_title}|${year}"
 
-    local encoded_title=$(urlencode "$title")
-    local search_url="https://api.themoviedb.org/3/search/movie?api_key=${api_key}&language=${language}&query=${encoded_title}"
+    # 检查内存缓存
+    if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE[$cache_key]}" ]]; then
+        tmdb_id="${TMDB_ID_CACHE[$cache_key]}"
+        log_success "  ✅ 从内存缓存获取 TMDB ID: $tmdb_id"
 
-    if [[ -n "$year" ]]; then
-        search_url="${search_url}&year=${year}"
+        # 用缓存的 ID 查询
+        tmdb_data=$(tmdb_api_call_with_retry \
+            "https://api.themoviedb.org/3/movie/${tmdb_id}?api_key=${api_key}&language=${language}" \
+            "通过缓存ID查询电影")
+
+        if [[ "$tmdb_data" != "{}" ]] && echo "$tmdb_data" | jq -e '.id' >/dev/null 2>&1; then
+            log_debug "  缓存 ID 查询成功"
+            echo "$tmdb_data"
+            return 0
+        else
+            log_warn "  ⚠️  缓存 ID 失效，重新搜索"
+            tmdb_data=""
+        fi
     fi
 
-    local search_result=$(curl -s --max-time "$timeout" "$search_url")
+    # 如果缓存也没有，执行搜索
+    local search_titles=()
 
-    if [[ $? -ne 0 ]]; then
-        log_error "  TMDB API 请求失败"
+    # 优先使用中文名（如果有）
+    if [[ -n "$cn_title" ]]; then
+        search_titles+=("$cn_title")
+        log_debug "  添加搜索词: $cn_title（中文）"
+    fi
+
+    # 其次使用英文名（如果有且与中文名不同）
+    if [[ -n "$en_title" && "$en_title" != "$cn_title" ]]; then
+        search_titles+=("$en_title")
+        log_debug "  添加搜索词: $en_title（英文）"
+    fi
+
+    # 如果都没有，返回失败
+    if [[ ${#search_titles[@]} -eq 0 ]]; then
+        log_error "  没有可用的搜索标题"
         return 1
     fi
 
-    # 提取第一个结果
-    tmdb_data=$(echo "$search_result" | jq -r '.results[0] // empty')
+    # 依次尝试每个搜索词
+    for search_title in "${search_titles[@]}"; do
+        log_info "  搜索 TMDB 电影: $search_title${year:+ ($year)}"
 
-    if [[ -z "$tmdb_data" || "$tmdb_data" == "null" ]]; then
-        log_warn "  ⚠️  TMDB 未找到匹配结果: $title"
-        return 1
-    fi
+        local encoded_title=$(urlencode "$search_title")
+        local search_url="https://api.themoviedb.org/3/search/movie?api_key=${api_key}&language=${language}&query=${encoded_title}"
 
-    local found_title=$(echo "$tmdb_data" | jq -r '.title')
-    local found_id=$(echo "$tmdb_data" | jq -r '.id')
+        if [[ -n "$year" ]]; then
+            search_url="${search_url}&year=${year}"
+        fi
 
-    log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id)"
+        local search_result
+        search_result=$(tmdb_api_call_with_retry "$search_url" "搜索电影: $search_title")
 
-    echo "$tmdb_data"
-    return 0
+        if [[ "$search_result" == "{}" ]]; then
+            log_warn "  ⚠️  TMDB API 请求失败: $search_title"
+            continue
+        fi
+
+        # 提取第一个结果
+        tmdb_data=$(echo "$search_result" | jq -r '.results[0] // empty')
+
+        if [[ -n "$tmdb_data" && "$tmdb_data" != "null" ]]; then
+            local found_title=$(echo "$tmdb_data" | jq -r '.title')
+            local found_id=$(echo "$tmdb_data" | jq -r '.id')
+
+            # 存入内存缓存
+            TMDB_ID_CACHE[$cache_key]="$found_id"
+            log_debug "  缓存 TMDB ID: $cache_key → $found_id"
+
+            log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id, 搜索词: $search_title)"
+            echo "$tmdb_data"
+            return 0
+        else
+            log_warn "  ⚠️  TMDB 未找到匹配结果: $search_title"
+        fi
+    done
+
+    # 所有搜索词都失败
+    log_error "  TMDB 搜索失败，所有搜索词均未匹配"
+    return 1
 }
 
 #------------------------------------------------------------------------------
 # 查询 TMDB 电视剧元数据
 #------------------------------------------------------------------------------
 # 参数：
-#   $1: 标题
-#   $2: 年份（可选）
-#   $3: TMDB ID（可选）
-#   $4: 季号（可选）
-#   $5: 集号（可选）
+#   $1: 中文标题
+#   $2: 英文标题
+#   $3: 年份（可选）
+#   $4: TMDB ID（可选）
+#   $5: 季号（可选）
+#   $6: 集号（可选）
 # 返回：
 #   输出：TMDB JSON 数据
 #   退出码：0=成功，1=失败
 #------------------------------------------------------------------------------
 
 query_tmdb_tv() {
-    local title="$1"
-    local year="${2:-}"
-    local tmdb_id="${3:-}"
-    local season="${4:-}"
-    local episode="${5:-}"
+    local cn_title="$1"
+    local en_title="$2"
+    local year="${3:-}"
+    local tmdb_id="${4:-}"
+    local season="${5:-}"
+    local episode="${6:-}"
     local api_key="${TMDB_API_KEY}"
     local language="${TMDB_LANGUAGE:-zh-CN}"
-    local timeout="${TMDB_TIMEOUT:-30}"
 
     if [[ -z "$api_key" ]]; then
         log_error "  TMDB API Key 未配置"
@@ -1574,14 +1861,15 @@ query_tmdb_tv() {
 
     local show_data=""
 
-    # 如果有 tmdb_id，直接查询
+    # 如果有 tmdb_id，直接查询（最高优先级）
     if [[ -n "$tmdb_id" ]]; then
         log_info "  使用 TMDB ID 查询电视剧: $tmdb_id"
 
-        show_data=$(curl -s --max-time "$timeout" \
-            "https://api.themoviedb.org/3/tv/${tmdb_id}?api_key=${api_key}&language=${language}")
+        show_data=$(tmdb_api_call_with_retry \
+            "https://api.themoviedb.org/3/tv/${tmdb_id}?api_key=${api_key}&language=${language}" \
+            "通过ID查询电视剧")
 
-        if [[ $? -eq 0 ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
+        if [[ "$show_data" != "{}" ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
             log_success "  ✅ TMDB 查询成功（ID: $tmdb_id）"
         else
             log_warn "  ⚠️  TMDB ID 查询失败，尝试搜索"
@@ -1589,35 +1877,94 @@ query_tmdb_tv() {
         fi
     fi
 
-    # 如果没有数据，搜索
+    # 如果没有数据，尝试多轮搜索
     if [[ -z "$show_data" ]]; then
-        log_info "  搜索 TMDB 电视剧: $title${year:+ ($year)}"
+        # 生成缓存键
+        local cache_key="${cn_title}|${year}"
 
-        local encoded_title=$(urlencode "$title")
-        local search_url="https://api.themoviedb.org/3/search/tv?api_key=${api_key}&language=${language}&query=${encoded_title}"
+        # 检查内存缓存
+        if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE[$cache_key]}" ]]; then
+            tmdb_id="${TMDB_ID_CACHE[$cache_key]}"
+            log_success "  ✅ 从内存缓存获取 TMDB ID: $tmdb_id"
 
-        if [[ -n "$year" ]]; then
-            search_url="${search_url}&first_air_date_year=${year}"
+            # 用缓存的 ID 查询
+            show_data=$(tmdb_api_call_with_retry \
+                "https://api.themoviedb.org/3/tv/${tmdb_id}?api_key=${api_key}&language=${language}" \
+                "通过缓存ID查询电视剧")
+
+            if [[ "$show_data" != "{}" ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
+                log_debug "  缓存 ID 查询成功"
+            else
+                log_warn "  ⚠️  缓存 ID 失效，重新搜索"
+                show_data=""
+            fi
         fi
 
-        local search_result=$(curl -s --max-time "$timeout" "$search_url")
+        # 如果缓存也没有，执行搜索
+        if [[ -z "$show_data" ]]; then
+            # 多轮搜索策略
+            local search_titles=()
 
-        if [[ $? -ne 0 ]]; then
-            log_error "  TMDB API 请求失败"
+        # 优先使用中文名（如果有）
+        if [[ -n "$cn_title" ]]; then
+            search_titles+=("$cn_title")
+            log_debug "  添加搜索词: $cn_title（中文）"
+        fi
+
+        # 其次使用英文名（如果有且与中文名不同）
+        if [[ -n "$en_title" && "$en_title" != "$cn_title" ]]; then
+            search_titles+=("$en_title")
+            log_debug "  添加搜索词: $en_title（英文）"
+        fi
+
+        # 如果都没有，返回失败
+        if [[ ${#search_titles[@]} -eq 0 ]]; then
+            log_error "  没有可用的搜索标题"
             return 1
         fi
 
-        show_data=$(echo "$search_result" | jq -r '.results[0] // empty')
+        # 依次尝试每个搜索词
+        for search_title in "${search_titles[@]}"; do
+            log_info "  搜索 TMDB 电视剧: $search_title${year:+ ($year)}"
 
-        if [[ -z "$show_data" || "$show_data" == "null" ]]; then
-            log_warn "  ⚠️  TMDB 未找到匹配结果: $title"
+            local encoded_title=$(urlencode "$search_title")
+            local search_url="https://api.themoviedb.org/3/search/tv?api_key=${api_key}&language=${language}&query=${encoded_title}"
+
+            if [[ -n "$year" ]]; then
+                search_url="${search_url}&first_air_date_year=${year}"
+            fi
+
+            local search_result
+            search_result=$(tmdb_api_call_with_retry "$search_url" "搜索电视剧: $search_title")
+
+            if [[ "$search_result" == "{}" ]]; then
+                log_warn "  ⚠️  TMDB API 请求失败: $search_title"
+                continue
+            fi
+
+            show_data=$(echo "$search_result" | jq -r '.results[0] // empty')
+
+            if [[ -n "$show_data" && "$show_data" != "null" ]]; then
+                local found_title=$(echo "$show_data" | jq -r '.name')
+                local found_id=$(echo "$show_data" | jq -r '.id')
+
+                # 存入内存缓存
+                TMDB_ID_CACHE[$cache_key]="$found_id"
+                log_debug "  缓存 TMDB ID: $cache_key → $found_id"
+
+                log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id, 搜索词: $search_title)"
+                break
+            else
+                log_warn "  ⚠️  TMDB 未找到匹配结果: $search_title"
+                show_data=""
+            fi
+        done
+
+        # 所有搜索词都失败
+        if [[ -z "$show_data" ]]; then
+            log_error "  TMDB 搜索失败，所有搜索词均未匹配"
             return 1
         fi
-
-        local found_title=$(echo "$show_data" | jq -r '.name')
-        local found_id=$(echo "$show_data" | jq -r '.id')
-
-        log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id)"
     fi
 
     # 如果需要查询季和剧集详情
@@ -1626,10 +1973,12 @@ query_tmdb_tv() {
         log_info "  查询季和剧集详情: S${season}E${episode}"
 
         # 查询季信息（用于生成 Season.nfo）
-        local season_data=$(curl -s --max-time "$timeout" \
-            "https://api.themoviedb.org/3/tv/${show_id}/season/${season}?api_key=${api_key}&language=${language}")
+        local season_data
+        season_data=$(tmdb_api_call_with_retry \
+            "https://api.themoviedb.org/3/tv/${show_id}/season/${season}?api_key=${api_key}&language=${language}" \
+            "查询季信息")
 
-        if [[ $? -ne 0 ]] || ! echo "$season_data" | jq -e '.id' >/dev/null 2>&1; then
+        if [[ "$season_data" == "{}" ]] || ! echo "$season_data" | jq -e '.id' >/dev/null 2>&1; then
             log_warn "  ⚠️  季信息获取失败"
             season_data="{}"
         else
@@ -1637,10 +1986,12 @@ query_tmdb_tv() {
         fi
 
         # 查询单集详情（用于生成单集 NFO）
-        local episode_data=$(curl -s --max-time "$timeout" \
-            "https://api.themoviedb.org/3/tv/${show_id}/season/${season}/episode/${episode}?api_key=${api_key}&language=${language}")
+        local episode_data
+        episode_data=$(tmdb_api_call_with_retry \
+            "https://api.themoviedb.org/3/tv/${show_id}/season/${season}/episode/${episode}?api_key=${api_key}&language=${language}" \
+            "查询单集详情")
 
-        if [[ $? -eq 0 ]] && echo "$episode_data" | jq -e '.id' >/dev/null 2>&1; then
+        if [[ "$episode_data" != "{}" ]] && echo "$episode_data" | jq -e '.id' >/dev/null 2>&1; then
             log_success "  ✅ 单集详情获取成功 (S${season}E${episode})"
             # 合并剧集、季和单集信息
             echo "$show_data" | jq --argjson season "$season_data" --argjson ep "$episode_data" '. + {season: $season, episode: $ep}'
@@ -1654,6 +2005,127 @@ query_tmdb_tv() {
     fi
 
     echo "$show_data"
+    return 0
+}
+
+#------------------------------------------------------------------------------
+# 获取电影演职人员信息
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: TMDB ID
+# 返回：
+#   输出：credits JSON 数据
+#------------------------------------------------------------------------------
+
+get_movie_credits() {
+    local tmdb_id="$1"
+    local api_key="${TMDB_API_KEY}"
+    local language="${TMDB_LANGUAGE:-zh-CN}"
+
+    log_debug "  调用 TMDB API 获取演职人员信息..."
+
+    local credits_url="https://api.themoviedb.org/3/movie/${tmdb_id}/credits?api_key=${api_key}&language=${language}"
+
+    # 使用重试包装函数
+    local response
+    response=$(tmdb_api_call_with_retry "$credits_url" "获取演职人员信息")
+
+    echo "$response"
+    return 0
+}
+
+#------------------------------------------------------------------------------
+# 获取电视剧演职人员信息
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: TMDB ID
+# 返回：
+#   输出：credits JSON 数据
+#------------------------------------------------------------------------------
+
+get_tv_credits() {
+    local tmdb_id="$1"
+    local api_key="${TMDB_API_KEY}"
+    local language="${TMDB_LANGUAGE:-zh-CN}"
+
+    log_debug "  调用 TMDB API 获取剧集演职人员信息..."
+
+    local credits_url="https://api.themoviedb.org/3/tv/${tmdb_id}/credits?api_key=${api_key}&language=${language}"
+
+    local response
+    response=$(tmdb_api_call_with_retry "$credits_url" "获取剧集演职人员信息")
+
+    echo "$response"
+    return 0
+}
+
+#------------------------------------------------------------------------------
+# 获取电影预告片信息
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: TMDB ID
+# 返回：
+#   输出：videos JSON 数据（YouTube预告片链接）
+#------------------------------------------------------------------------------
+
+get_movie_videos() {
+    local tmdb_id="$1"
+    local api_key="${TMDB_API_KEY}"
+
+    log_debug "  调用 TMDB API 获取电影预告片..."
+
+    # 先尝试中文预告片
+    local videos_url="https://api.themoviedb.org/3/movie/${tmdb_id}/videos?api_key=${api_key}&language=zh-CN"
+    local response
+    response=$(tmdb_api_call_with_retry "$videos_url" "获取电影预告片（中文）")
+
+    # 检查中文预告片数量
+    local count=$(echo "$response" | jq '.results | length' 2>/dev/null || echo "0")
+
+    # 如果中文预告片为空，回退到英文
+    if [[ "$count" == "0" ]]; then
+        log_debug "  中文预告片为空，尝试英文预告片..."
+        videos_url="https://api.themoviedb.org/3/movie/${tmdb_id}/videos?api_key=${api_key}&language=en-US"
+        response=$(tmdb_api_call_with_retry "$videos_url" "获取电影预告片（英文）")
+    fi
+
+    # 筛选YouTube预告片，生成链接列表（最多3个）
+    echo "$response" | jq -r '.results[] | select(.site == "YouTube") | select(.type == "Trailer" or .type == "Teaser") | "https://www.youtube.com/watch?v=" + .key' | head -3
+    return 0
+}
+
+#------------------------------------------------------------------------------
+# 获取电视剧预告片信息
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: TMDB ID
+# 返回：
+#   输出：videos JSON 数据（YouTube预告片链接）
+#------------------------------------------------------------------------------
+
+get_tv_videos() {
+    local tmdb_id="$1"
+    local api_key="${TMDB_API_KEY}"
+
+    log_debug "  调用 TMDB API 获取剧集预告片..."
+
+    # 先尝试中文预告片
+    local videos_url="https://api.themoviedb.org/3/tv/${tmdb_id}/videos?api_key=${api_key}&language=zh-CN"
+    local response
+    response=$(tmdb_api_call_with_retry "$videos_url" "获取剧集预告片（中文）")
+
+    # 检查中文预告片数量
+    local count=$(echo "$response" | jq '.results | length' 2>/dev/null || echo "0")
+
+    # 如果中文预告片为空，回退到英文
+    if [[ "$count" == "0" ]]; then
+        log_debug "  中文预告片为空，尝试英文预告片..."
+        videos_url="https://api.themoviedb.org/3/tv/${tmdb_id}/videos?api_key=${api_key}&language=en-US"
+        response=$(tmdb_api_call_with_retry "$videos_url" "获取剧集预告片（英文）")
+    fi
+
+    # 筛选YouTube预告片，生成链接列表（最多3个）
+    echo "$response" | jq -r '.results[] | select(.site == "YouTube") | select(.type == "Trailer" or .type == "Teaser") | "https://www.youtube.com/watch?v=" + .key' | head -3
     return 0
 }
 
@@ -1679,9 +2151,28 @@ generate_movie_nfo() {
     local year=$(echo "$tmdb_data" | jq -r '.release_date // "unknown"' | cut -d'-' -f1)
     local plot=$(echo "$tmdb_data" | jq -r '.overview // ""')
     local rating=$(echo "$tmdb_data" | jq -r '.vote_average // 0')
+    local votes=$(echo "$tmdb_data" | jq -r '.vote_count // 0')
     local tmdb_id=$(echo "$tmdb_data" | jq -r '.id')
     local release_date=$(echo "$tmdb_data" | jq -r '.release_date // ""')
     local runtime=$(echo "$tmdb_data" | jq -r '.runtime // 0')
+    local tagline=$(echo "$tmdb_data" | jq -r '.tagline // ""')
+    local studio=$(echo "$tmdb_data" | jq -r '.production_companies[0].name // ""')
+    local set_name=$(echo "$tmdb_data" | jq -r '.belongs_to_collection.name // ""')
+
+    # 提取类型（前5个）
+    local genres=$(echo "$tmdb_data" | jq -r '.genres[]?.name' | head -5)
+
+    # 提取制作国家（前3个）
+    local countries=$(echo "$tmdb_data" | jq -r '.production_countries[]?.name' | head -3)
+
+    # 提取MPAA分级（美国分级）
+    local mpaa=$(echo "$tmdb_data" | jq -r '.release_dates.results[] | select(.iso_3166_1 == "US") | .release_dates[0].certification // ""' 2>/dev/null || echo "")
+
+    # 获取演职人员信息
+    local credits_data=$(get_movie_credits "$tmdb_id")
+
+    # 获取预告片信息
+    local trailers=$(get_movie_videos "$tmdb_id")
 
     # 生成 NFO（Kodi/Emby 兼容格式）
     cat > "$output_file" << EOF
@@ -1691,16 +2182,90 @@ generate_movie_nfo() {
     <originaltitle>$original_title</originaltitle>
     <year>$year</year>
     <plot>$plot</plot>
+EOF
+
+    # 添加标语（如果有）
+    if [[ -n "$tagline" && "$tagline" != "null" ]]; then
+        echo "    <tagline>$tagline</tagline>" >> "$output_file"
+    fi
+
+    # 继续基础信息
+    cat >> "$output_file" << EOF
     <rating>$rating</rating>
+    <votes>$votes</votes>
+EOF
+
+    # 添加MPAA分级（如果有）
+    if [[ -n "$mpaa" && "$mpaa" != "null" ]]; then
+        echo "    <mpaa>$mpaa</mpaa>" >> "$output_file"
+    fi
+
+    # 添加制作公司（如果有）
+    if [[ -n "$studio" && "$studio" != "null" ]]; then
+        echo "    <studio>$studio</studio>" >> "$output_file"
+    fi
+
+    # 继续ID和时间信息
+    cat >> "$output_file" << EOF
     <tmdbid>$tmdb_id</tmdbid>
     <premiered>$release_date</premiered>
     <runtime>$runtime</runtime>
     <uniqueid type="tmdb" default="true">$tmdb_id</uniqueid>
-</movie>
 EOF
 
+    # 添加类型标签
+    while IFS= read -r genre; do
+        if [[ -n "$genre" && "$genre" != "null" ]]; then
+            echo "    <genre>$genre</genre>" >> "$output_file"
+        fi
+    done <<< "$genres"
+
+    # 添加制作国家
+    while IFS= read -r country; do
+        if [[ -n "$country" && "$country" != "null" ]]; then
+            echo "    <country>$country</country>" >> "$output_file"
+        fi
+    done <<< "$countries"
+
+    # 添加系列/合集（如果有）
+    if [[ -n "$set_name" && "$set_name" != "null" ]]; then
+        echo "    <set>$set_name</set>" >> "$output_file"
+    fi
+
+    # 添加预告片链接（最多3个）
+    if [[ -n "$trailers" ]]; then
+        while IFS= read -r trailer; do
+            if [[ -n "$trailer" ]]; then
+                echo "    <trailer>$trailer</trailer>" >> "$output_file"
+            fi
+        done <<< "$trailers"
+    fi
+
+    # 添加演员信息（前10位主演）
+    if [[ -n "$credits_data" && "$credits_data" != "{}" ]]; then
+        # 添加编剧信息
+        echo "$credits_data" | jq -r '.crew | map(select(.job == "Screenplay" or .job == "Writer")) | unique_by(.name) | .[] |
+            "    <writer>" + .name + "</writer>"' >> "$output_file"
+
+        # 添加演员
+        echo "$credits_data" | jq -r '.cast[:10] | .[] |
+            "    <actor>\n" +
+            "        <name>" + (.name // "") + "</name>\n" +
+            "        <role>" + (.character // "") + "</role>\n" +
+            "        <type>Actor</type>\n" +
+            (if .profile_path then "        <thumb>https://image.tmdb.org/t/p/w185" + .profile_path + "</thumb>\n" else "" end) +
+            "    </actor>"' >> "$output_file"
+
+        # 添加导演信息
+        echo "$credits_data" | jq -r '.crew | map(select(.job == "Director")) | .[] |
+            "    <director>" + .name + "</director>"' >> "$output_file"
+    fi
+
+    # 结束标签
+    echo "</movie>" >> "$output_file"
+
     if [[ $? -eq 0 ]]; then
-        log_success "  ✅ NFO 文件生成成功"
+        log_success "  ✅ NFO 文件生成成功（含演职人员信息）"
         return 0
     else
         log_error "  NFO 文件生成失败"
@@ -1781,12 +2346,23 @@ generate_series_nfo() {
     local plot=$(echo "$tmdb_data" | jq -r '.overview // ""')
     local tmdb_id=$(echo "$tmdb_data" | jq -r '.id')
     local rating=$(echo "$tmdb_data" | jq -r '.vote_average // 0')
+    local votes=$(echo "$tmdb_data" | jq -r '.vote_count // 0')
     local number_of_seasons=$(echo "$tmdb_data" | jq -r '.number_of_seasons // 0')
     local number_of_episodes=$(echo "$tmdb_data" | jq -r '.number_of_episodes // 0')
     local first_air_date=$(echo "$tmdb_data" | jq -r '.first_air_date // ""')
+    local tagline=$(echo "$tmdb_data" | jq -r '.tagline // ""')
 
     # 提取类型（可能有多个）
     local genres=$(echo "$tmdb_data" | jq -r '.genres[]?.name' | head -5)
+
+    # 提取制作国家
+    local countries=$(echo "$tmdb_data" | jq -r '.origin_country[] // .production_countries[]?.name' | head -3)
+
+    # 获取剧集演职人员信息
+    local credits_data=$(get_tv_credits "$tmdb_id")
+
+    # 获取预告片信息
+    local trailers=$(get_tv_videos "$tmdb_id")
 
     # 生成总剧集 NFO
     cat > "$output_file" << EOF
@@ -1796,7 +2372,17 @@ generate_series_nfo() {
     <originaltitle>$original_title</originaltitle>
     <year>$year</year>
     <plot>$plot</plot>
+EOF
+
+    # 添加标语（如果有）
+    if [[ -n "$tagline" && "$tagline" != "null" ]]; then
+        echo "    <tagline>$tagline</tagline>" >> "$output_file"
+    fi
+
+    # 继续基础信息
+    cat >> "$output_file" << EOF
     <rating>$rating</rating>
+    <votes>$votes</votes>
     <premiered>$first_air_date</premiered>
     <status>$(echo "$tmdb_data" | jq -r '.status // ""')</status>
     <studio>$(echo "$tmdb_data" | jq -r '.networks[0].name // ""')</studio>
@@ -1813,11 +2399,42 @@ EOF
         fi
     done <<< "$genres"
 
+    # 添加制作国家
+    while IFS= read -r country; do
+        if [[ -n "$country" && "$country" != "null" ]]; then
+            echo "    <country>$country</country>" >> "$output_file"
+        fi
+    done <<< "$countries"
+
+    # 添加预告片链接（最多3个）
+    if [[ -n "$trailers" ]]; then
+        while IFS= read -r trailer; do
+            if [[ -n "$trailer" ]]; then
+                echo "    <trailer>$trailer</trailer>" >> "$output_file"
+            fi
+        done <<< "$trailers"
+    fi
+
+    # 添加演员信息（前15位主演）
+    if [[ -n "$credits_data" && "$credits_data" != "{}" ]]; then
+        echo "$credits_data" | jq -r '.cast[:15] | .[] |
+            "    <actor>\n" +
+            "        <name>" + (.name // "") + "</name>\n" +
+            "        <role>" + (.character // "") + "</role>\n" +
+            "        <type>Actor</type>\n" +
+            (if .profile_path then "        <thumb>https://image.tmdb.org/t/p/w185" + .profile_path + "</thumb>\n" else "" end) +
+            "    </actor>"' >> "$output_file"
+
+        # 添加导演信息（电视剧可能有多个导演）
+        echo "$credits_data" | jq -r '.crew | map(select(.job == "Executive Producer" or .job == "Creator")) | unique_by(.name) | .[] |
+            "    <director>" + .name + "</director>"' >> "$output_file"
+    fi
+
     # 结束标签
     echo "</tvshow>" >> "$output_file"
 
     if [[ $? -eq 0 ]]; then
-        log_success "  ✅ 总剧集 NFO 生成成功"
+        log_success "  ✅ 总剧集 NFO 生成成功（含演职人员信息）"
         return 0
     else
         log_error "  总剧集 NFO 生成失败"
@@ -1881,10 +2498,74 @@ EOF
 #   退出码：0=成功，1=失败
 #------------------------------------------------------------------------------
 
+#------------------------------------------------------------------------------
+# 带重试的图片下载函数
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: 图片URL
+#   $2: 输出文件路径
+#   $3: 描述信息（用于日志）
+# 返回：
+#   退出码：0=成功，1=失败
+#------------------------------------------------------------------------------
+
+download_image_with_retry() {
+    local image_url="$1"
+    local output_file="$2"
+    local description="${3:-图片}"
+    local timeout="${TMDB_TIMEOUT:-30}"
+    local max_retries="${IMAGE_DOWNLOAD_RETRY_COUNT:-2}"
+    local retry_delay="${IMAGE_DOWNLOAD_RETRY_DELAY:-2}"
+    local min_size="${IMAGE_DOWNLOAD_MIN_SIZE:-1024}"
+    local retry_count=0
+
+    while [ $retry_count -le $max_retries ]; do
+        if [ $retry_count -gt 0 ]; then
+            log_warn "  ${description}下载第${retry_count}次失败，等待${retry_delay}秒后重试..."
+            sleep "$retry_delay"
+        fi
+
+        log_debug "  下载${description}（尝试$((retry_count + 1))/$((max_retries + 1))）: $image_url"
+
+        # 下载图片
+        curl -s --max-time "$timeout" -o "$output_file" "$image_url" 2>&1
+        local curl_exit=$?
+
+        # 验证下载结果
+        if [[ $curl_exit -eq 0 && -f "$output_file" ]]; then
+            local file_size=$(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null || echo "0")
+
+            if [[ "$file_size" -ge "$min_size" ]]; then
+                log_success "  ✅ ${description}下载完成（尝试$((retry_count + 1))/$((max_retries + 1))，大小: ${file_size}字节）"
+                return 0
+            else
+                log_warn "  ⚠️  ${description}文件过小（${file_size}字节 < ${min_size}字节），视为下载失败"
+                rm -f "$output_file"
+            fi
+        fi
+
+        retry_count=$((retry_count + 1))
+    done
+
+    log_error "  ${description}下载失败（已重试$((max_retries + 1))次）"
+    rm -f "$output_file"
+    return 1
+}
+
+#------------------------------------------------------------------------------
+# 下载海报
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: TMDB JSON 数据
+#   $2: 输出文件路径
+# 返回：
+#   退出码：0=成功，1=失败
+#------------------------------------------------------------------------------
+
+download_poster() {
 download_poster() {
     local tmdb_data="$1"
     local output_file="$2"
-    local timeout="${TMDB_TIMEOUT:-30}"
     local api_key="${TMDB_API_KEY}"
 
     # 提取 ID、类型和原语言
@@ -1904,11 +2585,12 @@ download_poster() {
 
     log_info "  下载海报: $output_file (原语言: $original_language)"
 
-    # 调用 /images API 获取原语言图片
+    # 调用 /images API 获取原语言图片（使用重试机制）
     local images_url="https://api.themoviedb.org/3/${media_type}/${tmdb_id}/images?api_key=${api_key}&include_image_language=${original_language},null"
-    local images_data=$(curl -s --max-time "$timeout" "$images_url")
+    local images_data
+    images_data=$(tmdb_api_call_with_retry "$images_url" "获取海报图片列表")
 
-    if [[ $? -ne 0 ]]; then
+    if [[ "$images_data" == "{}" ]]; then
         log_error "  获取图片列表失败"
         return 1
     fi
@@ -1936,16 +2618,9 @@ download_poster() {
     local poster_url="https://image.tmdb.org/t/p/original${poster_path}"
     log_debug "  海报 URL: $poster_url"
 
-    curl -s --max-time "$timeout" -o "$output_file" "$poster_url"
-
-    if [[ $? -eq 0 && -f "$output_file" ]]; then
-        log_success "  ✅ 海报下载完成（原语言）"
-        return 0
-    else
-        log_error "  海报下载失败"
-        rm -f "$output_file"
-        return 1
-    fi
+    # 使用带重试的下载函数
+    download_image_with_retry "$poster_url" "$output_file" "海报"
+    return $?
 }
 
 #------------------------------------------------------------------------------
@@ -1959,9 +2634,9 @@ download_poster() {
 #------------------------------------------------------------------------------
 
 download_backdrop() {
+download_backdrop() {
     local tmdb_data="$1"
     local output_file="$2"
-    local timeout="${TMDB_TIMEOUT:-30}"
     local api_key="${TMDB_API_KEY}"
 
     # 提取 ID、类型和原语言
@@ -1981,11 +2656,12 @@ download_backdrop() {
 
     log_info "  下载背景图: $output_file (原语言: $original_language)"
 
-    # 调用 /images API 获取原语言图片
+    # 调用 /images API 获取原语言图片（使用重试机制）
     local images_url="https://api.themoviedb.org/3/${media_type}/${tmdb_id}/images?api_key=${api_key}&include_image_language=${original_language},null"
-    local images_data=$(curl -s --max-time "$timeout" "$images_url")
+    local images_data
+    images_data=$(tmdb_api_call_with_retry "$images_url" "获取背景图片列表")
 
-    if [[ $? -ne 0 ]]; then
+    if [[ "$images_data" == "{}" ]]; then
         log_error "  获取图片列表失败"
         return 1
     fi
@@ -2013,16 +2689,9 @@ download_backdrop() {
     local backdrop_url="https://image.tmdb.org/t/p/original${backdrop_path}"
     log_debug "  背景图 URL: $backdrop_url"
 
-    curl -s --max-time "$timeout" -o "$output_file" "$backdrop_url"
-
-    if [[ $? -eq 0 && -f "$output_file" ]]; then
-        log_success "  ✅ 背景图下载完成（原语言）"
-        return 0
-    else
-        log_error "  背景图下载失败"
-        rm -f "$output_file"
-        return 1
-    fi
+    # 使用带重试的下载函数
+    download_image_with_retry "$backdrop_url" "$output_file" "背景图"
+    return $?
 }
 
 #------------------------------------------------------------------------------
@@ -2036,9 +2705,9 @@ download_backdrop() {
 #------------------------------------------------------------------------------
 
 download_episode_thumb() {
+download_episode_thumb() {
     local tmdb_data="$1"
     local output_file="$2"
-    local timeout="${TMDB_TIMEOUT:-30}"
 
     # 提取单集缩略图路径（still_path）
     local still_path=$(echo "$tmdb_data" | jq -r '.episode.still_path // empty')
@@ -2053,16 +2722,9 @@ download_episode_thumb() {
     log_info "  下载单集缩略图: $output_file"
     log_debug "  缩略图 URL: $thumb_url"
 
-    curl -s --max-time "$timeout" -o "$output_file" "$thumb_url"
-
-    if [[ $? -eq 0 && -f "$output_file" ]]; then
-        log_success "  ✅ 单集缩略图下载完成"
-        return 0
-    else
-        log_error "  单集缩略图下载失败"
-        rm -f "$output_file"
-        return 1
-    fi
+    # 使用带重试的下载函数
+    download_image_with_retry "$thumb_url" "$output_file" "单集缩略图"
+    return $?
 }
 
 #------------------------------------------------------------------------------
@@ -2104,13 +2766,14 @@ scrape_metadata_full() {
     local metadata
     metadata=$(extract_metadata_from_filename "$strm_name")
 
-    local title=$(echo "$metadata" | cut -d'|' -f1)
-    local year=$(echo "$metadata" | cut -d'|' -f2)
-    local tmdb_id=$(echo "$metadata" | cut -d'|' -f3)
-    local season=$(echo "$metadata" | cut -d'|' -f4)
-    local episode=$(echo "$metadata" | cut -d'|' -f5)
+    local cn_title=$(echo "$metadata" | cut -d'|' -f1)
+    local en_title=$(echo "$metadata" | cut -d'|' -f2)
+    local year=$(echo "$metadata" | cut -d'|' -f3)
+    local tmdb_id=$(echo "$metadata" | cut -d'|' -f4)
+    local season=$(echo "$metadata" | cut -d'|' -f5)
+    local episode=$(echo "$metadata" | cut -d'|' -f6)
 
-    if [[ -z "$title" ]]; then
+    if [[ -z "$cn_title" && -z "$en_title" ]]; then
         log_error "  无法从文件名提取标题"
         return 1
     fi
@@ -2123,11 +2786,11 @@ scrape_metadata_full() {
         # 电视剧
         log_info "  识别为电视剧 (S${season}E${episode})"
         is_tv_show=true
-        tmdb_data=$(query_tmdb_tv "$title" "$year" "$tmdb_id" "$season" "$episode")
+        tmdb_data=$(query_tmdb_tv "$cn_title" "$en_title" "$year" "$tmdb_id" "$season" "$episode")
     else
         # 电影
         log_info "  识别为电影"
-        tmdb_data=$(query_tmdb_movie "$title" "$year" "$tmdb_id")
+        tmdb_data=$(query_tmdb_movie "$cn_title" "$en_title" "$year" "$tmdb_id")
     fi
 
     if [[ $? -ne 0 || -z "$tmdb_data" ]]; then
@@ -2213,7 +2876,7 @@ scrape_metadata_full() {
             if [[ ! -f "$season_poster" && -n "$season_poster_path" && "$season_poster_path" != "null" ]]; then
                 log_info "  下载季海报 (Season $season)"
                 local season_poster_url="https://image.tmdb.org/t/p/original${season_poster_path}"
-                curl -s --max-time "${TMDB_TIMEOUT:-30}" -o "$season_poster" "$season_poster_url" &
+                download_image_with_retry "$season_poster_url" "$season_poster" "季海报" &
                 local season_poster_pid=$!
             else
                 log_debug "  跳过（已有季海报或无季海报路径）"

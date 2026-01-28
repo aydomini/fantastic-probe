@@ -64,34 +64,49 @@ load_config() {
 validate_config() {
     local missing_keys=()
 
-    # 必需的配置项列表（包含新增配置）
+    # 必需的配置项列表
     local required_keys=(
-        # Emby 相关（已有）
+        # Emby 相关
         "EMBY_ENABLED"
         "EMBY_URL"
         "EMBY_API_KEY"
         "EMBY_NOTIFY_TIMEOUT"
-        # STRM 处理（阶段1新增）
+        # STRM 处理
         "ENABLE_STRM"
         "ENABLE_ISO_STRM"
         "ENABLE_VIDEO_STRM"
-        # Alist 集成（阶段1新增）
+        # Alist 集成
         "ALIST_ADDR"
         "ALIST_TOKEN"
         "ALIST_TIMEOUT"
-        # FFprobe 参数（阶段1新增）
+        # FFprobe 参数
         "FFPROBE_HTTP_ANALYZEDURATION"
         "FFPROBE_HTTP_PROBESIZE"
         "FFPROBE_LOCAL_ANALYZEDURATION"
         "FFPROBE_LOCAL_PROBESIZE"
         "VALIDATE_HTTP_LINK"
-        # TMDB 元数据（阶段2新增）
+        # FFprobe 重试配置
+        "FFPROBE_RETRY_COUNT"
+        "FFPROBE_RETRY_INTERVALS"
+        # TMDB 元数据
         "ENABLE_NFO"
         "TMDB_API_KEY"
         "TMDB_LANGUAGE"
         "DOWNLOAD_IMAGES"
         "TMDB_TIMEOUT"
         "PARALLEL_STAGE_PROCESSING"
+        # TMDB 速率限制与重试
+        "TMDB_REQUEST_INTERVAL"
+        "TMDB_RETRY_COUNT"
+        "TMDB_RETRY_DELAY_429"
+        "TMDB_RETRY_DELAY_OTHER"
+        # 任务处理配置
+        "TASK_PROCESSING_INTERVAL"
+        "STORAGE_TYPE"
+        # 图片下载重试
+        "IMAGE_DOWNLOAD_RETRY_COUNT"
+        "IMAGE_DOWNLOAD_RETRY_DELAY"
+        "IMAGE_DOWNLOAD_MIN_SIZE"
     )
 
     # 检查缺失的配置项
@@ -108,7 +123,7 @@ validate_config() {
 
         for key in "${missing_keys[@]}"; do
             case "$key" in
-                # Emby 配置（已有）
+                # Emby 配置
                 EMBY_ENABLED)
                     echo "EMBY_ENABLED=false" >> "$CONFIG_FILE"
                     ;;
@@ -121,7 +136,7 @@ validate_config() {
                 EMBY_NOTIFY_TIMEOUT)
                     echo "EMBY_NOTIFY_TIMEOUT=5" >> "$CONFIG_FILE"
                     ;;
-                # STRM 处理配置（阶段1新增）
+                # STRM 处理配置
                 ENABLE_STRM)
                     echo "ENABLE_STRM=true" >> "$CONFIG_FILE"
                     ;;
@@ -131,7 +146,7 @@ validate_config() {
                 ENABLE_VIDEO_STRM)
                     echo "ENABLE_VIDEO_STRM=true" >> "$CONFIG_FILE"
                     ;;
-                # Alist 集成（阶段1新增）
+                # Alist 集成
                 ALIST_ADDR)
                     echo "ALIST_ADDR=\"\"" >> "$CONFIG_FILE"
                     ;;
@@ -141,7 +156,7 @@ validate_config() {
                 ALIST_TIMEOUT)
                     echo "ALIST_TIMEOUT=30" >> "$CONFIG_FILE"
                     ;;
-                # FFprobe 参数优化（阶段1新增）
+                # FFprobe 参数优化
                 FFPROBE_HTTP_ANALYZEDURATION)
                     echo "FFPROBE_HTTP_ANALYZEDURATION=\"1M\"" >> "$CONFIG_FILE"
                     ;;
@@ -157,7 +172,7 @@ validate_config() {
                 VALIDATE_HTTP_LINK)
                     echo "VALIDATE_HTTP_LINK=false" >> "$CONFIG_FILE"
                     ;;
-                # TMDB 元数据配置（阶段2新增）
+                # TMDB 元数据配置
                 ENABLE_NFO)
                     echo "ENABLE_NFO=true" >> "$CONFIG_FILE"
                     ;;
@@ -175,6 +190,43 @@ validate_config() {
                     ;;
                 PARALLEL_STAGE_PROCESSING)
                     echo "PARALLEL_STAGE_PROCESSING=true" >> "$CONFIG_FILE"
+                    ;;
+                # FFprobe 重试配置
+                FFPROBE_RETRY_COUNT)
+                    echo "FFPROBE_RETRY_COUNT=3" >> "$CONFIG_FILE"
+                    ;;
+                FFPROBE_RETRY_INTERVALS)
+                    echo "FFPROBE_RETRY_INTERVALS=\"10 5 3\"" >> "$CONFIG_FILE"
+                    ;;
+                # TMDB 速率限制与重试
+                TMDB_REQUEST_INTERVAL)
+                    echo "TMDB_REQUEST_INTERVAL=500" >> "$CONFIG_FILE"
+                    ;;
+                TMDB_RETRY_COUNT)
+                    echo "TMDB_RETRY_COUNT=3" >> "$CONFIG_FILE"
+                    ;;
+                TMDB_RETRY_DELAY_429)
+                    echo "TMDB_RETRY_DELAY_429=10" >> "$CONFIG_FILE"
+                    ;;
+                TMDB_RETRY_DELAY_OTHER)
+                    echo "TMDB_RETRY_DELAY_OTHER=3" >> "$CONFIG_FILE"
+                    ;;
+                # 任务处理配置
+                TASK_PROCESSING_INTERVAL)
+                    echo "TASK_PROCESSING_INTERVAL=10" >> "$CONFIG_FILE"
+                    ;;
+                STORAGE_TYPE)
+                    echo "STORAGE_TYPE=auto" >> "$CONFIG_FILE"
+                    ;;
+                # 图片下载重试
+                IMAGE_DOWNLOAD_RETRY_COUNT)
+                    echo "IMAGE_DOWNLOAD_RETRY_COUNT=2" >> "$CONFIG_FILE"
+                    ;;
+                IMAGE_DOWNLOAD_RETRY_DELAY)
+                    echo "IMAGE_DOWNLOAD_RETRY_DELAY=2" >> "$CONFIG_FILE"
+                    ;;
+                IMAGE_DOWNLOAD_MIN_SIZE)
+                    echo "IMAGE_DOWNLOAD_MIN_SIZE=1024" >> "$CONFIG_FILE"
                     ;;
             esac
             echo "   ✅ 已添加: $key"
@@ -222,6 +274,14 @@ show_current_config() {
     echo "    语言偏好: ${TMDB_LANGUAGE:-zh-CN}"
     echo "    下载图片: ${DOWNLOAD_IMAGES:-true}"
     echo "    并行处理: ${PARALLEL_STAGE_PROCESSING:-true}"
+    echo "    请求间隔: ${TMDB_REQUEST_INTERVAL:-500}ms"
+    echo "    重试次数: ${TMDB_RETRY_COUNT:-3}"
+    echo ""
+    echo "  ⚡ 重试与性能配置:"
+    echo "    FFprobe重试: ${FFPROBE_RETRY_COUNT:-3}次 (${FFPROBE_RETRY_INTERVALS:-10 5 3}秒)"
+    echo "    任务处理间隔: ${TASK_PROCESSING_INTERVAL:-10}秒"
+    echo "    存储类型: ${STORAGE_TYPE:-auto}"
+    echo "    图片下载重试: ${IMAGE_DOWNLOAD_RETRY_COUNT:-2}次 (${IMAGE_DOWNLOAD_RETRY_DELAY:-2}秒)"
     echo ""
     echo "  📡 Emby 集成:"
     echo "    启用状态: ${EMBY_ENABLED:-false}"
@@ -1064,6 +1124,142 @@ configure_tmdb() {
         ENABLE_NFO="false"
         echo "   ✅ TMDB 元数据刮削已禁用"
     fi
+
+    # 询问是否重启服务
+    echo ""
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已更新，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+        else
+            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        fi
+    fi
+}
+
+# 配置性能与重试参数
+configure_performance() {
+    echo ""
+    echo "⚡ 配置性能与重试参数"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   说明："
+    echo "   • FFprobe 重试：普通 STRM 文件 FFprobe 失败后的重试机制"
+    echo "   • TMDB 速率限制：防止触发 TMDB API 限流（40请求/10秒）"
+    echo "   • TMDB 重试：TMDB API 调用失败后的重试机制"
+    echo "   • 任务处理间隔：不同文件之间的等待时间（防止云盘限流）"
+    echo "   • 图片下载重试：海报/背景图下载失败后的重试机制"
+    echo ""
+    echo "   当前配置："
+    echo "     FFprobe重试次数: ${FFPROBE_RETRY_COUNT:-3}"
+    echo "     FFprobe重试间隔: ${FFPROBE_RETRY_INTERVALS:-10 5 3} 秒"
+    echo "     TMDB请求间隔: ${TMDB_REQUEST_INTERVAL:-500} ms"
+    echo "     TMDB重试次数: ${TMDB_RETRY_COUNT:-3}"
+    echo "     TMDB 429错误等待: ${TMDB_RETRY_DELAY_429:-10} 秒"
+    echo "     TMDB其他错误等待: ${TMDB_RETRY_DELAY_OTHER:-3} 秒"
+    echo "     任务处理间隔: ${TASK_PROCESSING_INTERVAL:-10} 秒"
+    echo "     存储类型检测: ${STORAGE_TYPE:-auto}"
+    echo "     图片下载重试: ${IMAGE_DOWNLOAD_RETRY_COUNT:-2} 次"
+    echo "     图片重试间隔: ${IMAGE_DOWNLOAD_RETRY_DELAY:-2} 秒"
+    echo ""
+
+    # 询问是否需要修改
+    read -p "   是否修改性能与重试配置？[y/N]: " modify_perf
+    modify_perf="${modify_perf:-N}"
+
+    if [[ ! "$modify_perf" =~ ^[Yy]$ ]]; then
+        echo "   ℹ️  保持当前配置不变"
+        return 0
+    fi
+
+    echo ""
+    echo "   开始配置..."
+    echo ""
+
+    # 1. FFprobe 重试配置
+    echo "   1️⃣  FFprobe 重试配置（普通 STRM）"
+    echo "      说明：HTTP/本地文件 FFprobe 分析失败后的重试机制"
+    read -p "      重试次数 [默认: 3]: " ffprobe_retry
+    ffprobe_retry="${ffprobe_retry:-3}"
+
+    echo "      重试间隔（秒，空格分隔，建议递减）"
+    echo "      示例：10 5 3 表示第1次重试等待10秒，第2次5秒，第3次3秒"
+    read -p "      重试间隔 [默认: 10 5 3]: " ffprobe_intervals
+    ffprobe_intervals="${ffprobe_intervals:-10 5 3}"
+
+    # 2. TMDB 速率限制配置
+    echo ""
+    echo "   2️⃣  TMDB 速率限制配置"
+    echo "      说明：每次 TMDB API 调用之间的最小间隔（毫秒）"
+    echo "      官方限制：40请求/10秒"
+    echo "      推荐值："
+    echo "        • 500ms (2请求/秒, 50%安全裕度) - 推荐"
+    echo "        • 300ms (3.3请求/秒, 17.5%安全裕度) - 较安全"
+    echo "        • 1000ms (1请求/秒, 75%安全裕度) - 保守"
+    read -p "      请求间隔(ms) [默认: 500]: " tmdb_interval
+    tmdb_interval="${tmdb_interval:-500}"
+
+    # 3. TMDB 重试配置
+    echo ""
+    echo "   3️⃣  TMDB 重试配置"
+    read -p "      重试次数 [默认: 3]: " tmdb_retry
+    tmdb_retry="${tmdb_retry:-3}"
+    read -p "      429错误等待时间(秒) [默认: 10]: " tmdb_delay_429
+    tmdb_delay_429="${tmdb_delay_429:-10}"
+    read -p "      其他错误等待时间(秒) [默认: 3]: " tmdb_delay_other
+    tmdb_delay_other="${tmdb_delay_other:-3}"
+
+    # 4. 任务处理间隔配置
+    echo ""
+    echo "   4️⃣  任务处理间隔配置"
+    echo "      说明：处理不同文件之间的等待时间（防止云盘限流）"
+    echo "      推荐值："
+    echo "        • 0-5秒：本地NAS（无限制，快速处理）"
+    echo "        • 10秒：Alist/CloudDrive（当前默认，防止云盘限流）"
+    echo "        • 30秒：ISO处理（等待FUSE缓存）"
+    read -p "      任务处理间隔(秒) [默认: 10]: " task_interval
+    task_interval="${task_interval:-10}"
+
+    echo "      存储类型检测："
+    echo "        • auto：自动检测（推荐，根据ALIST_ADDR判断）"
+    echo "        • local：本地/NAS存储（使用0秒间隔）"
+    echo "        • cloud：云盘存储（使用10秒间隔）"
+    echo "        • fuse：FUSE挂载（使用30秒间隔）"
+    read -p "      存储类型 [默认: auto]: " storage_type
+    storage_type="${storage_type:-auto}"
+
+    # 5. 图片下载重试配置
+    echo ""
+    echo "   5️⃣  图片下载重试配置"
+    echo "      说明：海报/背景图下载失败后的重试机制"
+    read -p "      重试次数 [默认: 2]: " image_retry
+    image_retry="${image_retry:-2}"
+    read -p "      重试间隔(秒) [默认: 2]: " image_delay
+    image_delay="${image_delay:-2}"
+    read -p "      最小文件大小(字节，小于此值视为失败) [默认: 1024]: " image_min_size
+    image_min_size="${image_min_size:-1024}"
+
+    # 保存配置
+    echo ""
+    echo "   💾 保存配置..."
+    update_config_line "FFPROBE_RETRY_COUNT" "$ffprobe_retry"
+    update_config_line "FFPROBE_RETRY_INTERVALS" "$ffprobe_intervals"
+    update_config_line "TMDB_REQUEST_INTERVAL" "$tmdb_interval"
+    update_config_line "TMDB_RETRY_COUNT" "$tmdb_retry"
+    update_config_line "TMDB_RETRY_DELAY_429" "$tmdb_delay_429"
+    update_config_line "TMDB_RETRY_DELAY_OTHER" "$tmdb_delay_other"
+    update_config_line "TASK_PROCESSING_INTERVAL" "$task_interval"
+    update_config_line "STORAGE_TYPE" "$storage_type"
+    update_config_line "IMAGE_DOWNLOAD_RETRY_COUNT" "$image_retry"
+    update_config_line "IMAGE_DOWNLOAD_RETRY_DELAY" "$image_delay"
+    update_config_line "IMAGE_DOWNLOAD_MIN_SIZE" "$image_min_size"
+
+    echo ""
+    echo "   ✅ 性能与重试配置已更新"
 
     # 询问是否重启服务
     echo ""
@@ -2054,46 +2250,43 @@ show_menu() {
                 echo "【配置向导】"
                 echo "  1) 修改 STRM 根目录"
                 echo "  2) 重新配置 FFprobe"
-                echo "  3) 配置 STRM 处理选项（阶段1）"
-                echo "  4) 配置 Alist 集成（阶段1）"
-                echo "  5) 配置 TMDB 元数据刮削（阶段2）"
+                echo "  3) 配置 STRM 处理选项"
+                echo "  4) 配置 Alist 集成"
+                echo "  5) 配置 TMDB 元数据刮削"
                 echo "  6) 配置 Emby 媒体库集成"
+                echo "  7) 配置性能与重试参数"
                 echo "  0) 返回主菜单"
                 echo ""
-                read -p "请选择 [0-6]: " config_choice
+                read -p "请选择 [0-7]: " config_choice
                 echo ""
 
                 case "$config_choice" in
                     1)
                         change_strm_root
-                        read -p "按 Enter 继续..."
                         ;;
                     2)
                         reconfigure_ffprobe
-                        read -p "按 Enter 继续..."
                         ;;
                     3)
                         configure_strm
-                        read -p "按 Enter 继续..."
                         ;;
                     4)
                         configure_alist
-                        read -p "按 Enter 继续..."
                         ;;
                     5)
                         configure_tmdb
-                        read -p "按 Enter 继续..."
                         ;;
                     6)
                         configure_emby
-                        read -p "按 Enter 继续..."
+                        ;;
+                    7)
+                        configure_performance
                         ;;
                     0)
-                        break  # 直接返回主菜单，无需按 Enter
+                        break  # 返回主菜单
                         ;;
                     *)
                         echo "❌ 无效选择"
-                        read -p "按 Enter 继续..."
                         ;;
                 esac
             done
@@ -2152,6 +2345,9 @@ main() {
             tmdb-config)
                 configure_tmdb
                 ;;
+            performance|perf|retry)
+                configure_performance
+                ;;
             ffprobe)
                 reconfigure_ffprobe
                 ;;
@@ -2208,9 +2404,10 @@ main() {
                 echo "    strm-root       修改 STRM 根目录"
                 echo "    strm-dir        修改 STRM 根目录（同 strm-root）"
                 echo "    ffprobe         重新配置 FFprobe"
-                echo "    strm-config     配置 STRM 处理选项（阶段1）"
-                echo "    alist-config    配置 Alist 集成（阶段1）"
-                echo "    tmdb-config     配置 TMDB 元数据刮削（阶段2）"
+                echo "    strm-config     配置 STRM 处理选项"
+                echo "    alist-config    配置 Alist 集成"
+                echo "    tmdb-config     配置 TMDB 元数据刮削"
+                echo "    performance     配置性能与重试参数"
                 echo "    emby            配置 Emby 媒体库集成"
                 echo "    edit            直接编辑配置文件"
                 echo ""

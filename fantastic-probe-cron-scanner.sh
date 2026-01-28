@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.2.0"  # 硬编码默认值 - 完成三阶段改造 + 目录结构检测 + 线性流程优化
+VERSION="3.2.1"  # 硬编码默认值 - 完成三阶段改造 + 目录结构检测 + 线性流程优化
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.2.0")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.2.1")
 fi
 
 #==============================================================================
@@ -35,7 +35,7 @@ ERROR_LOG_FILE="/var/log/fantastic_probe_errors.log"
 CRON_LOCK_FILE="/tmp/fantastic_probe_cron_scanner.lock"
 FAILURE_CACHE_DB="/var/lib/fantastic-probe/failure_cache.db"
 MAX_RETRY_COUNT=3  # 失败多少次后停止尝试
-SCAN_BATCH_SIZE=10  # 每次扫描最多处理多少个文件
+SCAN_BATCH_SIZE=50  # 每次扫描最多处理多少个文件
 
 # 加载配置文件
 if [ -f "$CONFIG_FILE" ]; then

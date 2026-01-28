@@ -23,7 +23,7 @@ STRM_ROOT="/mnt/sata1/media/媒体库/strm"
 FFPROBE="/usr/bin/ffprobe"
 
 #------------------------------------------------------------------------------
-# STRM 处理配置（新增）
+# STRM 处理配置
 #------------------------------------------------------------------------------
 
 # 启用 STRM 文件处理（含 ISO.STRM 和普通 STRM）
@@ -79,8 +79,19 @@ FFPROBE_LOCAL_PROBESIZE="20M"
 # 注意：会增加处理时间，建议设为 false
 VALIDATE_HTTP_LINK=false
 
+# FFprobe 重试配置（普通 STRM）
+# 说明：普通STRM文件（HTTP/本地）的FFprobe重试机制
+# FFprobe 重试次数（普通 STRM）
+# 推荐值：3（与ISO重试次数一致）
+FFPROBE_RETRY_COUNT=3
+
+# FFprobe 重试间隔（秒，普通 STRM）
+# 说明：重试等待时间（第1次重试、第2次重试、第3次重试）
+# 推荐值：HTTP链接较快，使用较短间隔
+FFPROBE_RETRY_INTERVALS="10 5 3"
+
 #------------------------------------------------------------------------------
-# TMDB 元数据刮削配置（阶段2）
+# TMDB 元数据刮削配置
 #------------------------------------------------------------------------------
 
 # 启用 NFO 元数据生成
@@ -106,6 +117,28 @@ DOWNLOAD_IMAGES=true
 # TMDB API 超时时间（秒）
 # 说明：单次 API 请求的超时时间
 TMDB_TIMEOUT=30
+
+# TMDB API 速率限制配置
+# 说明：防止触发 TMDB 官方速率限制（40请求/10秒）
+# TMDB API 请求间隔（毫秒）
+# 推荐值：500（2请求/秒，50%安全裕度）
+# 范围：300-1000（过小会触发风控，过大影响速度）
+TMDB_REQUEST_INTERVAL=500
+
+# TMDB API 重试次数
+# 说明：单次API调用失败后的重试次数
+# 推荐值：3
+TMDB_RETRY_COUNT=3
+
+# TMDB 429错误等待时间（秒）
+# 说明：收到速率限制错误后的等待时间
+# 推荐值：10
+TMDB_RETRY_DELAY_429=10
+
+# TMDB 其他错误等待时间（秒）
+# 说明：其他错误（网络抖动等）的重试等待时间
+# 推荐值：3
+TMDB_RETRY_DELAY_OTHER=3
 
 # 并行处理阶段1和阶段2
 # 值：true 或 false
@@ -170,12 +203,45 @@ CRON_MAX_RETRY_COUNT=3
 
 # Cron 扫描模式的单次扫描文件限制
 # 说明：每次扫描最多处理多少个文件（防止长时间运行）
-# 推荐值：10（每个文件处理 300-600 秒，总时间 50-100 分钟）
-CRON_SCAN_BATCH_SIZE=10
+# 推荐值：50（每个文件处理 50-200 秒，总时间 42-167 分钟）
+CRON_SCAN_BATCH_SIZE=50
 
 # 失败缓存数据库路径
 # 说明：存储 Cron 模式中失败文件的重试次数和错误信息
 FAILURE_CACHE_DB="/var/lib/fantastic-probe/failure_cache.db"
+
+# 任务处理间隔配置
+# 说明：处理不同文件之间的等待时间，防止触发云盘/API限流
+# 任务处理间隔（秒）
+# 推荐值：
+#   - 本地NAS：0-5秒（无限制，快速处理）
+#   - Alist/CloudDrive（云盘）：10秒（当前默认，防止云盘限流）
+#   - ISO处理：30秒（等待FUSE缓存）
+TASK_PROCESSING_INTERVAL=10
+
+# 存储类型检测（可选）
+# 值：auto, local, cloud, fuse
+# 说明：
+#   - auto：自动检测（推荐，根据ALIST_ADDR判断）
+#   - local：本地/NAS存储（使用0秒间隔）
+#   - cloud：云盘存储（使用10秒间隔）
+#   - fuse：FUSE挂载（使用30秒间隔）
+STORAGE_TYPE=auto
+
+# 图片下载重试配置
+# 说明：TMDB图片下载失败后的重试机制
+# 图片下载重试次数
+# 推荐值：2（快速重试，避免影响整体速度）
+IMAGE_DOWNLOAD_RETRY_COUNT=2
+
+# 图片下载重试间隔（秒）
+# 推荐值：2（快速重试）
+IMAGE_DOWNLOAD_RETRY_DELAY=2
+
+# 图片下载校验（最小文件大小，字节）
+# 说明：小于此大小视为下载失败，触发重试
+# 推荐值：1024（1KB）
+IMAGE_DOWNLOAD_MIN_SIZE=1024
 
 #==============================================================================
 # Emby 媒体库集成配置（可选）
