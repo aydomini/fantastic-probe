@@ -1297,6 +1297,293 @@ configure_performance() {
     fi
 }
 
+# 配置 TMDB 网络代理
+configure_tmdb_proxy() {
+    echo ""
+    echo "🌐 配置 TMDB 网络代理"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   说明："
+    echo "   • 解决大陆地区访问 TMDB API 超时问题"
+    echo "   • 支持 HTTP/HTTPS/SOCKS5 代理"
+    echo "   • 代理失败时可自动降级到直连"
+    echo ""
+    echo "   当前状态："
+    echo "     代理启用: ${TMDB_PROXY_ENABLED:-false}"
+    echo "     代理地址: ${TMDB_PROXY_URL:-(未配置)}"
+    echo "     代理超时: ${TMDB_PROXY_TIMEOUT:-60}秒"
+    echo "     降级策略: ${TMDB_PROXY_FALLBACK:-direct}"
+    echo ""
+
+    # 询问是否启用
+    local current_enabled="${TMDB_PROXY_ENABLED:-false}"
+    local enable_prompt="y/N"
+    if [ "$current_enabled" = "true" ]; then
+        enable_prompt="Y/n"
+    fi
+
+    read -p "   是否启用 TMDB 代理？[$enable_prompt]: " enable_proxy
+
+    if [ "$current_enabled" = "true" ]; then
+        enable_proxy="${enable_proxy:-Y}"
+    else
+        enable_proxy="${enable_proxy:-N}"
+    fi
+
+    if [[ "$enable_proxy" =~ ^[Yy]$ ]]; then
+        # 启用代理
+        echo ""
+        echo "   配置代理参数："
+        echo ""
+
+        # 配置代理 URL
+        echo "   📍 代理服务器地址"
+        echo "      格式：http://host:port 或 socks5://host:port"
+        echo "      常见代理："
+        echo "        • Clash: http://127.0.0.1:7890"
+        echo "        • V2Ray: http://127.0.0.1:10809"
+        echo "        • Shadowsocks + Privoxy: http://127.0.0.1:8118"
+        echo "        • Shadowsocks SOCKS5: socks5://127.0.0.1:1080"
+        if [ -n "${TMDB_PROXY_URL:-}" ]; then
+            read -p "      请输入代理地址 [留空保持当前]: " new_proxy_url
+            new_proxy_url="${new_proxy_url:-$TMDB_PROXY_URL}"
+        else
+            read -p "      请输入代理地址: " new_proxy_url
+        fi
+
+        # 验证代理地址
+        if [ -z "$new_proxy_url" ]; then
+            echo ""
+            echo "   ❌ 代理地址不能为空"
+            echo "   ℹ️  操作已取消"
+            return 1
+        fi
+
+        # 配置超时时间
+        echo ""
+        echo "   ⏱️  代理超时时间"
+        echo "      说明：使用代理时的超时时间（通常比直连慢）"
+        read -p "      超时时间(秒) [默认: 60]: " new_proxy_timeout
+        new_proxy_timeout="${new_proxy_timeout:-60}"
+
+        # 配置降级策略
+        echo ""
+        echo "   🔄 代理失败降级策略"
+        echo "      direct: 代理失败后尝试直连（推荐）"
+        echo "      fail: 代理失败直接报错"
+        read -p "      降级策略 [默认: direct]: " new_proxy_fallback
+        new_proxy_fallback="${new_proxy_fallback:-direct}"
+
+        # 测试代理连接（可选）
+        echo ""
+        read -p "   是否测试代理连接？[Y/n]: " test_proxy
+        test_proxy="${test_proxy:-Y}"
+
+        if [[ "$test_proxy" =~ ^[Yy]$ ]]; then
+            echo "   正在测试代理连接..."
+
+            if command -v curl &> /dev/null; then
+                local test_response
+                test_response=$(curl -s --max-time 10 --proxy "$new_proxy_url" \
+                    -w "\n%{http_code}" \
+                    "https://api.themoviedb.org/3/configuration?api_key=${TMDB_API_KEY:-test}" 2>&1)
+
+                local test_http_code=$(echo "$test_response" | tail -1)
+
+                if [ "$test_http_code" = "200" ]; then
+                    echo "   ✅ 代理连接测试成功！"
+                elif [ "$test_http_code" = "401" ] && [ -z "${TMDB_API_KEY:-}" ]; then
+                    echo "   ✅ 代理连接正常（需配置 TMDB API Key）"
+                else
+                    echo "   ⚠️  代理连接测试失败（HTTP $test_http_code）"
+                    echo "   ℹ️  请检查代理地址是否正确"
+                    read -p "   是否仍要保存配置？[y/N]: " save_anyway
+                    save_anyway="${save_anyway:-N}"
+
+                    if [[ ! "$save_anyway" =~ ^[Yy]$ ]]; then
+                        echo "   ℹ️  操作已取消"
+                        return 1
+                    fi
+                fi
+            else
+                echo "   ⚠️  curl 命令不可用，跳过连接测试"
+            fi
+        fi
+
+        # 保存配置
+        echo ""
+        update_config_line "TMDB_PROXY_ENABLED" "true"
+        update_config_line "TMDB_PROXY_URL" "$new_proxy_url"
+        update_config_line "TMDB_PROXY_TIMEOUT" "$new_proxy_timeout"
+        update_config_line "TMDB_PROXY_FALLBACK" "$new_proxy_fallback"
+
+        TMDB_PROXY_ENABLED="true"
+        TMDB_PROXY_URL="$new_proxy_url"
+        TMDB_PROXY_TIMEOUT="$new_proxy_timeout"
+        TMDB_PROXY_FALLBACK="$new_proxy_fallback"
+
+        echo "   ✅ TMDB 代理已启用"
+    else
+        # 禁用代理
+        update_config_line "TMDB_PROXY_ENABLED" "false"
+        TMDB_PROXY_ENABLED="false"
+        echo "   ✅ TMDB 代理已禁用"
+    fi
+
+    # 询问是否重启服务
+    echo ""
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已更新，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+        else
+            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        fi
+    fi
+}
+
+# 清空任务队列（智能锁清理）
+clear_queue() {
+    echo ""
+    echo "🧹 清空任务队列"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   说明："
+    echo "   • 用于解决任务卡住导致队列阻塞的问题"
+    echo "   • 会智能检测并清理卡住的进程和锁文件"
+    echo "   • 适用场景：TMDB 超时、进程异常退出等"
+    echo ""
+
+    local lock_file="/tmp/fantastic_probe_cron_scanner.lock"
+
+    # 检查锁文件是否存在
+    if [ ! -f "$lock_file" ]; then
+        echo "   ✅ 队列正常，无需清理"
+        echo "   ℹ️  当前没有检测到锁文件"
+        return 0
+    fi
+
+    # 读取锁文件中的 PID
+    local pid=$(cat "$lock_file" 2>/dev/null)
+
+    if [ -z "$pid" ]; then
+        echo "   ⚠️  检测到僵尸锁文件（无 PID 信息）"
+        read -p "   是否删除锁文件？[Y/n]: " confirm
+        confirm="${confirm:-Y}"
+
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            rm -f "$lock_file"
+            echo "   ✅ 僵尸锁文件已删除"
+        else
+            echo "   ℹ️  操作已取消"
+        fi
+        return 0
+    fi
+
+    echo "   🔍 检测到锁文件"
+    echo "      锁文件: $lock_file"
+    echo "      进程 PID: $pid"
+    echo ""
+
+    # 检查进程是否真的存在
+    if ps -p "$pid" > /dev/null 2>&1; then
+        echo "   ⚠️  检测到运行中的进程"
+        ps -p "$pid" -o pid,cmd,etime | tail -1
+        echo ""
+        echo "   处理选项："
+        echo "     1) 温柔终止进程（推荐，等待进程正常退出）"
+        echo "     2) 强制杀死进程（立即终止，可能丢失数据）"
+        echo "     3) 取消操作"
+        echo ""
+        read -p "   请选择 [1/2/3，默认: 1]: " kill_choice
+        kill_choice="${kill_choice:-1}"
+
+        case "$kill_choice" in
+            1)
+                echo "   📤 发送 SIGTERM 信号（温柔终止）..."
+                kill "$pid" 2>/dev/null
+
+                echo "   ⏳ 等待进程退出（最多 10 秒）..."
+                local wait_count=0
+                while ps -p "$pid" > /dev/null 2>&1 && [ $wait_count -lt 10 ]; do
+                    sleep 1
+                    wait_count=$((wait_count + 1))
+                done
+
+                if ps -p "$pid" > /dev/null 2>&1; then
+                    echo "   ⚠️  进程未能正常退出，需要强制终止"
+                    read -p "   是否强制杀死进程？[Y/n]: " force_kill
+                    force_kill="${force_kill:-Y}"
+
+                    if [[ "$force_kill" =~ ^[Yy]$ ]]; then
+                        echo "   💥 发送 SIGKILL 信号（强制终止）..."
+                        kill -9 "$pid" 2>/dev/null
+                        sleep 1
+
+                        if ps -p "$pid" > /dev/null 2>&1; then
+                            echo "   ❌ 进程无法终止，请手动处理"
+                            return 1
+                        else
+                            echo "   ✅ 进程已强制终止"
+                        fi
+                    else
+                        echo "   ℹ️  操作已取消"
+                        return 1
+                    fi
+                else
+                    echo "   ✅ 进程已正常退出"
+                fi
+                ;;
+            2)
+                echo "   💥 强制终止进程..."
+                kill -9 "$pid" 2>/dev/null
+                sleep 1
+
+                if ps -p "$pid" > /dev/null 2>&1; then
+                    echo "   ❌ 进程无法终止，请手动处理"
+                    return 1
+                else
+                    echo "   ✅ 进程已强制终止"
+                fi
+                ;;
+            3)
+                echo "   ℹ️  操作已取消"
+                return 0
+                ;;
+            *)
+                echo "   ❌ 无效选择"
+                return 1
+                ;;
+        esac
+    else
+        echo "   ⚠️  进程不存在，检测到僵尸锁"
+    fi
+
+    # 清理锁文件
+    echo ""
+    echo "   🧹 清理锁文件..."
+    if [ -f "$lock_file" ]; then
+        rm -f "$lock_file"
+        echo "   ✅ 锁文件已删除"
+    else
+        echo "   ✅ 锁文件已自动清理"
+    fi
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   ✅ 队列清理完成！"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "   💡 提示："
+    echo "      • 下次 Cron 任务将正常执行"
+    echo "      • 如果问题反复出现，请配置 TMDB 代理"
+    echo "      • 查看实时日志: tail -f /var/log/fantastic_probe.log"
+    echo ""
+}
+
 # 直接编辑配置文件
 edit_config_file() {
     echo ""
@@ -2109,13 +2396,14 @@ reset_single_file_failure() {
 failure_menu() {
     while true; do
         echo ""
-        echo "【失败文件管理】"
+        echo "【故障排查】"
         echo "  1) 查看失败文件列表"
         echo "  2) 清空失败缓存"
         echo "  3) 重置单个文件的失败记录"
+        echo "  4) 清空任务队列（解锁）"
         echo "  0) 返回主菜单"
         echo ""
-        read -p "请选择 [0-3]: " fail_choice
+        read -p "请选择 [0-4]: " fail_choice
         echo ""
 
         case "$fail_choice" in
@@ -2129,6 +2417,10 @@ failure_menu() {
                 ;;
             3)
                 reset_single_file_failure
+                read -p "按 Enter 继续..."
+                ;;
+            4)
+                clear_queue
                 read -p "按 Enter 继续..."
                 ;;
             0)
@@ -2267,7 +2559,7 @@ show_menu() {
     echo "  3) 直接编辑配置文件"
     echo ""
     echo "  【快捷菜单】"
-    echo "  4) 失败文件管理"
+    echo "  4) 故障排查"
     echo "  5) 服务管理"
     echo "  6) 日志管理"
     echo "  7) 系统管理（更新、卸载）"
@@ -2292,11 +2584,12 @@ show_menu() {
                 echo "  3) 配置 STRM 处理选项"
                 echo "  4) 配置 Alist 集成"
                 echo "  5) 配置 TMDB 元数据刮削"
-                echo "  6) 配置 Emby 媒体库集成"
-                echo "  7) 配置性能与重试参数"
+                echo "  6) 配置 TMDB 网络代理"
+                echo "  7) 配置 Emby 媒体库集成"
+                echo "  8) 配置性能与重试参数"
                 echo "  0) 返回主菜单"
                 echo ""
-                read -p "请选择 [0-7]: " config_choice
+                read -p "请选择 [0-8]: " config_choice
                 echo ""
 
                 case "$config_choice" in
@@ -2316,9 +2609,12 @@ show_menu() {
                         configure_tmdb
                         ;;
                     6)
-                        configure_emby
+                        configure_tmdb_proxy
                         ;;
                     7)
+                        configure_emby
+                        ;;
+                    8)
                         configure_performance
                         ;;
                     0)
@@ -2384,6 +2680,9 @@ main() {
             tmdb-config)
                 configure_tmdb
                 ;;
+            tmdb-proxy|proxy-config)
+                configure_tmdb_proxy
+                ;;
             performance|perf|retry)
                 configure_performance
                 ;;
@@ -2395,6 +2694,9 @@ main() {
                 ;;
             edit)
                 edit_config_file
+                ;;
+            clear-queue|queue-clear)
+                clear_queue
                 ;;
             restart)
                 restart_service
@@ -2446,14 +2748,16 @@ main() {
                 echo "    strm-config     配置 STRM 处理选项"
                 echo "    alist-config    配置 Alist 集成"
                 echo "    tmdb-config     配置 TMDB 元数据刮削"
+                echo "    tmdb-proxy      配置 TMDB 网络代理"
                 echo "    performance     配置性能与重试参数"
                 echo "    emby            配置 Emby 媒体库集成"
                 echo "    edit            直接编辑配置文件"
                 echo ""
-                echo "  Cron 模式管理："
+                echo "  故障排查："
                 echo "    failure-list    查看失败文件列表"
                 echo "    failure-clear   清空失败缓存"
                 echo "    failure-reset   重置单个文件的失败记录"
+                echo "    clear-queue     清空任务队列（解锁）"
                 echo ""
                 echo "  服务管理："
                 echo "    restart         重启服务"
