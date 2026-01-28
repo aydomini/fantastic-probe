@@ -295,6 +295,10 @@ show_current_config() {
     echo "    并行处理: ${PARALLEL_STAGE_PROCESSING:-true}"
     echo "    请求间隔: ${TMDB_REQUEST_INTERVAL:-500}ms"
     echo "    重试次数: ${TMDB_RETRY_COUNT:-3}"
+    echo "    代理启用: ${TMDB_PROXY_ENABLED:-false}"
+    echo "    代理地址: ${TMDB_PROXY_URL:-(未配置)}"
+    echo "    代理超时: ${TMDB_PROXY_TIMEOUT:-60}秒"
+    echo "    降级策略: ${TMDB_PROXY_FALLBACK:-direct}"
     echo ""
     echo "  ⚡ 重试与性能配置:"
     echo "    FFprobe重试: ${FFPROBE_RETRY_COUNT:-3}次 (${FFPROBE_RETRY_INTERVALS:-10 5 3}秒)"
@@ -316,16 +320,26 @@ restart_service() {
     echo ""
     echo "🔄 应用配置..."
 
-    # 检查是否使用 Cron 模式（检测 cron 配置文件）
-    if [ -f "/etc/cron.d/fantastic-probe" ]; then
-        # Cron 模式：配置会在下一次定时任务执行时自动生效
-        echo "   ℹ️  检测到 Cron 模式（定时任务）"
-        echo "   ✅ 配置已更新，将在下一次扫描时生效（最多等待 1 分钟）"
-        echo ""
-        echo "   💡 提示："
-        echo "      • Cron 任务每分钟执行一次"
-        echo "      • 配置更改会自动应用，无需手动重启"
-        echo "      • 查看运行日志: tail -f /var/log/fantastic_probe.log"
+    # 检查是否使用 Cron 模式（检测 cron 配置文件或禁用的配置文件）
+    if [ -f "/etc/cron.d/fantastic-probe" ] || [ -f "/etc/cron.d/fantastic-probe.disabled" ]; then
+        # 杀死当前正在运行的 scanner 进程
+        local scanner_pids
+        scanner_pids=$(pgrep -f "fantastic-probe-cron-scanner" 2>/dev/null || true)
+        if [ -n "$scanner_pids" ]; then
+            kill $scanner_pids 2>/dev/null || true
+            echo "   ✅ 正在运行的扫描进程已终止"
+        fi
+
+        # 清理锁文件
+        rm -f /tmp/fantastic_probe_cron_scanner.lock
+
+        # 确保 cron 文件启用
+        if [ -f "/etc/cron.d/fantastic-probe.disabled" ]; then
+            mv /etc/cron.d/fantastic-probe.disabled /etc/cron.d/fantastic-probe
+            echo "   ✅ Cron 任务已重新启用"
+        fi
+
+        echo "   ✅ 配置已更新，将在下一个调度周期生效"
         echo ""
         return 0
     fi
@@ -1673,13 +1687,18 @@ start_service() {
     echo ""
     echo "▶️  启动服务..."
 
-    # 检查是否使用 Cron 模式
-    if [ -f "/etc/cron.d/fantastic-probe" ]; then
-        echo "   ℹ️  Cron 模式: 任务已自动启用"
-        echo "   ✅ Cron 任务配置: /etc/cron.d/fantastic-probe"
-        echo "   ℹ️  任务将每分钟自动执行，无需手动启动"
+    # 检查是否使用 Cron 模式（包括之前被禁用的情况）
+    if [ -f "/etc/cron.d/fantastic-probe.disabled" ]; then
+        mv /etc/cron.d/fantastic-probe.disabled /etc/cron.d/fantastic-probe
+        echo "   ✅ Cron 任务已重新启用"
+        echo "   ℹ️  任务将在下一个调度周期自动执行"
         echo ""
-        echo "   💡 提示: 查看实时日志 tail -f /var/log/fantastic_probe.log"
+        return 0
+    fi
+
+    if [ -f "/etc/cron.d/fantastic-probe" ]; then
+        echo "   ℹ️  Cron 任务已启用，无需操作"
+        echo ""
         return 0
     fi
 
@@ -1699,8 +1718,7 @@ start_service() {
             return 1
         fi
     else
-        echo "   ⚠️  未检测到 systemd 服务"
-        echo "   当前可能使用 Cron 模式，无需手动启动"
+        echo "   ⚠️  未检测到 systemd 服务或 Cron 任务"
     fi
 
     echo ""
@@ -1713,23 +1731,23 @@ stop_service() {
 
     # 检查是否使用 Cron 模式
     if [ -f "/etc/cron.d/fantastic-probe" ]; then
-        echo "   ⚠️  Cron 模式: 无法直接停止定时任务"
-        echo ""
-        echo "   如需停止，请选择以下方式之一："
-        echo "   1️⃣  临时禁用（保留配置）:"
-        echo "      sudo mv /etc/cron.d/fantastic-probe /etc/cron.d/fantastic-probe.disabled"
-        echo ""
-        echo "   2️⃣  永久卸载（删除所有）:"
-        echo "      sudo fp-config uninstall"
-        echo ""
-        read -p "   是否临时禁用 Cron 任务？[y/N]: " disable_cron
-        if [[ "$disable_cron" =~ ^[Yy]$ ]]; then
-            mv /etc/cron.d/fantastic-probe /etc/cron.d/fantastic-probe.disabled
-            echo "   ✅ Cron 任务已禁用"
-            echo "   ℹ️  重新启用: sudo mv /etc/cron.d/fantastic-probe.disabled /etc/cron.d/fantastic-probe"
-        else
-            echo "   ℹ️  操作已取消"
+        # 移动 cron 配置，阻止新任务启动
+        mv /etc/cron.d/fantastic-probe /etc/cron.d/fantastic-probe.disabled
+        echo "   ✅ Cron 任务已禁用"
+
+        # 杀死当前正在运行的 scanner 进程
+        local scanner_pids
+        scanner_pids=$(pgrep -f "fantastic-probe-cron-scanner" 2>/dev/null || true)
+        if [ -n "$scanner_pids" ]; then
+            kill $scanner_pids 2>/dev/null || true
+            echo "   ✅ 正在运行的扫描进程已终止"
         fi
+
+        # 清理锁文件，防止下次启动时被阻塞
+        rm -f /tmp/fantastic_probe_cron_scanner.lock
+
+        echo "   ℹ️  重新启用: sudo fp-config start"
+        echo ""
         return 0
     fi
 

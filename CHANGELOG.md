@@ -11,6 +11,15 @@
 
 ---
 
+## [3.3.2] - 2026-01-28
+
+### 修复
+- **TMDB 代理实际失效**：`tmdb_api_call_with_retry` 中 `-o` 与输出文件分开导致 `--proxy` 被当作文件名，代理从未生效
+- **配置面板缺失 TMDB 代理信息**：`show_current_config` 未展示代理启用状态、地址、超时和降级策略
+- **Cron 模式下停止/启动/重启无效**：`stop_service` 未杀死运行中的 scanner 进程；`start_service` 无法恢复被禁用的 cron；`restart_service` 完全空操作
+
+---
+
 ## [3.3.1] - 2026-01-28
 
 ### 改进

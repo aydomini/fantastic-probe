@@ -99,7 +99,7 @@ tmdb_api_call_with_retry() {
         local http_code
 
         # 构建 curl 参数
-        local curl_opts=(-s -w "%{http_code}" -o)
+        local curl_opts=(-s -w "%{http_code}")
         local current_timeout="$timeout"
         local use_proxy=false
 
@@ -117,7 +117,7 @@ tmdb_api_call_with_retry() {
 
         # 使用临时文件存储响应
         local temp_response=$(mktemp)
-        http_code=$(curl "${curl_opts[@]}" "$temp_response" "$url" 2>&1)
+        http_code=$(curl "${curl_opts[@]}" -o "$temp_response" "$url" 2>&1)
         local curl_exit=$?
         response=$(cat "$temp_response" 2>/dev/null || echo "{}")
         rm -f "$temp_response"
