@@ -1795,8 +1795,8 @@ query_tmdb_movie() {
     cache_key=$(echo -n "$cache_key_raw" | md5sum | awk '{print $1}')
 
     # 检查内存缓存（使用:-语法避免set -u错误）
-    if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE[$cache_key]:-}" ]]; then
-        tmdb_id="${TMDB_ID_CACHE[$cache_key]}"
+    if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE["$cache_key"]:-}" ]]; then
+        tmdb_id="${TMDB_ID_CACHE["$cache_key"]}"
         log_success "  ✅ 从内存缓存获取 TMDB ID: $tmdb_id"
 
         # 用缓存的 ID 查询
@@ -1934,8 +1934,8 @@ query_tmdb_tv() {
         cache_key=$(echo -n "$cache_key_raw" | md5sum | awk '{print $1}')
 
         # 检查内存缓存（使用:-语法避免set -u错误）
-        if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE[$cache_key]:-}" ]]; then
-            tmdb_id="${TMDB_ID_CACHE[$cache_key]}"
+        if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE["$cache_key"]:-}" ]]; then
+            tmdb_id="${TMDB_ID_CACHE["$cache_key"]}"
             log_success "  ✅ 从内存缓存获取 TMDB ID: $tmdb_id"
 
             # 用缓存的 ID 查询
