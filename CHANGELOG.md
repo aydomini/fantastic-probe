@@ -11,6 +11,15 @@
 
 ---
 
+## [3.4.1] - 2026-01-28
+
+### 修复
+- **NFO 生成 bug 修复**：修复 `generate_movie_nfo()` 和 `generate_series_nfo()` 函数中 `nfo_dir` 未定义的错误
+- **jq null 安全修复**：防止 credits_data 为 null 或空数组时 jq 迭代报错，添加 `cast_count` 和 `crew_count` 检查
+- **演员头像下载优化**：仅在有演员数据时才创建 .actors 目录和下载头像，避免无谓的文件操作
+
+---
+
 ## [3.4.0] - 2026-01-28
 
 ### 重大架构重构：阶段顺序互换（NFO 优先）

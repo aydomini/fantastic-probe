@@ -2417,6 +2417,9 @@ generate_movie_nfo() {
     local tmdb_data="$1"
     local output_file="$2"
 
+    # 从输出文件路径提取目录路径
+    local nfo_dir=$(dirname "$output_file")
+
     log_info "  生成电影 NFO: $output_file"
 
     # 提取字段
@@ -2516,53 +2519,61 @@ EOF
     fi
 
     # 添加演员信息（前10位主演）
-    if [[ -n "$credits_data" && "$credits_data" != "{}" ]]; then
+    if [[ -n "$credits_data" && "$credits_data" != "{}" && "$credits_data" != "null" ]]; then
         # 创建 .actors 目录用于存放演员头像
         local actors_dir="${nfo_dir}/.actors"
         mkdir -p "$actors_dir" 2>/dev/null || true
 
         # 添加编剧信息
-        echo "$credits_data" | jq -r '(.crew // []) | map(select(.job == "Screenplay" or .job == "Writer")) | unique_by(.name) | .[] |
-            "    <writer>" + .name + "</writer>"' >> "$output_file"
+        local crew_count=$(echo "$credits_data" | jq -r '(.crew // []) | length')
+        if [[ "$crew_count" -gt 0 ]]; then
+            echo "$credits_data" | jq -r '((.crew // []) | map(select(.job == "Screenplay" or .job == "Writer")) | unique_by(.name))[] |
+                "    <writer>" + .name + "</writer>"' 2>/dev/null >> "$output_file"
+        fi
 
-        # 添加演员并下载头像
-        echo "$credits_data" | jq -r '(.cast // [])[:10] | .[] | @json' | while IFS= read -r actor_json; do
-            local actor_name=$(echo "$actor_json" | jq -r '.name // ""')
-            local actor_role=$(echo "$actor_json" | jq -r '.character // ""')
-            local profile_path=$(echo "$actor_json" | jq -r '.profile_path // ""')
+        # 添加演员并下载头像（使用数组方式防止 null 迭代错误）
+        local cast_count=$(echo "$credits_data" | jq -r '(.cast // []) | length')
+        if [[ "$cast_count" -gt 0 ]]; then
+            echo "$credits_data" | jq -r '((.cast // [])[:10])[] | @json' 2>/dev/null | while IFS= read -r actor_json; do
+                local actor_name=$(echo "$actor_json" | jq -r '.name // ""')
+                local actor_role=$(echo "$actor_json" | jq -r '.character // ""')
+                local profile_path=$(echo "$actor_json" | jq -r '.profile_path // ""')
 
-            # 写入演员信息到 NFO
-            echo "    <actor>" >> "$output_file"
-            echo "        <name>$actor_name</name>" >> "$output_file"
-            echo "        <role>$actor_role</role>" >> "$output_file"
-            echo "        <type>Actor</type>" >> "$output_file"
+                # 写入演员信息到 NFO
+                echo "    <actor>" >> "$output_file"
+                echo "        <name>$actor_name</name>" >> "$output_file"
+                echo "        <role>$actor_role</role>" >> "$output_file"
+                echo "        <type>Actor</type>" >> "$output_file"
 
-            # 下载演员头像（如果有）
-            if [[ -n "$profile_path" && "$profile_path" != "null" ]]; then
-                local thumb_url="https://image.tmdb.org/t/p/w185${profile_path}"
-                local thumb_file="${actors_dir}/${actor_name}.jpg"
+                # 下载演员头像（如果有）
+                if [[ -n "$profile_path" && "$profile_path" != "null" ]]; then
+                    local thumb_url="https://image.tmdb.org/t/p/w185${profile_path}"
+                    local thumb_file="${actors_dir}/${actor_name}.jpg"
 
-                # 如果头像不存在，则下载
-                if [[ ! -f "$thumb_file" ]]; then
-                    log_debug "  下载演员头像: $actor_name"
-                    if download_image_with_retry "$thumb_url" "$thumb_file" "演员头像"; then
-                        echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
+                    # 如果头像不存在，则下载
+                    if [[ ! -f "$thumb_file" ]]; then
+                        log_debug "  下载演员头像: $actor_name"
+                        if download_image_with_retry "$thumb_url" "$thumb_file" "演员头像"; then
+                            echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
+                        else
+                            # 下载失败，使用 URL
+                            echo "        <thumb>$thumb_url</thumb>" >> "$output_file"
+                        fi
                     else
-                        # 下载失败，使用 URL
-                        echo "        <thumb>$thumb_url</thumb>" >> "$output_file"
+                        # 使用本地文件
+                        echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
                     fi
-                else
-                    # 使用本地文件
-                    echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
                 fi
-            fi
 
-            echo "    </actor>" >> "$output_file"
-        done
+                echo "    </actor>" >> "$output_file"
+            done
+        fi
 
         # 添加导演信息
-        echo "$credits_data" | jq -r '(.crew // []) | map(select(.job == "Director")) | .[] |
-            "    <director>" + .name + "</director>"' >> "$output_file"
+        if [[ "$crew_count" -gt 0 ]]; then
+            echo "$credits_data" | jq -r '((.crew // []) | map(select(.job == "Director")))[] |
+                "    <director>" + .name + "</director>"' 2>/dev/null >> "$output_file"
+        fi
     fi
 
     # 结束标签
@@ -2640,6 +2651,9 @@ EOF
 generate_series_nfo() {
     local tmdb_data="$1"
     local output_file="$2"
+
+    # 从输出文件路径提取目录路径
+    local nfo_dir=$(dirname "$output_file")
 
     log_info "  生成总剧集 NFO: $output_file"
 
@@ -2720,49 +2734,55 @@ EOF
     fi
 
     # 添加演员信息（前15位主演）
-    if [[ -n "$credits_data" && "$credits_data" != "{}" ]]; then
+    if [[ -n "$credits_data" && "$credits_data" != "{}" && "$credits_data" != "null" ]]; then
         # 创建 .actors 目录用于存放演员头像
         local actors_dir="${nfo_dir}/.actors"
         mkdir -p "$actors_dir" 2>/dev/null || true
 
-        # 添加演员并下载头像
-        echo "$credits_data" | jq -r '(.cast // [])[:15] | .[] | @json' | while IFS= read -r actor_json; do
-            local actor_name=$(echo "$actor_json" | jq -r '.name // ""')
-            local actor_role=$(echo "$actor_json" | jq -r '.character // ""')
-            local profile_path=$(echo "$actor_json" | jq -r '.profile_path // ""')
+        # 添加演员并下载头像（使用数组方式防止 null 迭代错误）
+        local cast_count=$(echo "$credits_data" | jq -r '(.cast // []) | length')
+        if [[ "$cast_count" -gt 0 ]]; then
+            echo "$credits_data" | jq -r '((.cast // [])[:15])[] | @json' 2>/dev/null | while IFS= read -r actor_json; do
+                local actor_name=$(echo "$actor_json" | jq -r '.name // ""')
+                local actor_role=$(echo "$actor_json" | jq -r '.character // ""')
+                local profile_path=$(echo "$actor_json" | jq -r '.profile_path // ""')
 
-            # 写入演员信息到 NFO
-            echo "    <actor>" >> "$output_file"
-            echo "        <name>$actor_name</name>" >> "$output_file"
-            echo "        <role>$actor_role</role>" >> "$output_file"
-            echo "        <type>Actor</type>" >> "$output_file"
+                # 写入演员信息到 NFO
+                echo "    <actor>" >> "$output_file"
+                echo "        <name>$actor_name</name>" >> "$output_file"
+                echo "        <role>$actor_role</role>" >> "$output_file"
+                echo "        <type>Actor</type>" >> "$output_file"
 
-            # 下载演员头像（如果有）
-            if [[ -n "$profile_path" && "$profile_path" != "null" ]]; then
-                local thumb_url="https://image.tmdb.org/t/p/w185${profile_path}"
-                local thumb_file="${actors_dir}/${actor_name}.jpg"
+                # 下载演员头像（如果有）
+                if [[ -n "$profile_path" && "$profile_path" != "null" ]]; then
+                    local thumb_url="https://image.tmdb.org/t/p/w185${profile_path}"
+                    local thumb_file="${actors_dir}/${actor_name}.jpg"
 
-                # 如果头像不存在，则下载
-                if [[ ! -f "$thumb_file" ]]; then
-                    log_debug "  下载演员头像: $actor_name"
-                    if download_image_with_retry "$thumb_url" "$thumb_file" "演员头像"; then
-                        echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
+                    # 如果头像不存在，则下载
+                    if [[ ! -f "$thumb_file" ]]; then
+                        log_debug "  下载演员头像: $actor_name"
+                        if download_image_with_retry "$thumb_url" "$thumb_file" "演员头像"; then
+                            echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
+                        else
+                            # 下载失败，使用 URL
+                            echo "        <thumb>$thumb_url</thumb>" >> "$output_file"
+                        fi
                     else
-                        # 下载失败，使用 URL
-                        echo "        <thumb>$thumb_url</thumb>" >> "$output_file"
+                        # 使用本地文件
+                        echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
                     fi
-                else
-                    # 使用本地文件
-                    echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
                 fi
-            fi
 
-            echo "    </actor>" >> "$output_file"
-        done
+                echo "    </actor>" >> "$output_file"
+            done
+        fi
 
         # 添加导演信息（电视剧可能有多个导演）
-        echo "$credits_data" | jq -r '(.crew // []) | map(select(.job == "Executive Producer" or .job == "Creator")) | unique_by(.name) | .[] |
-            "    <director>" + .name + "</director>"' >> "$output_file"
+        local crew_count=$(echo "$credits_data" | jq -r '(.crew // []) | length')
+        if [[ "$crew_count" -gt 0 ]]; then
+            echo "$credits_data" | jq -r '((.crew // []) | map(select(.job == "Executive Producer" or .job == "Creator")) | unique_by(.name))[] |
+                "    <director>" + .name + "</director>"' 2>/dev/null >> "$output_file"
+        fi
     fi
 
     # 结束标签
