@@ -1630,14 +1630,14 @@ extract_metadata_from_filename() {
 
     # 提取 tmdbid（从完整路径提取，支持多种格式）
     local tmdbid=""
-    # 格式1: [tmdbid-12345]
-    if [[ "$filename" =~ \[tmdbid-([0-9]+)\] ]]; then
-        tmdbid="${BASH_REMATCH[1]}"
-        log_info "  ✅ 从文件名提取 TMDB ID: $tmdbid (格式1)"
+    # 格式1: [tmdbid-12345] 或 [tmdb-12345]
+    if [[ "$filename" =~ \[tmdb(id)?-([0-9]+)\] ]]; then
+        tmdbid="${BASH_REMATCH[2]}"
+        log_info "  ✅ 从文件名提取 TMDB ID: $tmdbid (格式1: 方括号)"
     # 格式2: {tmdbid=12345} 或 {tmdb-12345} 或 {tmdb=12345}
     elif [[ "$filename" =~ \{tmdb(id)?[=-]([0-9]+)\} ]]; then
         tmdbid="${BASH_REMATCH[2]}"
-        log_info "  ✅ 从文件名提取 TMDB ID: $tmdbid (格式2)"
+        log_info "  ✅ 从文件名提取 TMDB ID: $tmdbid (格式2: 花括号)"
     fi
 
     # 提取年份（从完整路径提取，支持多种格式）
@@ -1663,7 +1663,7 @@ extract_metadata_from_filename() {
     local title="$filename"
 
     # 移除 tmdbid（支持多种格式）
-    title=$(echo "$title" | sed -E 's/\s*-?\s*\[tmdbid-[0-9]+\]//g')
+    title=$(echo "$title" | sed -E 's/\s*-?\s*\[tmdb(id)?-[0-9]+\]//g')
     title=$(echo "$title" | sed -E 's/\s*\{tmdb(id)?[=-][0-9]+\}//g')
 
     # 移除年份（只匹配括号或点号包围的年份，避免误匹配1080p等）
@@ -1794,9 +1794,9 @@ query_tmdb_movie() {
     local cache_key
     cache_key=$(echo -n "$cache_key_raw" | md5sum | awk '{print $1}')
 
-    # 检查内存缓存
-    if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE["$cache_key"]}" ]]; then
-        tmdb_id="${TMDB_ID_CACHE["$cache_key"]}"
+    # 检查内存缓存（使用:-语法避免set -u错误）
+    if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE[$cache_key]:-}" ]]; then
+        tmdb_id="${TMDB_ID_CACHE[$cache_key]}"
         log_success "  ✅ 从内存缓存获取 TMDB ID: $tmdb_id"
 
         # 用缓存的 ID 查询
@@ -1933,9 +1933,9 @@ query_tmdb_tv() {
         local cache_key
         cache_key=$(echo -n "$cache_key_raw" | md5sum | awk '{print $1}')
 
-        # 检查内存缓存
-        if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE["$cache_key"]}" ]]; then
-            tmdb_id="${TMDB_ID_CACHE["$cache_key"]}"
+        # 检查内存缓存（使用:-语法避免set -u错误）
+        if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE[$cache_key]:-}" ]]; then
+            tmdb_id="${TMDB_ID_CACHE[$cache_key]}"
             log_success "  ✅ 从内存缓存获取 TMDB ID: $tmdb_id"
 
             # 用缓存的 ID 查询
