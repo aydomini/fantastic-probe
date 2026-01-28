@@ -1715,11 +1715,38 @@ extract_metadata_from_filename() {
 }
 
 #------------------------------------------------------------------------------
-# URL 编码函数
+# URL 编码函数（支持 UTF-8 中文字符）
 #------------------------------------------------------------------------------
 
 urlencode() {
     local string="$1"
+
+    # 优先使用 jq（最可靠，项目已依赖 jq）
+    if command -v jq &> /dev/null; then
+        echo -n "$string" | jq -sRr @uri
+        return 0
+    fi
+
+    # 回退方案1：使用 Python
+    if command -v python3 &> /dev/null; then
+        python3 -c "import urllib.parse; print(urllib.parse.quote('$string'))"
+        return 0
+    fi
+
+    # 回退方案2：使用 xxd（纯命令行工具）
+    if command -v xxd &> /dev/null; then
+        echo -n "$string" | xxd -plain | sed 's/\(..\)/%\1/g'
+        return 0
+    fi
+
+    # 回退方案3：使用 Perl
+    if command -v perl &> /dev/null; then
+        perl -MURI::Escape -e 'print uri_escape($ARGV[0]);' "$string"
+        return 0
+    fi
+
+    # 最后兜底：原始方法（仅支持 ASCII）
+    log_warn "  ⚠️  未找到 UTF-8 编码工具，中文搜索可能失败"
     local strlen=${#string}
     local encoded=""
     local pos c o
@@ -1837,6 +1864,20 @@ query_tmdb_movie() {
 
     # 所有搜索词都失败
     log_error "  TMDB 搜索失败，所有搜索词均未匹配"
+
+    # 提供解决建议
+    if [[ -n "$cn_title" && -z "$en_title" ]]; then
+        log_warn "  💡 提示：TMDB 搜索引擎不支持中文检索"
+        log_warn "  💡 建议解决方案："
+        log_warn "     1. 在文件名中添加 [tmdbid-XXXXX] 标识"
+        log_warn "     2. 在文件名中添加英文标题"
+        log_warn "     3. 使用 tinyMediaManager 等工具批量刮削"
+        if [[ -n "$year" ]]; then
+            log_warn "  💡 手动查找："
+            log_warn "     访问 https://www.themoviedb.org/search?query=$(urlencode "$cn_title")"
+        fi
+    fi
+
     return 1
 }
 
@@ -2785,9 +2826,9 @@ scrape_metadata_full() {
         return 0
     fi
 
-    # 1. 从文件名提取信息
+    # 1. 从文件名提取信息（传入完整路径以支持从目录名提取 TMDB ID）
     local metadata
-    metadata=$(extract_metadata_from_filename "$strm_name")
+    metadata=$(extract_metadata_from_filename "$strm_file")
 
     local cn_title=$(echo "$metadata" | cut -d'|' -f1)
     local en_title=$(echo "$metadata" | cut -d'|' -f2)
