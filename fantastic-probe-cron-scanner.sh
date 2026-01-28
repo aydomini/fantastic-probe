@@ -11,7 +11,7 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.3.2"  # 硬编码默认值 - TMDB 代理修复 + 服务管理优化
+VERSION="3.3.3"  # 硬编码默认值 - 中文标题 TMDB 查询修复
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"

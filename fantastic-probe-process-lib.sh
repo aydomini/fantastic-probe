@@ -1793,8 +1793,8 @@ query_tmdb_movie() {
     local cache_key="${cn_title}|${year}"
 
     # 检查内存缓存
-    if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE[$cache_key]}" ]]; then
-        tmdb_id="${TMDB_ID_CACHE[$cache_key]}"
+    if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE["$cache_key"]}" ]]; then
+        tmdb_id="${TMDB_ID_CACHE["$cache_key"]}"
         log_success "  ✅ 从内存缓存获取 TMDB ID: $tmdb_id"
 
         # 用缓存的 ID 查询
@@ -1860,7 +1860,7 @@ query_tmdb_movie() {
             local found_id=$(echo "$tmdb_data" | jq -r '.id')
 
             # 存入内存缓存
-            TMDB_ID_CACHE[$cache_key]="$found_id"
+            TMDB_ID_CACHE["$cache_key"]="$found_id"
             log_debug "  缓存 TMDB ID: $cache_key → $found_id"
 
             log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id, 搜索词: $search_title)"
@@ -1930,8 +1930,8 @@ query_tmdb_tv() {
         local cache_key="${cn_title}|${year}"
 
         # 检查内存缓存
-        if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE[$cache_key]}" ]]; then
-            tmdb_id="${TMDB_ID_CACHE[$cache_key]}"
+        if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE["$cache_key"]}" ]]; then
+            tmdb_id="${TMDB_ID_CACHE["$cache_key"]}"
             log_success "  ✅ 从内存缓存获取 TMDB ID: $tmdb_id"
 
             # 用缓存的 ID 查询
@@ -1996,7 +1996,7 @@ query_tmdb_tv() {
                 local found_id=$(echo "$show_data" | jq -r '.id')
 
                 # 存入内存缓存
-                TMDB_ID_CACHE[$cache_key]="$found_id"
+                TMDB_ID_CACHE["$cache_key"]="$found_id"
                 log_debug "  缓存 TMDB ID: $cache_key → $found_id"
 
                 log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id, 搜索词: $search_title)"
