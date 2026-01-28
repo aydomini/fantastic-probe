@@ -1,5 +1,5 @@
 # Fantastic-Probe Cron 扫描任务
-# 每分钟执行一次扫描，不依赖 inotifywait
+# 每3分钟执行一次扫描，不依赖 inotifywait
 
 # 环境变量设置（必需）
 SHELL=/bin/bash
@@ -8,8 +8,8 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # 日志重定向（可选）
 LOG_FILE="/var/log/fantastic_probe_cron.log"
 
-# 每分钟执行一次扫描
-*/1 * * * * /usr/local/bin/fantastic-probe-cron-scanner >> "$LOG_FILE" 2>&1
+# 每3分钟执行一次扫描
+*/3 * * * * /usr/local/bin/fantastic-probe-cron-scanner >> "$LOG_FILE" 2>&1
 
 # 每小时清空一次失败缓存中的临时锁文件（防止孤立）
 0 * * * * rm -f /tmp/fantastic_probe_cron_scanner.lock 2>/dev/null || true

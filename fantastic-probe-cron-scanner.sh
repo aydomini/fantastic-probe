@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.2.1"  # 硬编码默认值 - 完成三阶段改造 + 目录结构检测 + 线性流程优化
+VERSION="3.2.2"  # 硬编码默认值 - 失败缓存全覆盖 + 扫描周期优化
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.2.1")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.2.2")
 fi
 
 #==============================================================================
@@ -332,7 +332,14 @@ process_iso_strm() {
         fi
 
         if [ $? -ne 0 ]; then
-            log_warn "  ⚠️  阶段2失败（不影响整体成功）"
+            log_warn "  ⚠️  阶段2失败"
+            # 检查阶段1是否完成（有 JSON 文件）
+            if [ -f "${strm_dir}/${strm_name}-mediainfo.json" ]; then
+                # 阶段1完成 + 阶段2失败 → 记录为失败，防止无限重试
+                record_failure "$strm_file" "阶段2失败（NFO或图片）"
+            fi
+            set -e
+            return 1
         else
             log_success "  ✅ 阶段2完成"
         fi

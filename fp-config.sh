@@ -29,6 +29,7 @@ trap cleanup EXIT INT TERM
 # 配置
 #==============================================================================
 
+# SERVICE_NAME 已弃用，保留用于向后兼容检测
 SERVICE_NAME="fantastic-probe-monitor"
 CONFIG_FILE="/etc/fantastic-probe/config"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1454,17 +1455,12 @@ check_updates() {
     echo ""
     echo "   正在检查 GitHub 仓库..."
 
-    # 获取本地版本（优先使用 get-version.sh，回退到直接读取）
+    # 获取本地版本（优先使用 get-version.sh）
     LOCAL_VERSION=""
 
     if [ -f "/usr/local/bin/get-version.sh" ]; then
         # 使用 get-version.sh 获取动态版本号（--version 参数返回纯版本号）
         LOCAL_VERSION=$(bash /usr/local/bin/get-version.sh --version 2>/dev/null || echo "")
-    fi
-
-    # 回退方案：从安装的脚本中读取
-    if [ -z "$LOCAL_VERSION" ] && [ -f "/usr/local/bin/fantastic-probe-monitor" ]; then
-        LOCAL_VERSION=$(grep "^VERSION=" /usr/local/bin/fantastic-probe-monitor | head -1 | cut -d'"' -f2 || echo "unknown")
     fi
 
     # 最终回退
@@ -1541,10 +1537,30 @@ install_updates() {
         return 1
     fi
 
-    # 停止服务
+    # 智能检测并处理服务停止
     echo ""
-    echo "   ⏹️  停止服务..."
-    systemctl stop "$SERVICE_NAME" || true
+    if [ -f "/etc/cron.d/fantastic-probe" ]; then
+        # Cron 模式：无需停止服务
+        echo "   ℹ️  Cron 模式更新，无需停止服务"
+
+        # 检测并清理旧版 systemd 服务（向后兼容）
+        if [ -f "/etc/systemd/system/$SERVICE_NAME.service" ]; then
+            echo "   ⚠️  检测到旧版 systemd 服务，正在清理..."
+            systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+            systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+            rm -f "/etc/systemd/system/$SERVICE_NAME.service"
+            systemctl daemon-reload 2>/dev/null || true
+            echo "   ✅ 已清理旧版 systemd 服务"
+        fi
+    elif systemctl list-unit-files 2>/dev/null | grep -q "^$SERVICE_NAME.service"; then
+        # systemd 模式：停止服务
+        echo "   ⏹️  停止 systemd 服务..."
+        systemctl stop "$SERVICE_NAME" || true
+        echo "   ✅ 服务已停止"
+    else
+        # 未检测到任何服务
+        echo "   ℹ️  未检测到运行中的服务"
+    fi
 
     # 下载并运行安装脚本（保留配置）
     echo ""
@@ -1575,6 +1591,9 @@ install_updates() {
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
             echo "   ℹ️  Cron 模式: 配置已更新"
             echo "   ✅ 任务将在下次扫描时自动应用（最多等待 1 分钟）"
+            echo ""
+            echo "   💡 立即验证新版本："
+            echo "      sudo /usr/local/bin/fantastic-probe-cron-scanner scan"
             echo ""
             echo "   查看运行日志: tail -f /var/log/fantastic_probe.log"
         elif systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
@@ -1673,11 +1692,13 @@ uninstall_service() {
 
     # 5. 删除脚本和工具
     echo "   5️⃣  删除脚本和工具..."
-    rm -f /usr/local/bin/fantastic-probe-monitor
+    rm -f /usr/local/bin/fantastic-probe-cron-scanner
+    rm -f /usr/local/lib/fantastic-probe-process-lib.sh
     rm -f /usr/local/bin/fantastic-probe-auto-update
     rm -f /usr/local/bin/fp-config
     rm -f /usr/local/bin/fantastic-probe-config
     rm -f /usr/local/bin/get-version.sh
+    rm -f /usr/local/bin/parse_mpls_pympls.py
     echo "      ✅ 所有脚本已删除"
 
     # 5.5. 删除预编译包

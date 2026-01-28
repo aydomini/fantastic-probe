@@ -1966,6 +1966,7 @@ query_tmdb_tv() {
             return 1
         fi
     fi
+    fi
 
     # 如果需要查询季和剧集详情
     if [[ -n "$season" && -n "$episode" ]]; then
@@ -2563,7 +2564,6 @@ download_image_with_retry() {
 #------------------------------------------------------------------------------
 
 download_poster() {
-download_poster() {
     local tmdb_data="$1"
     local output_file="$2"
     local api_key="${TMDB_API_KEY}"
@@ -2634,7 +2634,6 @@ download_poster() {
 #------------------------------------------------------------------------------
 
 download_backdrop() {
-download_backdrop() {
     local tmdb_data="$1"
     local output_file="$2"
     local api_key="${TMDB_API_KEY}"
@@ -2704,7 +2703,6 @@ download_backdrop() {
 #   退出码：0=成功，1=失败
 #------------------------------------------------------------------------------
 
-download_episode_thumb() {
 download_episode_thumb() {
     local tmdb_data="$1"
     local output_file="$2"
