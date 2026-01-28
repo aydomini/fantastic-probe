@@ -10,14 +10,6 @@
 # 使用方式: source fantastic-probe-process-lib.sh
 
 #==============================================================================
-# 全局变量 - TMDB ID 内存缓存
-#==============================================================================
-
-# 声明关联数组（Bash 4.0+）
-# 格式：TMDB_ID_CACHE[MD5("标题|年份")]="tmdb_id"
-declare -A TMDB_ID_CACHE
-
-#==============================================================================
 # 全局变量 - TMDB 速率限制
 #==============================================================================
 
@@ -1789,32 +1781,6 @@ query_tmdb_movie() {
     fi
 
     # 多轮搜索策略
-    # 生成缓存键（使用MD5哈希避免特殊字符导致bash解析错误）
-    local cache_key_raw="${cn_title}|${year}"
-    local cache_key
-    cache_key=$(echo -n "$cache_key_raw" | md5sum | awk '{print $1}')
-
-    # 检查内存缓存（使用:-语法避免set -u错误）
-    if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE["$cache_key"]:-}" ]]; then
-        tmdb_id="${TMDB_ID_CACHE["$cache_key"]}"
-        log_success "  ✅ 从内存缓存获取 TMDB ID: $tmdb_id"
-
-        # 用缓存的 ID 查询
-        tmdb_data=$(tmdb_api_call_with_retry \
-            "https://api.themoviedb.org/3/movie/${tmdb_id}?api_key=${api_key}&language=${language}" \
-            "通过缓存ID查询电影")
-
-        if [[ "$tmdb_data" != "{}" ]] && echo "$tmdb_data" | jq -e '.id' >/dev/null 2>&1; then
-            log_debug "  缓存 ID 查询成功"
-            echo "$tmdb_data"
-            return 0
-        else
-            log_warn "  ⚠️  缓存 ID 失效，重新搜索"
-            tmdb_data=""
-        fi
-    fi
-
-    # 如果缓存也没有，执行搜索
     local search_titles=()
 
     # 优先使用中文名（如果有）
@@ -1860,10 +1826,6 @@ query_tmdb_movie() {
         if [[ -n "$tmdb_data" && "$tmdb_data" != "null" ]]; then
             local found_title=$(echo "$tmdb_data" | jq -r '.title')
             local found_id=$(echo "$tmdb_data" | jq -r '.id')
-
-            # 存入内存缓存
-            TMDB_ID_CACHE["$cache_key"]="$found_id"
-            log_debug "  缓存 TMDB ID: $cache_key → $found_id"
 
             log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id, 搜索词: $search_title)"
             echo "$tmdb_data"
@@ -1928,31 +1890,6 @@ query_tmdb_tv() {
 
     # 如果没有数据，尝试多轮搜索
     if [[ -z "$show_data" ]]; then
-        # 生成缓存键（使用MD5哈希避免特殊字符导致bash解析错误）
-        local cache_key_raw="${cn_title}|${year}"
-        local cache_key
-        cache_key=$(echo -n "$cache_key_raw" | md5sum | awk '{print $1}')
-
-        # 检查内存缓存（使用:-语法避免set -u错误）
-        if [[ -z "$tmdb_id" && -n "${TMDB_ID_CACHE["$cache_key"]:-}" ]]; then
-            tmdb_id="${TMDB_ID_CACHE["$cache_key"]}"
-            log_success "  ✅ 从内存缓存获取 TMDB ID: $tmdb_id"
-
-            # 用缓存的 ID 查询
-            show_data=$(tmdb_api_call_with_retry \
-                "https://api.themoviedb.org/3/tv/${tmdb_id}?api_key=${api_key}&language=${language}" \
-                "通过缓存ID查询电视剧")
-
-            if [[ "$show_data" != "{}" ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
-                log_debug "  缓存 ID 查询成功"
-            else
-                log_warn "  ⚠️  缓存 ID 失效，重新搜索"
-                show_data=""
-            fi
-        fi
-
-        # 如果缓存也没有，执行搜索
-        if [[ -z "$show_data" ]]; then
             # 多轮搜索策略
             local search_titles=()
 
@@ -1999,10 +1936,6 @@ query_tmdb_tv() {
                 local found_title=$(echo "$show_data" | jq -r '.name')
                 local found_id=$(echo "$show_data" | jq -r '.id')
 
-                # 存入内存缓存
-                TMDB_ID_CACHE["$cache_key"]="$found_id"
-                log_debug "  缓存 TMDB ID: $cache_key → $found_id"
-
                 log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id, 搜索词: $search_title)"
                 break
             else
@@ -2016,7 +1949,6 @@ query_tmdb_tv() {
             log_error "  TMDB 搜索失败，所有搜索词均未匹配"
             return 1
         fi
-    fi
     fi
 
     # 如果需要查询季和剧集详情
