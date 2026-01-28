@@ -1,6 +1,16 @@
-# Fantastic-Probe - ISO 媒体信息实时提取服务
+# Fantastic-Probe - 媒体信息提取与元数据刮削服务
 
-自动监控 STRM 目录，实时提取 ISO 文件的媒体信息并生成 Emby 兼容的 JSON 文件。
+自动处理 STRM 文件，提取媒体信息并生成 Emby/Kodi 兼容的元数据。
+
+## 核心功能
+
+- ✅ **ISO.STRM 处理** - FFprobe 通过 bluray:/dvd: 协议直接分析 FUSE 挂载的 ISO 文件
+- ✅ **普通 STRM 处理** - 支持 HTTP 直链、Alist 网盘、本地视频文件
+- ✅ **Alist 集成** - 自动获取最新 raw_url，避免链接过期
+- ✅ **TMDB 元数据刮削** - 自动生成 NFO 文件和下载海报/背景图
+- ✅ **电视剧多层级支持** - 完整的 tvshow.nfo + season.nfo + episode.nfo 结构
+- ✅ **Cron 定时扫描** - 每分钟自动扫描，智能重试，批量处理
+- ✅ **失败重试机制** - 自动重试失败文件（最多3次），避免重复处理
 
 ---
 
@@ -313,103 +323,34 @@ EMBY_NOTIFY_TIMEOUT=5
 
 ---
 
-## ffprobe 可以从 ISO.strm 文件中提取的信息
+## 媒体信息提取能力
 
-根据 `fantastic-probe-process-lib.sh` 的实现，ffprobe 可以从 ISO 文件中提取以下媒体信息：
+FFprobe 可以从 ISO 文件中提取以下媒体信息：
 
-### 1. 格式信息（Container）
+### 视频信息
+- 编解码器（H264、HEVC、VC1 等）
+- 分辨率、帧率、宽高比
+- HDR 类型（SDR、HDR10、杜比视界、HLG）
+- 色彩信息（色彩传输、色彩原色、色彩空间）
+- 编码信息（Profile、Level、比特深度、像素格式）
 
-- **容器格式**（Container）：如 `mpegts`、`matroska` 等
-- **时长**（Duration）：媒体总时长（转换为 Emby 的 RunTimeTicks 格式）
-- **比特率**（Bitrate）：整体比特率
-- **文件大小**（Size）：ISO 文件实际大小
+### 音频信息
+- 编解码器（DTS、AC3、TRUEHD、AAC 等）
+- 语言（自动转换为完整语言名称）
+- 声道数（自动识别 mono、stereo、5.1、7.1 等）
+- 采样率、比特率、声道布局
+- 默认音轨和强制音轨标记
 
-### 2. 视频流信息
+### 字幕信息
+- 格式（PGSSUB、DVDSUB、SUBRIP、ASS、WEBVTT 等）
+- 语言（智能识别简繁体中文）
+- 字幕类型（文本/图形、听障字幕）
+- 默认字幕和强制字幕标记
 
-- **编解码器**（Codec）：如 `H264`、`HEVC`、`VC1` 等
-- **分辨率**（Width/Height）：视频宽度和高度
-- **帧率**（FrameRate）：平均帧率和实际帧率
-- **HDR 类型**（VideoRange）：
-  - `SDR`：标准动态范围
-  - `HDR10`：HDR10 格式
-  - `DolbyVision`：杜比视界（包括 Profile 信息）
-  - `HLG`：混合对数伽马
-- **色彩信息**：
-  - 色彩传输特性（ColorTransfer）：如 `smpte2084`（HDR10）、`arib-std-b67`（HLG）
-  - 色彩原色（ColorPrimaries）
-  - 色彩空间（ColorSpace）
-- **编码信息**：
-  - 编码配置（Profile）：如 `High`、`Main` 等
-  - 编码级别（Level）
-  - 参考帧数（RefFrames）
-  - 比特深度（BitDepth）
-  - 像素格式（PixelFormat）
-- **画面特性**：
-  - 宽高比（AspectRatio）
-  - 是否隔行扫描（IsInterlaced）
-
-### 3. 音频流信息
-
-- **编解码器**（Codec）：如 `DTS`、`AC3`、`TRUEHD`、`AAC` 等
-- **语言**（Language）：音轨语言代码（自动转换为完整语言名称）
-  - 支持语言：Chinese、English、Japanese、Korean、Spanish、French、German、Italian、Portuguese、Russian、Arabic、Hindi、Thai、Vietnamese
-- **声道**（Channels）：声道数（如 2、6、8）
-  - 自动识别：mono（单声道）、stereo（立体声）、5.1、7.1 等
-- **采样率**（SampleRate）：音频采样率
-- **比特率**（BitRate）：音频比特率
-- **声道布局**（ChannelLayout）：如 `5.1(side)`
-- **标记**（Disposition）：
-  - 是否默认音轨（IsDefault）
-  - 是否强制音轨（IsForced）
-
-### 4. 字幕流信息
-
-- **格式**（Codec）：如 `PGSSUB`（蓝光字幕）、`DVDSUB`、`SUBRIP`、`ASS`、`WEBVTT` 等
-- **语言**（Language）：字幕语言
-  - 智能识别简繁体中文：
-    - `Chinese Simplified`（简体中文）
-    - `Chinese Traditional`（繁体中文）
-    - `Chinese`（粤语或未区分简繁）
-- **标题**（Title）：字幕标题（如 "中文字幕"、"English (SDH)"）
-- **类型识别**：
-  - 是否文本字幕（IsTextSubtitleStream）
-  - 是否听障字幕（IsHearingImpaired）：自动识别 SDH 标记
-- **标记**（Disposition）：
-  - 是否默认字幕（IsDefault）
-  - 是否强制字幕（IsForced）
-
-### 5. 章节信息
-
-- **章节时间**（StartPositionTicks）：章节起始时间（Emby Ticks 格式）
-- **章节名称**（Name）：章节标题（如 "Chapter 01"、自定义章节名）
-- **章节索引**（ChapterIndex）：章节编号
-
-### 6. 流元数据
-
-- **流索引**（Index）：流在文件中的索引
-- **时间基**（TimeBase）：流的时间基准
-- **Disposition 标记**：
-  - `default`：默认流
-  - `forced`：强制流
-  - `hearing_impaired`：听障辅助
-  - 其他自定义标记
-
-### 7. 高级媒体特性
-
-- **杜比视界信息**（Dolby Vision）：
-  - 自动检测 DV Profile（如 Profile 5、Profile 7）
-  - 提取 DV Level 信息
-  - 生成完整描述（ExtendedVideoSubTypeDescription）
-- **HDR 元数据**：
-  - 自动识别 HDR10、HLG、SDR
-  - 提取色彩传输特性
-- **音频标题智能处理**：
-  - 显示语言 + 编解码器 + 声道布局
-  - 自动标注默认音轨
-- **字幕智能处理**：
-  - 自动识别简繁体中文
-  - 智能标注 SDH（听障字幕）
-  - 显示默认字幕标记
+### 其他信息
+- 容器格式、时长、比特率、文件大小
+- 章节信息（起始时间、名称、索引）
+- 流元数据和 Disposition 标记
 
 ### 输出格式
 
@@ -417,6 +358,7 @@ EMBY_NOTIFY_TIMEOUT=5
 
 ```
 xxx.iso.strm → xxx.iso-mediainfo.json
+xxx.strm → xxx-mediainfo.json
 ```
 
 JSON 文件包含：
@@ -490,7 +432,7 @@ sudo fp-config logs-clear
 # 1. 查看运行日志
 sudo fp-config logs
 
-# 2. 检查文件名格式（必须以 .iso.strm 结尾）
+# 2. 检查文件名格式（必须以 .strm 结尾）
 ls /path/to/strm/
 
 # 3. 查看失败文件列表（Cron 模式）
@@ -545,4 +487,4 @@ sudo fp-config logs-error
 
 **文档**：[CHANGELOG.md](CHANGELOG.md) - 版本历史和更新日志
 
-**最后更新**：2026-01-27
+**最后更新**：2026-01-28

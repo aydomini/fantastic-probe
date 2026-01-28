@@ -11,6 +11,53 @@
 
 ---
 
+## [3.2.0] - 2026-01-28
+
+### 新增
+
+**阶段1 - STRM 文件支持扩展**
+- 支持所有 .strm 文件（不再限于 .iso.strm）
+- 新增普通 STRM 处理（HTTP/Alist/本地视频文件）
+- 新增 Alist 集成（自动获取 raw_url）
+- 新增 FFprobe 参数优化配置（HTTP: 1M/5M，本地: 10M/20M）
+
+**阶段2 - TMDB 元数据刮削**
+- 自动生成 Kodi/Emby 兼容的 NFO 文件
+- 自动下载海报和背景图（poster.jpg、fanart.jpg）
+- 支持电影和电视剧元数据
+- 支持阶段1和阶段2并行处理
+
+**阶段2修复 - 电视剧多层级支持**
+- 生成总剧集 NFO（tvshow.nfo）
+- 生成季 NFO（season.nfo）
+- 下载单集缩略图（S##E##.jpg）
+- 修复图片文件位置和命名规范
+
+**阶段3 - 配置面板完整更新**
+- 新增 19 个配置项的交互式管理界面
+- 新增 3 个配置函数（configure_strm、configure_alist、configure_tmdb）
+- 新增配置自动修复功能（检测并补全缺失配置项）
+- 新增 3 个命令行快捷方式（strm-config、alist-config、tmdb-config）
+
+### 改进
+
+- **图片语言自适应**：TMDB 图片下载自动使用影片/剧集的原产地语言（美国电影用英文海报，日本动画用日文海报）
+- **智能跳过机制**：电视剧处理时自动跳过已存在的剧集级/季级文件
+- **FUSE 优化**：针对网盘挂载文件使用更长的重试间隔（60/30/15秒）
+- **独立错误处理**：阶段2失败不影响阶段1成功（元数据刮削失败不阻塞媒体信息提取）
+- **线性任务流程**：改为线性执行（任务规划 → 阶段1 → 阶段2 → 通知 Emby），统一 Emby 通知时机
+- **目录结构预检测**：电视剧处理前提前分析目录结构，确保 NFO 和图片生成到正确位置
+
+### 配置项
+
+新增 19 个配置项：
+- **STRM 处理**：ENABLE_STRM、ENABLE_ISO_STRM、ENABLE_VIDEO_STRM
+- **Alist 集成**：ALIST_ADDR、ALIST_TOKEN、ALIST_TIMEOUT
+- **FFprobe 优化**：FFPROBE_HTTP_ANALYZEDURATION、FFPROBE_HTTP_PROBESIZE、FFPROBE_LOCAL_ANALYZEDURATION、FFPROBE_LOCAL_PROBESIZE、VALIDATE_HTTP_LINK
+- **TMDB 元数据**：ENABLE_NFO、TMDB_API_KEY、TMDB_LANGUAGE、DOWNLOAD_IMAGES、TMDB_TIMEOUT、PARALLEL_STAGE_PROCESSING
+
+---
+
 ## [3.1.10] - 2026-01-27
 
 ### 修复

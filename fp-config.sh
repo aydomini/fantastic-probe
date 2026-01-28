@@ -64,12 +64,34 @@ load_config() {
 validate_config() {
     local missing_keys=()
 
-    # 必需的配置项列表（Emby 相关）
+    # 必需的配置项列表（包含新增配置）
     local required_keys=(
+        # Emby 相关（已有）
         "EMBY_ENABLED"
         "EMBY_URL"
         "EMBY_API_KEY"
         "EMBY_NOTIFY_TIMEOUT"
+        # STRM 处理（阶段1新增）
+        "ENABLE_STRM"
+        "ENABLE_ISO_STRM"
+        "ENABLE_VIDEO_STRM"
+        # Alist 集成（阶段1新增）
+        "ALIST_ADDR"
+        "ALIST_TOKEN"
+        "ALIST_TIMEOUT"
+        # FFprobe 参数（阶段1新增）
+        "FFPROBE_HTTP_ANALYZEDURATION"
+        "FFPROBE_HTTP_PROBESIZE"
+        "FFPROBE_LOCAL_ANALYZEDURATION"
+        "FFPROBE_LOCAL_PROBESIZE"
+        "VALIDATE_HTTP_LINK"
+        # TMDB 元数据（阶段2新增）
+        "ENABLE_NFO"
+        "TMDB_API_KEY"
+        "TMDB_LANGUAGE"
+        "DOWNLOAD_IMAGES"
+        "TMDB_TIMEOUT"
+        "PARALLEL_STAGE_PROCESSING"
     )
 
     # 检查缺失的配置项
@@ -86,6 +108,7 @@ validate_config() {
 
         for key in "${missing_keys[@]}"; do
             case "$key" in
+                # Emby 配置（已有）
                 EMBY_ENABLED)
                     echo "EMBY_ENABLED=false" >> "$CONFIG_FILE"
                     ;;
@@ -97,6 +120,61 @@ validate_config() {
                     ;;
                 EMBY_NOTIFY_TIMEOUT)
                     echo "EMBY_NOTIFY_TIMEOUT=5" >> "$CONFIG_FILE"
+                    ;;
+                # STRM 处理配置（阶段1新增）
+                ENABLE_STRM)
+                    echo "ENABLE_STRM=true" >> "$CONFIG_FILE"
+                    ;;
+                ENABLE_ISO_STRM)
+                    echo "ENABLE_ISO_STRM=true" >> "$CONFIG_FILE"
+                    ;;
+                ENABLE_VIDEO_STRM)
+                    echo "ENABLE_VIDEO_STRM=true" >> "$CONFIG_FILE"
+                    ;;
+                # Alist 集成（阶段1新增）
+                ALIST_ADDR)
+                    echo "ALIST_ADDR=\"\"" >> "$CONFIG_FILE"
+                    ;;
+                ALIST_TOKEN)
+                    echo "ALIST_TOKEN=\"\"" >> "$CONFIG_FILE"
+                    ;;
+                ALIST_TIMEOUT)
+                    echo "ALIST_TIMEOUT=30" >> "$CONFIG_FILE"
+                    ;;
+                # FFprobe 参数优化（阶段1新增）
+                FFPROBE_HTTP_ANALYZEDURATION)
+                    echo "FFPROBE_HTTP_ANALYZEDURATION=\"1M\"" >> "$CONFIG_FILE"
+                    ;;
+                FFPROBE_HTTP_PROBESIZE)
+                    echo "FFPROBE_HTTP_PROBESIZE=\"5M\"" >> "$CONFIG_FILE"
+                    ;;
+                FFPROBE_LOCAL_ANALYZEDURATION)
+                    echo "FFPROBE_LOCAL_ANALYZEDURATION=\"10M\"" >> "$CONFIG_FILE"
+                    ;;
+                FFPROBE_LOCAL_PROBESIZE)
+                    echo "FFPROBE_LOCAL_PROBESIZE=\"20M\"" >> "$CONFIG_FILE"
+                    ;;
+                VALIDATE_HTTP_LINK)
+                    echo "VALIDATE_HTTP_LINK=false" >> "$CONFIG_FILE"
+                    ;;
+                # TMDB 元数据配置（阶段2新增）
+                ENABLE_NFO)
+                    echo "ENABLE_NFO=true" >> "$CONFIG_FILE"
+                    ;;
+                TMDB_API_KEY)
+                    echo "TMDB_API_KEY=\"\"" >> "$CONFIG_FILE"
+                    ;;
+                TMDB_LANGUAGE)
+                    echo "TMDB_LANGUAGE=\"zh-CN\"" >> "$CONFIG_FILE"
+                    ;;
+                DOWNLOAD_IMAGES)
+                    echo "DOWNLOAD_IMAGES=true" >> "$CONFIG_FILE"
+                    ;;
+                TMDB_TIMEOUT)
+                    echo "TMDB_TIMEOUT=30" >> "$CONFIG_FILE"
+                    ;;
+                PARALLEL_STAGE_PROCESSING)
+                    echo "PARALLEL_STAGE_PROCESSING=true" >> "$CONFIG_FILE"
                     ;;
             esac
             echo "   ✅ 已添加: $key"
@@ -121,6 +199,29 @@ show_current_config() {
     echo "  ⏱️  FFprobe 超时: ${FFPROBE_TIMEOUT}秒"
     echo "  ⏱️  最大处理时间: ${MAX_FILE_PROCESSING_TIME}秒"
     echo "  ⏱️  防抖时间: ${DEBOUNCE_TIME}秒"
+    echo ""
+    echo "  🎞️  STRM 处理配置:"
+    echo "    STRM 处理: ${ENABLE_STRM:-true}"
+    echo "    ISO.STRM: ${ENABLE_ISO_STRM:-true}"
+    echo "    普通 STRM: ${ENABLE_VIDEO_STRM:-true}"
+    echo ""
+    echo "  🌐 Alist 集成:"
+    echo "    服务器地址: ${ALIST_ADDR:-(未配置)}"
+    echo "    API Token: ${ALIST_TOKEN:+(已配置)}"
+    echo "    超时时间: ${ALIST_TIMEOUT:-30}秒"
+    echo ""
+    echo "  ⚡ FFprobe 参数优化:"
+    echo "    HTTP 分析时长: ${FFPROBE_HTTP_ANALYZEDURATION:-1M}"
+    echo "    HTTP 探测大小: ${FFPROBE_HTTP_PROBESIZE:-5M}"
+    echo "    本地分析时长: ${FFPROBE_LOCAL_ANALYZEDURATION:-10M}"
+    echo "    本地探测大小: ${FFPROBE_LOCAL_PROBESIZE:-20M}"
+    echo ""
+    echo "  🎬 TMDB 元数据刮削:"
+    echo "    启用 NFO: ${ENABLE_NFO:-true}"
+    echo "    API Key: ${TMDB_API_KEY:+(已配置)}"
+    echo "    语言偏好: ${TMDB_LANGUAGE:-zh-CN}"
+    echo "    下载图片: ${DOWNLOAD_IMAGES:-true}"
+    echo "    并行处理: ${PARALLEL_STAGE_PROCESSING:-true}"
     echo ""
     echo "  📡 Emby 集成:"
     echo "    启用状态: ${EMBY_ENABLED:-false}"
@@ -678,6 +779,290 @@ configure_emby() {
         update_config_line "EMBY_ENABLED" "false"
         EMBY_ENABLED="false"
         echo "   ✅ Emby 集成已禁用"
+    fi
+
+    # 询问是否重启服务
+    echo ""
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已更新，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+        else
+            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        fi
+    fi
+}
+
+# 配置 STRM 处理选项
+configure_strm() {
+    echo ""
+    echo "🎞️  配置 STRM 文件处理"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   说明："
+    echo "   • STRM 处理：总开关，控制所有 STRM 文件处理"
+    echo "   • ISO.STRM：处理 .iso.strm 文件（挂载 ISO 提取媒体信息）"
+    echo "   • 普通 STRM：处理普通 .strm 文件（HTTP/Alist/本地路径）"
+    echo ""
+    echo "   当前状态："
+    echo "     STRM 处理: ${ENABLE_STRM:-true}"
+    echo "     ISO.STRM: ${ENABLE_ISO_STRM:-true}"
+    echo "     普通 STRM: ${ENABLE_VIDEO_STRM:-true}"
+    echo ""
+
+    # 配置总开关
+    read -p "   是否启用 STRM 处理？[Y/n]: " enable_strm
+    enable_strm="${enable_strm:-Y}"
+
+    if [[ "$enable_strm" =~ ^[Yy]$ ]]; then
+        # 启用 STRM 处理
+        update_config_line "ENABLE_STRM" "true"
+        ENABLE_STRM="true"
+
+        echo ""
+        echo "   配置具体类型："
+        echo ""
+
+        # 配置 ISO.STRM
+        read -p "   启用 ISO.STRM 处理？[Y/n]: " enable_iso
+        enable_iso="${enable_iso:-Y}"
+        if [[ "$enable_iso" =~ ^[Yy]$ ]]; then
+            update_config_line "ENABLE_ISO_STRM" "true"
+            ENABLE_ISO_STRM="true"
+        else
+            update_config_line "ENABLE_ISO_STRM" "false"
+            ENABLE_ISO_STRM="false"
+        fi
+
+        # 配置普通 STRM
+        read -p "   启用普通 STRM 处理？[Y/n]: " enable_video
+        enable_video="${enable_video:-Y}"
+        if [[ "$enable_video" =~ ^[Yy]$ ]]; then
+            update_config_line "ENABLE_VIDEO_STRM" "true"
+            ENABLE_VIDEO_STRM="true"
+        else
+            update_config_line "ENABLE_VIDEO_STRM" "false"
+            ENABLE_VIDEO_STRM="false"
+        fi
+
+        echo ""
+        echo "   ✅ STRM 处理配置已更新"
+    else
+        # 禁用 STRM 处理
+        update_config_line "ENABLE_STRM" "false"
+        ENABLE_STRM="false"
+        echo "   ✅ STRM 处理已禁用"
+    fi
+
+    # 询问是否重启服务
+    echo ""
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已更新，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+        else
+            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        fi
+    fi
+}
+
+# 配置 Alist 集成
+configure_alist() {
+    echo ""
+    echo "🌐 配置 Alist 集成"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   说明："
+    echo "   • 如果 STRM 包含 Alist 直链，配置此项可获取最新 raw_url"
+    echo "   • API Token 获取方式：Alist 管理后台 → 设置 → 其他 → 令牌"
+    echo "   • 留空则直接使用 STRM 中的链接"
+    echo ""
+    echo "   当前状态："
+    echo "     服务器地址: ${ALIST_ADDR:-(未配置)}"
+    echo "     API Token: ${ALIST_TOKEN:+(已配置)}"
+    echo "     超时时间: ${ALIST_TIMEOUT:-30}秒"
+    echo ""
+
+    # 询问是否配置
+    read -p "   是否配置 Alist 集成？[y/N]: " enable_alist
+    enable_alist="${enable_alist:-N}"
+
+    if [[ "$enable_alist" =~ ^[Yy]$ ]]; then
+        # 配置 Alist 地址
+        echo ""
+        echo "   📍 Alist 服务器地址"
+        echo "      示例: http://localhost:5244 或 http://192.168.1.100:5244"
+        read -p "      请输入 Alist 地址 [默认: ${ALIST_ADDR:-http://localhost:5244}]: " new_alist_addr
+        new_alist_addr="${new_alist_addr:-${ALIST_ADDR:-http://localhost:5244}}"
+
+        # 移除末尾的斜杠
+        new_alist_addr="${new_alist_addr%/}"
+
+        # 配置 API Token
+        echo ""
+        echo "   🔑 API Token"
+        echo "      获取方式: Alist 管理后台 → 设置 → 其他 → 令牌"
+        if [ -n "${ALIST_TOKEN:-}" ]; then
+            read -p "      请输入 API Token [留空保持当前]: " new_alist_token
+            new_alist_token="${new_alist_token:-$ALIST_TOKEN}"
+        else
+            read -p "      请输入 API Token [留空跳过]: " new_alist_token
+        fi
+
+        # 保存配置
+        update_config_line "ALIST_ADDR" "$new_alist_addr"
+        ALIST_ADDR="$new_alist_addr"
+
+        if [ -n "$new_alist_token" ]; then
+            update_config_line "ALIST_TOKEN" "$new_alist_token"
+            ALIST_TOKEN="$new_alist_token"
+        fi
+
+        echo ""
+        echo "   ✅ Alist 集成配置已更新"
+    else
+        # 清空 Alist 配置
+        update_config_line "ALIST_ADDR" ""
+        update_config_line "ALIST_TOKEN" ""
+        ALIST_ADDR=""
+        ALIST_TOKEN=""
+        echo "   ✅ Alist 集成已禁用"
+    fi
+
+    # 询问是否重启服务
+    echo ""
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已更新，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+        else
+            echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
+        fi
+    fi
+}
+
+# 配置 TMDB 元数据刮削
+configure_tmdb() {
+    echo ""
+    echo "🎬 配置 TMDB 元数据刮削"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   说明："
+    echo "   • 启用后，会生成 Kodi/Emby 兼容的 NFO 文件"
+    echo "   • 需要提供 TMDB API Key（免费注册）"
+    echo "   • API Key 获取方式：https://www.themoviedb.org/settings/api"
+    echo "   • 可下载海报和背景图"
+    echo ""
+    echo "   当前状态："
+    echo "     启用 NFO: ${ENABLE_NFO:-true}"
+    echo "     API Key: ${TMDB_API_KEY:+(已配置)}"
+    echo "     语言偏好: ${TMDB_LANGUAGE:-zh-CN}"
+    echo "     下载图片: ${DOWNLOAD_IMAGES:-true}"
+    echo "     并行处理: ${PARALLEL_STAGE_PROCESSING:-true}"
+    echo ""
+
+    # 询问是否启用
+    local current_enabled="${ENABLE_NFO:-true}"
+    local enable_prompt="Y/n"
+    if [ "$current_enabled" != "true" ]; then
+        enable_prompt="y/N"
+    fi
+
+    read -p "   是否启用 TMDB 元数据刮削？[$enable_prompt]: " enable_nfo
+
+    if [ "$current_enabled" = "true" ]; then
+        enable_nfo="${enable_nfo:-Y}"
+    else
+        enable_nfo="${enable_nfo:-N}"
+    fi
+
+    if [[ "$enable_nfo" =~ ^[Yy]$ ]]; then
+        # 启用 TMDB 集成
+        echo ""
+        echo "   配置 TMDB API："
+        echo ""
+
+        # 配置 API Key
+        echo "   🔑 TMDB API Key"
+        echo "      获取方式: https://www.themoviedb.org/settings/api"
+        if [ -n "${TMDB_API_KEY:-}" ]; then
+            read -p "      请输入 API Key [留空保持当前]: " new_tmdb_key
+            new_tmdb_key="${new_tmdb_key:-$TMDB_API_KEY}"
+        else
+            read -p "      请输入 API Key: " new_tmdb_key
+        fi
+
+        # 验证配置
+        if [ -z "$new_tmdb_key" ]; then
+            echo ""
+            echo "   ❌ API Key 不能为空"
+            echo "   ℹ️  操作已取消"
+            return 1
+        fi
+
+        # 配置语言
+        echo ""
+        echo "   🌐 语言偏好"
+        echo "      zh-CN: 简体中文（推荐）"
+        echo "      en-US: 英语"
+        echo "      ja-JP: 日语"
+        read -p "      请选择语言 [默认: ${TMDB_LANGUAGE:-zh-CN}]: " new_tmdb_lang
+        new_tmdb_lang="${new_tmdb_lang:-${TMDB_LANGUAGE:-zh-CN}}"
+
+        # 配置图片下载
+        echo ""
+        read -p "   是否下载海报和背景图？[Y/n]: " download_images
+        download_images="${download_images:-Y}"
+
+        # 配置并行处理
+        echo ""
+        read -p "   是否启用并行处理（阶段1和阶段2同时执行）？[Y/n]: " parallel_processing
+        parallel_processing="${parallel_processing:-Y}"
+
+        # 保存配置
+        echo ""
+        update_config_line "ENABLE_NFO" "true"
+        update_config_line "TMDB_API_KEY" "$new_tmdb_key"
+        update_config_line "TMDB_LANGUAGE" "$new_tmdb_lang"
+
+        if [[ "$download_images" =~ ^[Yy]$ ]]; then
+            update_config_line "DOWNLOAD_IMAGES" "true"
+            DOWNLOAD_IMAGES="true"
+        else
+            update_config_line "DOWNLOAD_IMAGES" "false"
+            DOWNLOAD_IMAGES="false"
+        fi
+
+        if [[ "$parallel_processing" =~ ^[Yy]$ ]]; then
+            update_config_line "PARALLEL_STAGE_PROCESSING" "true"
+            PARALLEL_STAGE_PROCESSING="true"
+        else
+            update_config_line "PARALLEL_STAGE_PROCESSING" "false"
+            PARALLEL_STAGE_PROCESSING="false"
+        fi
+
+        ENABLE_NFO="true"
+        TMDB_API_KEY="$new_tmdb_key"
+        TMDB_LANGUAGE="$new_tmdb_lang"
+
+        echo "   ✅ TMDB 元数据刮削已启用"
+    else
+        # 禁用 TMDB 集成
+        update_config_line "ENABLE_NFO" "false"
+        ENABLE_NFO="false"
+        echo "   ✅ TMDB 元数据刮削已禁用"
     fi
 
     # 询问是否重启服务
@@ -1669,10 +2054,13 @@ show_menu() {
                 echo "【配置向导】"
                 echo "  1) 修改 STRM 根目录"
                 echo "  2) 重新配置 FFprobe"
-                echo "  3) 配置 Emby 集成"
+                echo "  3) 配置 STRM 处理选项（阶段1）"
+                echo "  4) 配置 Alist 集成（阶段1）"
+                echo "  5) 配置 TMDB 元数据刮削（阶段2）"
+                echo "  6) 配置 Emby 媒体库集成"
                 echo "  0) 返回主菜单"
                 echo ""
-                read -p "请选择 [0-3]: " config_choice
+                read -p "请选择 [0-6]: " config_choice
                 echo ""
 
                 case "$config_choice" in
@@ -1685,6 +2073,18 @@ show_menu() {
                         read -p "按 Enter 继续..."
                         ;;
                     3)
+                        configure_strm
+                        read -p "按 Enter 继续..."
+                        ;;
+                    4)
+                        configure_alist
+                        read -p "按 Enter 继续..."
+                        ;;
+                    5)
+                        configure_tmdb
+                        read -p "按 Enter 继续..."
+                        ;;
+                    6)
                         configure_emby
                         read -p "按 Enter 继续..."
                         ;;
@@ -1740,8 +2140,17 @@ main() {
             show|view)
                 show_current_config
                 ;;
-            strm)
+            strm-root|strm-dir)
                 change_strm_root
+                ;;
+            strm-config)
+                configure_strm
+                ;;
+            alist-config)
+                configure_alist
+                ;;
+            tmdb-config)
+                configure_tmdb
                 ;;
             ffprobe)
                 reconfigure_ffprobe
@@ -1796,8 +2205,12 @@ main() {
                 echo "可用命令："
                 echo "  配置管理："
                 echo "    show            查看当前配置"
-                echo "    strm            修改 STRM 根目录"
+                echo "    strm-root       修改 STRM 根目录"
+                echo "    strm-dir        修改 STRM 根目录（同 strm-root）"
                 echo "    ffprobe         重新配置 FFprobe"
+                echo "    strm-config     配置 STRM 处理选项（阶段1）"
+                echo "    alist-config    配置 Alist 集成（阶段1）"
+                echo "    tmdb-config     配置 TMDB 元数据刮削（阶段2）"
                 echo "    emby            配置 Emby 媒体库集成"
                 echo "    edit            直接编辑配置文件"
                 echo ""

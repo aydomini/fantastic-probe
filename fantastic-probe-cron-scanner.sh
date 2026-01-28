@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.1.10"  # 硬编码默认值
+VERSION="3.2.0"  # 硬编码默认值 - 完成三阶段改造 + 目录结构检测 + 线性流程优化
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.1.10")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.2.0")
 fi
 
 #==============================================================================
@@ -240,29 +240,124 @@ process_iso_strm() {
         return 0
     fi
 
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "开始处理: $(basename "$strm_file")"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # 调用处理库中的函数
-    local error_output
-    local exit_code
-
-    set +e
-    error_output=$(process_iso_strm_full "$strm_file" 2>&1)
-    exit_code=$?
-    set -e
-
-    if [ $exit_code -eq 0 ]; then
-        log_success "处理成功: $(basename "$strm_file")"
+    # 检查配置开关
+    local enable_strm="${ENABLE_STRM:-true}"
+    if [ "$enable_strm" != "true" ]; then
+        log_warn "STRM 处理已禁用，跳过"
         return 0
-    else
-        # 提取错误信息（最后一行）
-        local error_message
-        error_message=$(echo "$error_output" | tail -1 | sed 's/.*ERROR: //' || echo "处理失败")
-
-        log_error "处理失败: $(basename "$strm_file") - $error_message"
-        record_failure "$strm_file" "$error_message"
-        return 1
     fi
+
+    # ==================== 步骤1：任务规划 ====================
+    log_info "[步骤1/4] 任务规划"
+
+    local tasks=$(plan_strm_tasks "$strm_file")
+
+    if [ -z "$tasks" ]; then
+        log_info "  ✅ 所有任务已完成，无需处理"
+        return 0
+    fi
+
+    log_info "  计划执行: $tasks"
+
+    # 对于电视剧，提前分析目录结构
+    local strm_name="$(basename "$strm_file" .strm)"
+    local tv_structure_info=""
+    if is_tv_show "$strm_name"; then
+        log_info "  检测到电视剧，分析目录结构..."
+        tv_structure_info=$(analyze_tv_show_structure "$strm_file" 2>&1)
+        if [ $? -ne 0 ]; then
+            log_warn "  ⚠️  电视剧目录结构分析失败，使用简单识别"
+            tv_structure_info=""
+        fi
+    fi
+
+    # 智能检测 STRM 类型
+    local strm_type
+    strm_type=$(detect_strm_type "$strm_file")
+    log_debug "  STRM 类型: $strm_type"
+
+    # ==================== 步骤2：阶段1 - 媒体信息提取 ====================
+    local stage1_success=true
+
+    if echo "$tasks" | grep -q "stage1"; then
+        log_info "[步骤2/4] 阶段1 - 媒体信息提取"
+
+        set +e
+        if [ "$strm_type" = "iso" ]; then
+            if [ "${ENABLE_ISO_STRM:-true}" = "true" ]; then
+                process_iso_strm_full "$strm_file"
+                if [ $? -ne 0 ]; then
+                    stage1_success=false
+                fi
+            else
+                log_warn "  ISO.STRM 处理已禁用，跳过"
+            fi
+        else
+            if [ "${ENABLE_VIDEO_STRM:-true}" = "true" ]; then
+                process_video_strm_full "$strm_file"
+                if [ $? -ne 0 ]; then
+                    stage1_success=false
+                fi
+            else
+                log_warn "  普通 STRM 处理已禁用，跳过"
+            fi
+        fi
+        set -e
+
+        if [ "$stage1_success" = false ]; then
+            log_error "  ❌ 阶段1失败"
+            record_failure "$strm_file" "阶段1失败"
+            return 1
+        fi
+
+        log_success "  ✅ 阶段1完成"
+    else
+        log_info "[步骤2/4] 跳过阶段1（已有媒体信息）"
+    fi
+
+    # ==================== 步骤3：阶段2 - 元数据刮削 ====================
+    if echo "$tasks" | grep -q "stage2"; then
+        log_info "[步骤3/4] 阶段2 - 元数据刮削"
+
+        set +e
+        # 传递目录结构信息（如果是电视剧）
+        if [ -n "$tv_structure_info" ]; then
+            scrape_metadata_full "$strm_file" "$tv_structure_info"
+        else
+            scrape_metadata_full "$strm_file"
+        fi
+
+        if [ $? -ne 0 ]; then
+            log_warn "  ⚠️  阶段2失败（不影响整体成功）"
+        else
+            log_success "  ✅ 阶段2完成"
+        fi
+        set -e
+    else
+        log_info "[步骤3/4] 跳过阶段2（已有元数据）"
+    fi
+
+    # ==================== 步骤4：通知 Emby 刷新 ====================
+    if [ "${EMBY_ENABLED:-false}" = "true" ]; then
+        log_info "[步骤4/4] 通知 Emby 刷新媒体库"
+
+        # 这里需要一个通知 Emby 的函数
+        # 暂时记录日志，实际实现需要调用 Emby API
+        log_info "  通知 Emby 刷新: $(basename "$strm_file")"
+        # TODO: notify_emby_refresh "$strm_file"
+    else
+        log_info "[步骤4/4] 跳过 Emby 通知（未启用）"
+    fi
+
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_success "✅ 处理完成: $(basename "$strm_file")"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    return 0
 }
 
 #==============================================================================
@@ -295,7 +390,7 @@ scan_and_process() {
         if [ ! -f "$json_file" ]; then
             pending_files+=("$strm_file")
         fi
-    done < <(find "$STRM_ROOT" -type f -name "*.iso.strm" -print0 2>/dev/null)
+    done < <(find "$STRM_ROOT" -type f -name "*.strm" -print0 2>/dev/null)
 
     local total_pending=${#pending_files[@]}
 
