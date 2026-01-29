@@ -18,7 +18,10 @@ LAST_TMDB_REQUEST_TIME=0
 
 # TMDB 缓存目录
 TMDB_CACHE_DIR="${TMDB_CACHE_DIR:-/tmp/fantastic-probe-tmdb-cache}"
-TMDB_CACHE_MAX_AGE="${TMDB_CACHE_MAX_AGE:-1800}"  # 缓存过期时间（秒，默认30分钟）
+TMDB_CACHE_MAX_AGE="${TMDB_CACHE_MAX_AGE:-86400}"  # 缓存过期时间（秒，默认24小时，元数据变化少）
+
+# 🔥 优化2：演员头像全局缓存目录
+ACTOR_CACHE_DIR="${ACTOR_CACHE_DIR:-/var/lib/fantastic-probe/actor-cache}"
 
 #==============================================================================
 # TMDB 文件系统缓存函数
@@ -1802,6 +1805,38 @@ analyze_http_media() {
     local max_retries="${FFPROBE_RETRY_COUNT:-3}"
     local retry_intervals="${FFPROBE_RETRY_INTERVALS:-10 5 3}"
 
+    # 🔥 优化3：动态调整 FFprobe 参数（基于文件大小）
+    if [[ "${FFPROBE_DYNAMIC_PARAMS:-true}" == "true" ]]; then
+        log_debug "  检测文件大小以动态调整 FFprobe 参数..."
+        local file_size=$(curl -sI "$url" 2>/dev/null | grep -i 'content-length' | awk '{print $2}' | tr -d '\r' || echo "0")
+
+        if [[ -n "$file_size" && "$file_size" -gt 0 ]]; then
+            log_debug "  文件大小: $(numfmt --to=iec-i --suffix=B $file_size 2>/dev/null || echo "${file_size} bytes")"
+
+            # 动态调整策略
+            if [[ $file_size -gt 21474836480 ]]; then
+                # >20GB: 超大文件，极限压缩探测
+                probesize="2M"
+                analyzeduration="500K"
+                timeout=60
+                log_debug "  检测到超大文件(>20GB)，使用极限参数: probesize=$probesize, analyzeduration=$analyzeduration, timeout=${timeout}s"
+            elif [[ $file_size -gt 5368709120 ]]; then
+                # >5GB: 大文件，压缩探测
+                probesize="5M"
+                analyzeduration="1M"
+                timeout=120
+                log_debug "  检测到大文件(>5GB)，使用压缩参数: probesize=$probesize, analyzeduration=$analyzeduration, timeout=${timeout}s"
+            else
+                # <5GB: 小文件，标准探测
+                probesize="${FFPROBE_HTTP_PROBESIZE:-10M}"
+                analyzeduration="${FFPROBE_HTTP_ANALYZEDURATION:-2M}"
+                log_debug "  标准文件(<5GB)，使用标准参数: probesize=$probesize, analyzeduration=$analyzeduration"
+            fi
+        else
+            log_debug "  无法获取文件大小，使用默认参数"
+        fi
+    fi
+
     log_info "  开始远程分析 HTTP 媒体..."
     log_debug "  URL: ${url:0:80}..."
     log_debug "  参数: analyzeduration=$analyzeduration, probesize=$probesize, timeout=${timeout}s"
@@ -2928,6 +2963,7 @@ EOF
             echo "$credits_data" | jq -r '((.cast // [])[:10])[] | @json' 2>/dev/null | while IFS= read -r actor_json; do
                 local actor_name=$(echo "$actor_json" | jq -r '.name // ""')
                 local actor_role=$(echo "$actor_json" | jq -r '.character // ""')
+                local actor_id=$(echo "$actor_json" | jq -r '.id // ""')  # 🔥 优化2：获取 TMDB actor ID
                 local profile_path=$(echo "$actor_json" | jq -r '.profile_path // ""')
 
                 # 写入演员信息到 NFO
@@ -2936,22 +2972,45 @@ EOF
                 echo "        <role>$actor_role</role>" >> "$output_file"
                 echo "        <type>Actor</type>" >> "$output_file"
 
-                # 下载演员头像（如果有）
+                # 🔥 优化2：下载演员头像（使用全局缓存）
                 if [[ -n "$profile_path" && "$profile_path" != "null" ]]; then
                     local thumb_url="https://image.tmdb.org/t/p/w185${profile_path}"
                     local thumb_file="${actors_dir}/${actor_name}.jpg"
 
-                    # 如果头像不存在，则下载
-                    if [[ ! -f "$thumb_file" ]]; then
-                        log_debug "  下载演员头像: $actor_name"
-                        if download_image_with_retry "$thumb_url" "$thumb_file" "演员头像"; then
+                    # 全局缓存路径（基于 TMDB actor ID，跨剧集/电影共享）
+                    local cache_key="${actor_id:-${actor_name// /_}}"  # 优先用 ID，回退到名字
+                    local global_cache_file="${ACTOR_CACHE_DIR}/${cache_key}.jpg"
+
+                    # 确保全局缓存目录存在
+                    mkdir -p "$ACTOR_CACHE_DIR" 2>/dev/null || true
+
+                    # 检查全局缓存
+                    if [[ -f "$global_cache_file" ]]; then
+                        # 全局缓存命中，软链接或复制
+                        if ln -sf "$global_cache_file" "$thumb_file" 2>/dev/null; then
+                            log_debug "  演员头像全局缓存命中（软链接）: $actor_name"
+                        else
+                            cp "$global_cache_file" "$thumb_file" 2>/dev/null || true
+                            log_debug "  演员头像全局缓存命中（复制）: $actor_name"
+                        fi
+                        echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
+                    elif [[ ! -f "$thumb_file" ]]; then
+                        # 缓存未命中，下载并写入全局缓存
+                        log_debug "  下载演员头像并缓存: $actor_name (ID: $cache_key)"
+                        if download_image_with_retry "$thumb_url" "$global_cache_file" "演员头像"; then
+                            # 下载成功，创建软链接
+                            if ln -sf "$global_cache_file" "$thumb_file" 2>/dev/null; then
+                                :
+                            else
+                                cp "$global_cache_file" "$thumb_file" 2>/dev/null || true
+                            fi
                             echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
                         else
                             # 下载失败，使用 URL
                             echo "        <thumb>$thumb_url</thumb>" >> "$output_file"
                         fi
                     else
-                        # 使用本地文件
+                        # 本地文件已存在
                         echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
                     fi
                 fi
@@ -3222,6 +3281,7 @@ EOF
             echo "$credits_data" | jq -r '((.cast // [])[:15])[] | @json' 2>/dev/null | while IFS= read -r actor_json; do
                 local actor_name=$(echo "$actor_json" | jq -r '.name // ""')
                 local actor_role=$(echo "$actor_json" | jq -r '.character // ""')
+                local actor_id=$(echo "$actor_json" | jq -r '.id // ""')  # 🔥 优化2：获取 TMDB actor ID
                 local profile_path=$(echo "$actor_json" | jq -r '.profile_path // ""')
 
                 # 写入演员信息到 NFO
@@ -3230,22 +3290,45 @@ EOF
                 echo "        <role>$actor_role</role>" >> "$output_file"
                 echo "        <type>Actor</type>" >> "$output_file"
 
-                # 下载演员头像（如果有）
+                # 🔥 优化2：下载演员头像（使用全局缓存）
                 if [[ -n "$profile_path" && "$profile_path" != "null" ]]; then
                     local thumb_url="https://image.tmdb.org/t/p/w185${profile_path}"
                     local thumb_file="${actors_dir}/${actor_name}.jpg"
 
-                    # 如果头像不存在，则下载
-                    if [[ ! -f "$thumb_file" ]]; then
-                        log_debug "  下载演员头像: $actor_name"
-                        if download_image_with_retry "$thumb_url" "$thumb_file" "演员头像"; then
+                    # 全局缓存路径（基于 TMDB actor ID，跨剧集/电影共享）
+                    local cache_key="${actor_id:-${actor_name// /_}}"  # 优先用 ID，回退到名字
+                    local global_cache_file="${ACTOR_CACHE_DIR}/${cache_key}.jpg"
+
+                    # 确保全局缓存目录存在
+                    mkdir -p "$ACTOR_CACHE_DIR" 2>/dev/null || true
+
+                    # 检查全局缓存
+                    if [[ -f "$global_cache_file" ]]; then
+                        # 全局缓存命中，软链接或复制
+                        if ln -sf "$global_cache_file" "$thumb_file" 2>/dev/null; then
+                            log_debug "  演员头像全局缓存命中（软链接）: $actor_name"
+                        else
+                            cp "$global_cache_file" "$thumb_file" 2>/dev/null || true
+                            log_debug "  演员头像全局缓存命中（复制）: $actor_name"
+                        fi
+                        echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
+                    elif [[ ! -f "$thumb_file" ]]; then
+                        # 缓存未命中，下载并写入全局缓存
+                        log_debug "  下载演员头像并缓存: $actor_name (ID: $cache_key)"
+                        if download_image_with_retry "$thumb_url" "$global_cache_file" "演员头像"; then
+                            # 下载成功，创建软链接
+                            if ln -sf "$global_cache_file" "$thumb_file" 2>/dev/null; then
+                                :
+                            else
+                                cp "$global_cache_file" "$thumb_file" 2>/dev/null || true
+                            fi
                             echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
                         else
                             # 下载失败，使用 URL
                             echo "        <thumb>$thumb_url</thumb>" >> "$output_file"
                         fi
                     else
-                        # 使用本地文件
+                        # 本地文件已存在
                         echo "        <thumb>${thumb_file}</thumb>" >> "$output_file"
                     fi
                 fi
@@ -3635,7 +3718,7 @@ download_season_backdrop() {
     ')
 
     if [[ -z "$backdrop_path" || "$backdrop_path" == "null" ]]; then
-        log_warn "  ⚠️  未找到季度${image_type}路径"
+        log_debug "  季度${image_type}不可用（TMDB Season 不支持 Backdrop，已使用 Series 级别降级）"
         return 1
     fi
 
