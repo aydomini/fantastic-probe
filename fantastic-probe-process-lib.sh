@@ -2288,9 +2288,9 @@ query_tmdb_tv() {
         cache_key="tv_${tmdb_id}"
 
         # 检查缓存
-        if [[ -n "${TMDB_CACHE[$cache_key]:-}" ]]; then
+        if [[ -n "${TMDB_CACHE["$cache_key"]:-}" ]]; then
             log_debug "  ✅ 使用缓存数据（TMDB ID: $tmdb_id）"
-            show_data="${TMDB_CACHE[$cache_key]}"
+            show_data="${TMDB_CACHE["$cache_key"]}"
         else
             log_info "  使用 TMDB ID 查询电视剧: $tmdb_id"
 
@@ -2302,7 +2302,7 @@ query_tmdb_tv() {
             if [[ "$show_data" != "{}" ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
                 log_success "  ✅ TMDB 查询成功（ID: $tmdb_id）"
                 # 存入缓存
-                TMDB_CACHE[$cache_key]="$show_data"
+                TMDB_CACHE["$cache_key"]="$show_data"
                 log_debug "  💾 已缓存剧集数据（ID: $tmdb_id）"
             else
                 log_warn "  ⚠️  TMDB ID 查询失败，尝试搜索"
@@ -2370,7 +2370,7 @@ query_tmdb_tv() {
                 if [[ "$show_data" != "{}" ]]; then
                     # 存入缓存
                     cache_key="tv_${found_id}"
-                    TMDB_CACHE[$cache_key]="$show_data"
+                    TMDB_CACHE["$cache_key"]="$show_data"
                     log_debug "  💾 已缓存剧集数据（ID: $found_id）"
                     break
                 else

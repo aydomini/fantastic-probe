@@ -11,7 +11,7 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.4.3"  # 硬编码默认值 - NFO 生成修复
+VERSION="3.5.1"  # 硬编码默认值 - 关联数组 set -u 兼容性修复
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
