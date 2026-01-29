@@ -11,6 +11,32 @@
 
 ---
 
+## [3.4.5] - 2026-01-29
+
+### 新增
+- **NFO 字段增强**：添加 IMDB/TVDB 外部 ID 支持
+  - 新增 `get_movie_external_ids()` 和 `get_tv_external_ids()` API 调用函数
+  - 电影/单集/总剧集 NFO 现包含 `<imdbid>`、`<tvdbid>` 和 `<uniqueid>` 标签
+- **编剧/制作人员信息增强**：
+  - 编剧标签添加 `tmdbid` 属性：`<writer tmdbid="123">Name</writer>`
+  - 同时添加 `<credits>` 标签（Kodi 标准）
+- **系列/合集信息增强**：
+  - 添加 `tmdbcolid` 属性：`<set tmdbcolid="123"><name>Name</name></set>`
+- **outline 字段**：电影/单集/总剧集 NFO 添加 `<outline>` 字段（复制 plot 内容）
+
+### 改进
+- **媒体流信息完善**：
+  - 视频流添加 `<language>` 字段（从 FFprobe tags.language 提取）
+  - 所有流的 `<default>` 和 `<forced>` 从 FFprobe disposition 提取真实值（不再硬编码 False）
+  - 字幕流添加 `<width>` 和 `<height>` 字段（图形字幕如 PGSSUB）
+- **单集 NFO 完善**：单集 NFO 添加 `<runtime>` 字段（之前仅电影有）
+
+### 技术细节
+- NFO 格式完全符合 Emby/Kodi 标准规范
+- 每个电影/剧集额外调用 1 次 TMDB `external_ids` API（预计增加 100-200ms 处理时间）
+
+---
+
 ## [3.4.3] - 2026-01-29
 
 ### 修复

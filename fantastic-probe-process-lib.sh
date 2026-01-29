@@ -871,59 +871,151 @@ generate_fileinfo_xml() {
         local codec=$(echo "$video_stream" | jq -r '.codec_name // ""')
         local width=$(echo "$video_stream" | jq -r '.width // 0')
         local height=$(echo "$video_stream" | jq -r '.height // 0')
-        local aspect=$(echo "$video_stream" | jq -r '.display_aspect_ratio // ""')
+        local aspect_ratio=$(echo "$video_stream" | jq -r '.display_aspect_ratio // ""')
         local duration=$(echo "$ffprobe_json" | jq -r '.format.duration // 0' | awk '{print int($1)}')
+        local duration_minutes=$(awk "BEGIN {print int($duration / 60)}")
+        local framerate_raw=$(echo "$video_stream" | jq -r '.r_frame_rate // ""')
+        local bitrate=$(echo "$video_stream" | jq -r '.bit_rate // ""')
+        local field_order=$(echo "$video_stream" | jq -r '.field_order // ""')
+        local language=$(echo "$video_stream" | jq -r '.tags.language // ""')
+        local default=$(echo "$video_stream" | jq -r '.disposition.default // 0')
+        local forced=$(echo "$video_stream" | jq -r '.disposition.forced // 0')
+
+        # 计算宽高比（如果不存在）
+        local aspect="$aspect_ratio"
+        if [ -z "$aspect" ] || [ "$aspect" = "null" ]; then
+            if [ "$width" != "0" ] && [ "$height" != "0" ]; then
+                # 计算最简分数形式的宽高比
+                local gcd=$(awk "BEGIN {
+                    a=$width; b=$height;
+                    while(b!=0) { t=b; b=a%b; a=t; }
+                    print a;
+                }")
+                local w_ratio=$((width / gcd))
+                local h_ratio=$((height / gcd))
+                aspect="${w_ratio}:${h_ratio}"
+            fi
+        fi
+
+        # 转换帧率为小数（如 "25/1" -> "25.0"）
+        local framerate=""
+        if [ -n "$framerate_raw" ] && [ "$framerate_raw" != "null" ]; then
+            if [[ "$framerate_raw" =~ ^([0-9]+)/([0-9]+)$ ]]; then
+                local num="${BASH_REMATCH[1]}"
+                local den="${BASH_REMATCH[2]}"
+                framerate=$(awk "BEGIN {printf \"%.5f\", $num/$den}")
+            else
+                framerate="$framerate_raw"
+            fi
+        fi
+
+        # 判断扫描类型
+        local scantype="progressive"
+        if [ "$field_order" = "tt" ] || [ "$field_order" = "bb" ] || [ "$field_order" = "tb" ] || [ "$field_order" = "bt" ]; then
+            scantype="interlaced"
+        fi
 
         xml_output+="
             <video>"
         [ -n "$codec" ] && [ "$codec" != "null" ] && xml_output+="
                 <codec>$codec</codec>"
+        [ -n "$codec" ] && [ "$codec" != "null" ] && xml_output+="
+                <micodec>$codec</micodec>"
+        [ -n "$bitrate" ] && [ "$bitrate" != "null" ] && xml_output+="
+                <bitrate>$bitrate</bitrate>"
         [ "$width" != "0" ] && xml_output+="
                 <width>$width</width>"
         [ "$height" != "0" ] && xml_output+="
                 <height>$height</height>"
-        [ -n "$aspect" ] && [ "$aspect" != "null" ] && xml_output+="
+        [ -n "$aspect" ] && xml_output+="
                 <aspect>$aspect</aspect>"
+        [ -n "$aspect" ] && xml_output+="
+                <aspectratio>$aspect</aspectratio>"
+        [ -n "$framerate" ] && xml_output+="
+                <framerate>$framerate</framerate>"
+        [ -n "$language" ] && [ "$language" != "null" ] && xml_output+="
+                <language>$language</language>"
+        xml_output+="
+                <scantype>$scantype</scantype>"
+        xml_output+="
+                <default>$([ "$default" = "1" ] && echo "True" || echo "False")</default>"
+        xml_output+="
+                <forced>$([ "$forced" = "1" ] && echo "True" || echo "False")</forced>"
+        [ "$duration_minutes" != "0" ] && xml_output+="
+                <duration>$duration_minutes</duration>"
         [ "$duration" != "0" ] && xml_output+="
                 <durationinseconds>$duration</durationinseconds>"
         xml_output+="
             </video>"
     fi
 
-    # 提取音频流（所有音轨）- 使用数组避免子shell问题
+    # 提取音频流（所有音轨）
     local audio_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="audio")] | length')
     for ((i=0; i<audio_count; i++)); do
         local audio_stream=$(echo "$ffprobe_json" | jq -r ".streams[] | select(.codec_type==\"audio\") | @json" | sed -n "$((i+1))p")
         local codec=$(echo "$audio_stream" | jq -r '.codec_name // ""')
         local language=$(echo "$audio_stream" | jq -r '.tags.language // ""')
         local channels=$(echo "$audio_stream" | jq -r '.channels // 0')
+        local bitrate=$(echo "$audio_stream" | jq -r '.bit_rate // ""')
+        local sample_rate=$(echo "$audio_stream" | jq -r '.sample_rate // ""')
+        local default=$(echo "$audio_stream" | jq -r '.disposition.default // 0')
+        local forced=$(echo "$audio_stream" | jq -r '.disposition.forced // 0')
 
         xml_output+="
             <audio>"
         [ -n "$codec" ] && [ "$codec" != "null" ] && xml_output+="
                 <codec>$codec</codec>"
-        [ -n "$language" ] && [ "$language" != "null" ] && xml_output+="
-                <language>$language</language>"
+        [ -n "$codec" ] && [ "$codec" != "null" ] && xml_output+="
+                <micodec>$codec</micodec>"
+        [ -n "$bitrate" ] && [ "$bitrate" != "null" ] && xml_output+="
+                <bitrate>$bitrate</bitrate>"
+        xml_output+="
+                <scantype>progressive</scantype>"
         [ "$channels" != "0" ] && xml_output+="
                 <channels>$channels</channels>"
+        [ -n "$sample_rate" ] && [ "$sample_rate" != "null" ] && xml_output+="
+                <samplingrate>$sample_rate</samplingrate>"
+        [ -n "$language" ] && [ "$language" != "null" ] && xml_output+="
+                <language>$language</language>"
+        xml_output+="
+                <default>$([ "$default" = "1" ] && echo "True" || echo "False")</default>"
+        xml_output+="
+                <forced>$([ "$forced" = "1" ] && echo "True" || echo "False")</forced>"
         xml_output+="
             </audio>"
     done
 
-    # 提取字幕流（所有字幕）- 使用数组避免子shell问题
+    # 提取字幕流（所有字幕）
     local subtitle_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="subtitle")] | length')
     for ((i=0; i<subtitle_count; i++)); do
         local subtitle_stream=$(echo "$ffprobe_json" | jq -r ".streams[] | select(.codec_type==\"subtitle\") | @json" | sed -n "$((i+1))p")
+        local codec=$(echo "$subtitle_stream" | jq -r '.codec_name // ""')
         local language=$(echo "$subtitle_stream" | jq -r '.tags.language // ""')
+        local default=$(echo "$subtitle_stream" | jq -r '.disposition.default // 0')
+        local forced=$(echo "$subtitle_stream" | jq -r '.disposition.forced // 0')
+        local width=$(echo "$subtitle_stream" | jq -r '.width // 0')
+        local height=$(echo "$subtitle_stream" | jq -r '.height // 0')
 
-        if [ -n "$language" ] && [ "$language" != "null" ]; then
-            xml_output+="
+        xml_output+="
             <subtitle>"
-            xml_output+="
+        [ -n "$codec" ] && [ "$codec" != "null" ] && xml_output+="
+                <codec>$codec</codec>"
+        [ -n "$codec" ] && [ "$codec" != "null" ] && xml_output+="
+                <micodec>$codec</micodec>"
+        [ -n "$language" ] && [ "$language" != "null" ] && xml_output+="
                 <language>$language</language>"
-            xml_output+="
+        [ "$width" != "0" ] && xml_output+="
+                <width>$width</width>"
+        [ "$height" != "0" ] && xml_output+="
+                <height>$height</height>"
+        xml_output+="
+                <scantype>progressive</scantype>"
+        xml_output+="
+                <default>$([ "$default" = "1" ] && echo "True" || echo "False")</default>"
+        xml_output+="
+                <forced>$([ "$forced" = "1" ] && echo "True" || echo "False")</forced>"
+        xml_output+="
             </subtitle>"
-        fi
     done
 
     xml_output+="
@@ -2415,6 +2507,64 @@ get_tv_videos() {
 }
 
 #------------------------------------------------------------------------------
+# 获取电影外部 ID（IMDB、TVDB 等）
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: TMDB ID
+# 返回：
+#   输出：external_ids JSON 数据
+#------------------------------------------------------------------------------
+
+get_movie_external_ids() {
+    local tmdb_id="$1"
+    local api_key="${TMDB_API_KEY}"
+
+    log_debug "  查询电影外部 ID: TMDB ID $tmdb_id"
+
+    local external_ids_url="https://api.themoviedb.org/3/movie/${tmdb_id}/external_ids?api_key=${api_key}"
+
+    local result=$(tmdb_api_call_with_retry "$external_ids_url" "查询电影外部ID")
+
+    if [[ "$result" != "{}" ]]; then
+        echo "$result"
+        return 0
+    else
+        log_warn "  ⚠️  电影外部 ID 查询失败"
+        echo "{}"
+        return 1
+    fi
+}
+
+#------------------------------------------------------------------------------
+# 获取电视剧外部 ID（IMDB、TVDB 等）
+#------------------------------------------------------------------------------
+# 参数：
+#   $1: TMDB ID
+# 返回：
+#   输出：external_ids JSON 数据
+#------------------------------------------------------------------------------
+
+get_tv_external_ids() {
+    local tmdb_id="$1"
+    local api_key="${TMDB_API_KEY}"
+
+    log_debug "  查询剧集外部 ID: TMDB ID $tmdb_id"
+
+    local external_ids_url="https://api.themoviedb.org/3/tv/${tmdb_id}/external_ids?api_key=${api_key}"
+
+    local result=$(tmdb_api_call_with_retry "$external_ids_url" "查询剧集外部ID")
+
+    if [[ "$result" != "{}" ]]; then
+        echo "$result"
+        return 0
+    else
+        log_warn "  ⚠️  剧集外部 ID 查询失败"
+        echo "{}"
+        return 1
+    fi
+}
+
+#------------------------------------------------------------------------------
 # 生成电影 NFO 文件
 #------------------------------------------------------------------------------
 # 参数：
@@ -2446,6 +2596,7 @@ generate_movie_nfo() {
     local tagline=$(echo "$tmdb_data" | jq -r '.tagline // ""')
     local studio=$(echo "$tmdb_data" | jq -r '.production_companies[0].name // ""')
     local set_name=$(echo "$tmdb_data" | jq -r '.belongs_to_collection.name // ""')
+    local set_id=$(echo "$tmdb_data" | jq -r '.belongs_to_collection.id // ""')
 
     # 提取类型（前5个）
     local genres=$(echo "$tmdb_data" | jq -r '.genres[]?.name' | head -5)
@@ -2462,6 +2613,11 @@ generate_movie_nfo() {
     # 获取预告片信息
     local trailers=$(get_movie_videos "$tmdb_id")
 
+    # 获取外部 ID（IMDB、TVDB 等）
+    local external_ids=$(get_movie_external_ids "$tmdb_id")
+    local imdb_id=$(echo "$external_ids" | jq -r '.imdb_id // ""')
+    local tvdb_id=$(echo "$external_ids" | jq -r '.tvdb_id // ""')
+
     # 生成 NFO（Kodi/Emby 兼容格式）
     cat > "$output_file" << EOF
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -2470,6 +2626,7 @@ generate_movie_nfo() {
     <originaltitle>$original_title</originaltitle>
     <year>$year</year>
     <plot>$plot</plot>
+    <outline>$plot</outline>
 EOF
 
     # 添加标语（如果有）
@@ -2501,6 +2658,18 @@ EOF
     <uniqueid type="tmdb" default="true">$tmdb_id</uniqueid>
 EOF
 
+    # 添加 IMDB ID（如果有）
+    if [[ -n "$imdb_id" && "$imdb_id" != "null" ]]; then
+        echo "    <imdbid>$imdb_id</imdbid>" >> "$output_file"
+        echo "    <uniqueid type=\"imdb\">$imdb_id</uniqueid>" >> "$output_file"
+    fi
+
+    # 添加 TVDB ID（如果有）
+    if [[ -n "$tvdb_id" && "$tvdb_id" != "null" ]]; then
+        echo "    <tvdbid>$tvdb_id</tvdbid>" >> "$output_file"
+        echo "    <uniqueid type=\"tvdb\">$tvdb_id</uniqueid>" >> "$output_file"
+    fi
+
     # 添加类型标签
     while IFS= read -r genre; do
         if [[ -n "$genre" && "$genre" != "null" ]]; then
@@ -2517,7 +2686,11 @@ EOF
 
     # 添加系列/合集（如果有）
     if [[ -n "$set_name" && "$set_name" != "null" ]]; then
-        echo "    <set>$set_name</set>" >> "$output_file"
+        echo -n "    <set" >> "$output_file"
+        [[ -n "$set_id" && "$set_id" != "null" ]] && echo -n " tmdbcolid=\"$set_id\"" >> "$output_file"
+        echo ">" >> "$output_file"
+        echo "        <name>$set_name</name>" >> "$output_file"
+        echo "    </set>" >> "$output_file"
     fi
 
     # 添加预告片链接（最多3个）
@@ -2538,8 +2711,19 @@ EOF
         # 添加编剧信息
         local crew_count=$(echo "$credits_data" | jq -r '(.crew // []) | length')
         if [[ "$crew_count" -gt 0 ]]; then
-            echo "$credits_data" | jq -r '((.crew // []) | map(select(.job == "Screenplay" or .job == "Writer")) | unique_by(.name))[] |
-                "    <writer>" + .name + "</writer>"' 2>/dev/null >> "$output_file"
+            echo "$credits_data" | jq -r '((.crew // []) | map(select(.job == "Screenplay" or .job == "Writer")) | unique_by(.name))[] | @json' 2>/dev/null | while IFS= read -r writer_json; do
+                local writer_name=$(echo "$writer_json" | jq -r '.name // ""')
+                local writer_tmdb_id=$(echo "$writer_json" | jq -r '.id // ""')
+
+                echo -n "    <writer" >> "$output_file"
+                [[ -n "$writer_tmdb_id" && "$writer_tmdb_id" != "null" ]] && echo -n " tmdbid=\"$writer_tmdb_id\"" >> "$output_file"
+                echo ">$writer_name</writer>" >> "$output_file"
+
+                # 同时添加 credits 标签（Kodi 标准）
+                echo -n "    <credits" >> "$output_file"
+                [[ -n "$writer_tmdb_id" && "$writer_tmdb_id" != "null" ]] && echo -n " tmdbid=\"$writer_tmdb_id\"" >> "$output_file"
+                echo ">$writer_name</credits>" >> "$output_file"
+            done
         fi
 
         # 添加演员并下载头像（使用数组方式防止 null 迭代错误）
@@ -2625,8 +2809,19 @@ generate_tv_nfo() {
     local episode_num=$(echo "$tmdb_data" | jq -r '.episode.episode_number // 0')
     local plot=$(echo "$tmdb_data" | jq -r '.episode.overview // .overview // ""')
     local air_date=$(echo "$tmdb_data" | jq -r '.episode.air_date // .first_air_date // ""')
+    local episode_rating=$(echo "$tmdb_data" | jq -r '.episode.vote_average // 0')
+    local runtime=$(echo "$tmdb_data" | jq -r '.episode.runtime // .episode_run_time[0] // 0')
+    local year=$(echo "$air_date" | cut -d'-' -f1)
 
-    # 生成单集 NFO
+    # 获取剧集演职人员信息
+    local credits_data=$(get_tv_credits "$tmdb_id")
+
+    # 获取外部 ID（IMDB、TVDB 等）
+    local external_ids=$(get_tv_external_ids "$tmdb_id")
+    local imdb_id=$(echo "$external_ids" | jq -r '.imdb_id // ""')
+    local tvdb_id=$(echo "$external_ids" | jq -r '.tvdb_id // ""')
+
+    # 生成单集 NFO（开始部分）
     cat > "$output_file" << EOF
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <episodedetails>
@@ -2635,10 +2830,61 @@ generate_tv_nfo() {
     <season>$season_num</season>
     <episode>$episode_num</episode>
     <plot>$plot</plot>
-    <aired>$air_date</aired>
-    <uniqueid type="tmdb" default="true">$tmdb_id</uniqueid>
-</episodedetails>
+    <outline>$plot</outline>
 EOF
+
+    # 添加演员信息（前20位主演，符合 Emby 标准）
+    if [[ -n "$credits_data" && "$credits_data" != "{}" && "$credits_data" != "null" ]]; then
+        local cast_count=$(echo "$credits_data" | jq -r '(.cast // []) | length')
+        if [[ "$cast_count" -gt 0 ]]; then
+            echo "$credits_data" | jq -r '((.cast // [])[:20])[] | @json' 2>/dev/null | while IFS= read -r actor_json; do
+                local actor_name=$(echo "$actor_json" | jq -r '.name // ""')
+                local actor_role=$(echo "$actor_json" | jq -r '.character // ""')
+                local actor_tmdb_id=$(echo "$actor_json" | jq -r '.id // ""')
+                local known_for=$(echo "$actor_json" | jq -r '.known_for_department // ""')
+
+                # 判断演员类型（主演 vs 客串）
+                local actor_type="Actor"
+                if [[ "$known_for" == "Acting" ]]; then
+                    actor_type="Actor"
+                else
+                    actor_type="GuestStar"
+                fi
+
+                # 写入演员信息到 NFO
+                echo "    <actor>" >> "$output_file"
+                echo "        <name>$actor_name</name>" >> "$output_file"
+                [[ -n "$actor_role" && "$actor_role" != "null" ]] && echo "        <role>$actor_role</role>" >> "$output_file"
+                echo "        <type>$actor_type</type>" >> "$output_file"
+                [[ -n "$actor_tmdb_id" && "$actor_tmdb_id" != "null" ]] && echo "        <tmdbid>$actor_tmdb_id</tmdbid>" >> "$output_file"
+                echo "    </actor>" >> "$output_file"
+            done
+        fi
+    fi
+
+    # 添加剩余字段和结束标签
+    cat >> "$output_file" << EOF
+    <rating>$episode_rating</rating>
+    <year>$year</year>
+    <aired>$air_date</aired>
+    <runtime>$runtime</runtime>
+    <uniqueid type="tmdb" default="true">$tmdb_id</uniqueid>
+EOF
+
+    # 添加 IMDB ID（如果有）
+    if [[ -n "$imdb_id" && "$imdb_id" != "null" ]]; then
+        echo "    <imdbid>$imdb_id</imdbid>" >> "$output_file"
+        echo "    <uniqueid type=\"imdb\">$imdb_id</uniqueid>" >> "$output_file"
+    fi
+
+    # 添加 TVDB ID（如果有）
+    if [[ -n "$tvdb_id" && "$tvdb_id" != "null" ]]; then
+        echo "    <tvdbid>$tvdb_id</tvdbid>" >> "$output_file"
+        echo "    <uniqueid type=\"tvdb\">$tvdb_id</uniqueid>" >> "$output_file"
+    fi
+
+    # 结束标签
+    echo "</episodedetails>" >> "$output_file"
 
     if [[ $? -eq 0 ]]; then
         log_success "  ✅ 单集 NFO 生成成功"
@@ -2693,6 +2939,11 @@ generate_series_nfo() {
     # 获取预告片信息
     local trailers=$(get_tv_videos "$tmdb_id")
 
+    # 获取外部 ID（IMDB、TVDB 等）
+    local external_ids=$(get_tv_external_ids "$tmdb_id")
+    local imdb_id=$(echo "$external_ids" | jq -r '.imdb_id // ""')
+    local tvdb_id=$(echo "$external_ids" | jq -r '.tvdb_id // ""')
+
     # 生成总剧集 NFO
     cat > "$output_file" << EOF
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -2701,6 +2952,7 @@ generate_series_nfo() {
     <originaltitle>$original_title</originaltitle>
     <year>$year</year>
     <plot>$plot</plot>
+    <outline>$plot</outline>
 EOF
 
     # 添加标语（如果有）
@@ -2717,6 +2969,22 @@ EOF
     <studio>$(echo "$tmdb_data" | jq -r '.networks[0].name // ""')</studio>
     <mpaa>$(echo "$tmdb_data" | jq -r '.content_ratings.results[] | select(.iso_3166_1 == "US") | .rating // ""')</mpaa>
     <uniqueid type="tmdb" default="true">$tmdb_id</uniqueid>
+EOF
+
+    # 添加 IMDB ID（如果有）
+    if [[ -n "$imdb_id" && "$imdb_id" != "null" ]]; then
+        echo "    <imdbid>$imdb_id</imdbid>" >> "$output_file"
+        echo "    <uniqueid type=\"imdb\">$imdb_id</uniqueid>" >> "$output_file"
+    fi
+
+    # 添加 TVDB ID（如果有）
+    if [[ -n "$tvdb_id" && "$tvdb_id" != "null" ]]; then
+        echo "    <tvdbid>$tvdb_id</tvdbid>" >> "$output_file"
+        echo "    <uniqueid type=\"tvdb\">$tvdb_id</uniqueid>" >> "$output_file"
+    fi
+
+    # 继续剩余字段
+    cat >> "$output_file" << EOF
     <episodefilecount>$number_of_episodes</episodefilecount>
     <seasoncount>$number_of_seasons</seasoncount>
 EOF
