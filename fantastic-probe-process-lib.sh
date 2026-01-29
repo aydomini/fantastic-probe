@@ -16,6 +16,128 @@
 # 上次TMDB请求时间戳（毫秒）
 LAST_TMDB_REQUEST_TIME=0
 
+# TMDB 缓存目录
+TMDB_CACHE_DIR="${TMDB_CACHE_DIR:-/tmp/fantastic-probe-tmdb-cache}"
+TMDB_CACHE_MAX_AGE="${TMDB_CACHE_MAX_AGE:-1800}"  # 缓存过期时间（秒，默认30分钟）
+
+#==============================================================================
+# TMDB 文件系统缓存函数
+#==============================================================================
+# 使用文件系统缓存替代关联数组，避免 set -u 兼容性问题
+# 缓存键格式: tv_{id}, season_{id}_{num}, episode_{id}_S{xx}E{yy}
+#==============================================================================
+
+# 初始化缓存目录
+init_tmdb_cache() {
+    if [ ! -d "$TMDB_CACHE_DIR" ]; then
+        mkdir -p "$TMDB_CACHE_DIR" 2>/dev/null || true
+        log_debug "  TMDB 缓存目录已创建: $TMDB_CACHE_DIR"
+    fi
+}
+
+# 读取缓存
+# 参数: $1=缓存键
+# 返回: 0=缓存命中（输出到stdout），1=缓存未命中或已过期
+get_tmdb_cache() {
+    local cache_key="$1"
+    local cache_file="$TMDB_CACHE_DIR/${cache_key}.json"
+
+    # 检查缓存文件是否存在
+    if [ ! -f "$cache_file" ]; then
+        return 1
+    fi
+
+    # 检查文件年龄（兼容 macOS 和 Linux）
+    local file_mtime="0"
+    if command -v stat >/dev/null 2>&1; then
+        # 尝试 macOS 格式
+        if file_mtime=$(stat -f %m "$cache_file" 2>/dev/null); then
+            : # macOS 成功
+        # 尝试 Linux 格式
+        elif file_mtime=$(stat -c %Y "$cache_file" 2>/dev/null); then
+            : # Linux 成功
+        else
+            # stat 命令失败，返回缓存未命中
+            return 1
+        fi
+    else
+        # stat 命令不存在
+        return 1
+    fi
+
+    local current_time=$(date +%s)
+    local file_age=$((current_time - file_mtime))
+
+    # 检查是否过期
+    if [ $file_age -ge $TMDB_CACHE_MAX_AGE ]; then
+        log_debug "  缓存已过期（年龄: ${file_age}秒，键: $cache_key）"
+        rm -f "$cache_file" 2>/dev/null || true
+        return 1
+    fi
+
+    # 输出缓存内容
+    cat "$cache_file"
+    log_debug "  ✅ 缓存命中（年龄: ${file_age}秒，键: $cache_key）"
+    return 0
+}
+
+# 写入缓存
+# 参数: $1=缓存键, $2=JSON数据
+set_tmdb_cache() {
+    local cache_key="$1"
+    local cache_data="$2"
+    local cache_file="$TMDB_CACHE_DIR/${cache_key}.json"
+
+    # 确保缓存目录存在
+    init_tmdb_cache
+
+    # 写入缓存文件
+    echo "$cache_data" > "$cache_file" 2>/dev/null || {
+        log_debug "  ⚠️  缓存写入失败（键: $cache_key）"
+        return 1
+    }
+
+    log_debug "  💾 已缓存（键: $cache_key）"
+    return 0
+}
+
+# 清理过期缓存
+# 参数: 无
+clean_tmdb_cache() {
+    if [ ! -d "$TMDB_CACHE_DIR" ]; then
+        return 0
+    fi
+
+    local cleaned=0
+    local current_time=$(date +%s)
+
+    # 遍历所有缓存文件
+    while IFS= read -r -d '' cache_file; do
+        local file_mtime="0"
+        # 尝试 macOS 格式
+        if file_mtime=$(stat -f %m "$cache_file" 2>/dev/null); then
+            : # macOS 成功
+        # 尝试 Linux 格式
+        elif file_mtime=$(stat -c %Y "$cache_file" 2>/dev/null); then
+            : # Linux 成功
+        else
+            # stat 失败，跳过此文件
+            continue
+        fi
+
+        local file_age=$((current_time - file_mtime))
+
+        if [ $file_age -ge $TMDB_CACHE_MAX_AGE ]; then
+            rm -f "$cache_file"
+            ((cleaned++)) || true
+        fi
+    done < <(find "$TMDB_CACHE_DIR" -type f -name "*.json" -print0 2>/dev/null)
+
+    if [ $cleaned -gt 0 ]; then
+        log_debug "  🗑️  已清理 $cleaned 个过期缓存"
+    fi
+}
+
 #==============================================================================
 # TMDB 速率限制包装函数
 #==============================================================================
@@ -65,15 +187,16 @@ tmdb_rate_limit() {
 tmdb_api_call_with_retry() {
     local url="$1"
     local error_msg="${2:-TMDB API调用}"
-    local timeout="${TMDB_TIMEOUT:-30}"
+    # v3.6.0 优化：减少超时时间，加快故障恢复
+    local timeout="${TMDB_TIMEOUT:-15}"  # 从30秒降低到15秒
     local max_retries="${TMDB_RETRY_COUNT:-3}"
     local delay_429="${TMDB_RETRY_DELAY_429:-10}"
-    local delay_other="${TMDB_RETRY_DELAY_OTHER:-3}"
+    local delay_other="${TMDB_RETRY_DELAY_OTHER:-2}"  # 从3秒降低到2秒
 
     # 代理配置
     local proxy_enabled="${TMDB_PROXY_ENABLED:-false}"
     local proxy_url="${TMDB_PROXY_URL:-}"
-    local proxy_timeout="${TMDB_PROXY_TIMEOUT:-60}"
+    local proxy_timeout="${TMDB_PROXY_TIMEOUT:-20}"  # 从60秒降低到20秒
     local proxy_fallback="${TMDB_PROXY_FALLBACK:-direct}"
 
     local retry_count=0
@@ -2278,20 +2401,28 @@ query_tmdb_tv() {
 
     local show_data=""
 
-    # 如果有 tmdb_id，直接查询
+    # 如果有 tmdb_id，直接查询（带缓存）
     if [[ -n "$tmdb_id" ]]; then
         log_info "  使用 TMDB ID 查询电视剧: $tmdb_id"
 
-        # 使用 append_to_response 一次性获取所有数据（优化性能）
-        show_data=$(tmdb_api_call_with_retry \
-            "https://api.themoviedb.org/3/tv/${tmdb_id}?api_key=${api_key}&language=${language}&append_to_response=credits,external_ids" \
-            "通过ID查询电视剧（含演职人员+外部ID）")
-
-        if [[ "$show_data" != "{}" ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
-            log_success "  ✅ TMDB 查询成功（ID: $tmdb_id）"
+        # 尝试从缓存读取
+        local cache_key="tv_${tmdb_id}"
+        if show_data=$(get_tmdb_cache "$cache_key" 2>/dev/null); then
+            log_debug "  ✅ 使用缓存数据（TMDB ID: $tmdb_id）"
         else
-            log_warn "  ⚠️  TMDB ID 查询失败，尝试搜索"
-            show_data=""
+            # 缓存未命中，调用 API
+            show_data=$(tmdb_api_call_with_retry \
+                "https://api.themoviedb.org/3/tv/${tmdb_id}?api_key=${api_key}&language=${language}&append_to_response=credits,external_ids" \
+                "通过ID查询电视剧（含演职人员+外部ID）")
+
+            if [[ "$show_data" != "{}" ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
+                log_success "  ✅ TMDB 查询成功（ID: $tmdb_id）"
+                # 写入缓存
+                set_tmdb_cache "$cache_key" "$show_data"
+            else
+                log_warn "  ⚠️  TMDB ID 查询失败，尝试搜索"
+                show_data=""
+            fi
         fi
     fi
 
@@ -2345,17 +2476,26 @@ query_tmdb_tv() {
 
                 log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id, 搜索词: $search_title)"
 
-                # 使用 ID 再次查询完整数据（带 append_to_response 优化）
-                log_debug "  获取完整剧集数据（含演职人员+外部ID）..."
-                show_data=$(tmdb_api_call_with_retry \
-                    "https://api.themoviedb.org/3/tv/${found_id}?api_key=${api_key}&language=${language}&append_to_response=credits,external_ids" \
-                    "获取完整剧集数据")
-
-                if [[ "$show_data" != "{}" ]]; then
+                # 尝试从缓存读取完整数据
+                local cache_key="tv_${found_id}"
+                if show_data=$(get_tmdb_cache "$cache_key" 2>/dev/null); then
+                    log_debug "  ✅ 使用缓存数据（TMDB ID: $found_id）"
                     break
                 else
-                    log_warn "  ⚠️  获取完整数据失败，尝试下一个搜索词"
-                    show_data=""
+                    # 缓存未命中，使用 ID 查询完整数据
+                    log_debug "  获取完整剧集数据（含演职人员+外部ID）..."
+                    show_data=$(tmdb_api_call_with_retry \
+                        "https://api.themoviedb.org/3/tv/${found_id}?api_key=${api_key}&language=${language}&append_to_response=credits,external_ids" \
+                        "获取完整剧集数据")
+
+                    if [[ "$show_data" != "{}" ]]; then
+                        # 写入缓存
+                        set_tmdb_cache "$cache_key" "$show_data"
+                        break
+                    else
+                        log_warn "  ⚠️  获取完整数据失败，尝试下一个搜索词"
+                        show_data=""
+                    fi
                 fi
             else
                 log_warn "  ⚠️  TMDB 未找到匹配结果: $search_title"
@@ -2375,17 +2515,27 @@ query_tmdb_tv() {
         local show_id=$(echo "$show_data" | jq -r '.id')
         log_info "  查询季和剧集详情: S${season}E${episode}"
 
-        # 查询季信息（用于生成 Season.nfo）
+        # 查询季信息（用于生成 Season.nfo，带缓存）
         local season_data
-        season_data=$(tmdb_api_call_with_retry \
-            "https://api.themoviedb.org/3/tv/${show_id}/season/${season}?api_key=${api_key}&language=${language}" \
-            "查询季信息")
+        local season_cache_key="season_${show_id}_${season}"
 
-        if [[ "$season_data" == "{}" ]] || ! echo "$season_data" | jq -e '.id' >/dev/null 2>&1; then
-            log_warn "  ⚠️  季信息获取失败"
-            season_data="{}"
-        else
+        if season_data=$(get_tmdb_cache "$season_cache_key" 2>/dev/null); then
+            log_debug "  ✅ 使用缓存的季信息 (Season $season)"
             log_success "  ✅ 季信息获取成功 (Season $season)"
+        else
+            # 缓存未命中，调用 API
+            season_data=$(tmdb_api_call_with_retry \
+                "https://api.themoviedb.org/3/tv/${show_id}/season/${season}?api_key=${api_key}&language=${language}" \
+                "查询季信息")
+
+            if [[ "$season_data" == "{}" ]] || ! echo "$season_data" | jq -e '.id' >/dev/null 2>&1; then
+                log_warn "  ⚠️  季信息获取失败"
+                season_data="{}"
+            else
+                log_success "  ✅ 季信息获取成功 (Season $season)"
+                # 写入缓存
+                set_tmdb_cache "$season_cache_key" "$season_data"
+            fi
         fi
 
         # 查询单集详情（用于生成单集 NFO）

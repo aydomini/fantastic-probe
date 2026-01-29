@@ -11,7 +11,7 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.5.2"  # 硬编码默认值 - 关联数组 set -u 兼容性修复
+VERSION="3.6.0"  # 硬编码默认值 - 性能优化版本
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
@@ -439,7 +439,8 @@ scan_and_process() {
         ((processed++)) || true
 
         # 任务间隔（防止频繁访问网盘触发限流）
-        local interval="${SCAN_TASK_INTERVAL:-5}"
+        # v3.6.0 优化：从 5秒 降低到 2秒，提升处理速度
+        local interval="${SCAN_TASK_INTERVAL:-2}"
         if [ $processed -lt $SCAN_BATCH_SIZE ] && [ $processed -lt $total_pending ]; then
             sleep "$interval"
         fi
