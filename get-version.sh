@@ -62,7 +62,7 @@ get_version_from_script_comment() {
 # 注意：不从 GitHub API 获取，那是"远程版本"，应由调用者自行处理
 VERSION=$(get_version_from_git_tag) || \
 VERSION=$(get_version_from_script_comment "$1") || \
-VERSION="3.5.2"  # 最终回退到硬编码默认值
+VERSION="3.6.0"  # 最终回退到硬编码默认值
 
 #==============================================================================
 # 导出变量
