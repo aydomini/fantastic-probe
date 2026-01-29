@@ -3,7 +3,7 @@ export LC_ALL=C.UTF-8
 
 #==============================================================================
 # ISO 媒体信息提取服务 - Cron 扫描模式
-# 功能：每分钟扫描一次未处理文件，替代 inotifywait 实时监控
+# 功能：每 3 分钟扫描一次未处理文件，替代 inotifywait 实时监控
 # 作者：Fantastic-Probe Team
 #==============================================================================
 
@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.1.10"  # 硬编码默认值
+VERSION="3.1.11"  # 硬编码默认值
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.1.10")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.1.11")
 fi
 
 #==============================================================================
@@ -42,6 +42,10 @@ if [ -f "$CONFIG_FILE" ]; then
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
 fi
+
+# 兼容配置文件中的变量名(config.template 使用 CRON_ 前缀)
+MAX_RETRY_COUNT=${CRON_MAX_RETRY_COUNT:-$MAX_RETRY_COUNT}
+SCAN_BATCH_SIZE=${CRON_SCAN_BATCH_SIZE:-$SCAN_BATCH_SIZE}
 
 # 确保失败缓存目录存在
 CACHE_DIR=$(dirname "$FAILURE_CACHE_DB")
@@ -299,18 +303,10 @@ scan_and_process() {
 
     local total_pending=${#pending_files[@]}
 
-    # 空扫描时静默（只记录一行摘要）
+    # 空扫描时完全静默
     if [ $total_pending -eq 0 ]; then
-        log_info "扫描完成，无待处理文件"
         return 0
     fi
-
-    # 有文件时输出详细信息
-    log_info "=========================================="
-    log_info "扫描任务启动（版本: $VERSION）"
-    log_info "$(get_failure_stats)"
-    log_info "发现 $total_pending 个待处理文件"
-    log_info "=========================================="
 
     # 批量处理（限制单次处理数量，避免长时间运行）
     local processed=0
@@ -320,11 +316,9 @@ scan_and_process() {
     for strm_file in "${pending_files[@]}"; do
         # 达到批量限制，停止本次扫描
         if [ $processed -ge $SCAN_BATCH_SIZE ]; then
-            log_info "已达到批量限制（$SCAN_BATCH_SIZE），剩余 $((total_pending - processed)) 个文件将在下次扫描处理"
+            log_warn "已达到批量限制（$SCAN_BATCH_SIZE），剩余 $((total_pending - processed)) 个文件将在下次扫描处理"
             break
         fi
-
-        log_info "处理 $((processed + 1))/$total_pending: $(basename "$strm_file")"
 
         # 处理文件（串行，防止资源耗尽）
         if process_iso_strm "$strm_file"; then
@@ -340,11 +334,6 @@ scan_and_process() {
             sleep 10
         fi
     done
-
-    log_info "=========================================="
-    log_info "Cron 扫描任务完成"
-    log_info "总计: $processed, 成功: $succeeded, 失败: $failed"
-    log_info "=========================================="
 
     return 0
 }

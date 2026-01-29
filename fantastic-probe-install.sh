@@ -2,7 +2,7 @@
 export LC_ALL=C.UTF-8
 
 #==============================================================================
-# ISO 媒体信息提取服务 - 安装脚本（实时监控版本）
+# ISO 媒体信息提取服务 - 安装脚本
 #==============================================================================
 
 set -e
@@ -88,15 +88,6 @@ get_package_name() {
                 echo "sqlite"
             else
                 echo "sqlite3"
-            fi
-            ;;
-        p7zip)
-            if [ "$pkg_manager" = "apt" ]; then
-                echo "p7zip-full"
-            elif [ "$pkg_manager" = "dnf" ] || [ "$pkg_manager" = "yum" ]; then
-                echo "p7zip p7zip-plugins"
-            else
-                echo "p7zip"
             fi
             ;;
         *)
@@ -1081,13 +1072,13 @@ fi
 # 创建 Cron 任务文件
 cat > "$CRON_FILE" <<'CRONEOF'
 # Fantastic-Probe Cron 扫描任务
-# 每分钟执行一次扫描
+# 每 3 分钟执行一次扫描
 
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# 每分钟执行一次扫描（默认 Cron 模式）
-*/1 * * * * root /usr/local/bin/fantastic-probe-cron-scanner scan >> /var/log/fantastic_probe.log 2>&1
+# 每 3 分钟执行一次扫描（默认 Cron 模式）
+*/3 * * * * root /usr/local/bin/fantastic-probe-cron-scanner scan >> /var/log/fantastic_probe.log 2>&1
 
 # 每小时清理孤立锁文件
 0 * * * * root rm -f /tmp/fantastic_probe_cron_scanner.lock 2>/dev/null || true
@@ -1095,8 +1086,7 @@ CRONEOF
 
 chmod 644 "$CRON_FILE"
 echo "   ✅ Cron 任务已配置: $CRON_FILE"
-echo "   ℹ️  默认模式: Cron（每分钟扫描一次）"
-echo "   ℹ️  如需切换到 inotify 实时监控模式，请使用: fp-config"
+echo "   ℹ️  扫描间隔: 每 3 分钟"
 echo ""
 
 # 8. 清理旧的 cron 任务（如果存在）
@@ -1115,7 +1105,7 @@ echo "=========================================="
 echo "✅ 安装完成！"
 echo "=========================================="
 echo ""
-echo "ℹ️  Fantastic-Probe 现在使用 Cron 模式（每分钟扫描一次）"
+echo "ℹ️  Fantastic-Probe 现在使用 Cron 模式（每 3 分钟扫描一次）"
 echo ""
 echo "📝 常用命令:"
 echo ""

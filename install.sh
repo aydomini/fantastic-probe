@@ -2,14 +2,14 @@
 
 #==============================================================================
 # Fantastic-Probe 一键安装脚本
-# 用法: curl -fsSL https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh | sudo bash
+# 用法: curl -fsSL https://raw.githubusercontent.com/aydomini/fantastic-probe/master/install.sh | sudo bash
 #==============================================================================
 
 set -e
 
 REPO_URL="https://github.com/aydomini/fantastic-probe"
 REPO_RAW_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe"
-VERSION="${1:-main}"  # 默认使用 main 分支，可指定版本标签
+VERSION="${1:-master}"  # 默认使用 master 分支，可指定版本标签
 INSTALL_DIR="/tmp/fantastic-probe-install-$$"
 
 # 清理临时文件函数
@@ -61,7 +61,7 @@ echo ""
 # 1. 检查权限
 if [ "$EUID" -ne 0 ]; then
     error "请使用 root 权限运行此脚本"
-    echo "   curl -fsSL https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh | sudo bash"
+    echo "   curl -fsSL https://raw.githubusercontent.com/aydomini/fantastic-probe/master/install.sh | sudo bash"
     exit 1
 fi
 
@@ -107,9 +107,9 @@ info "下载 Fantastic-Probe (版本: $VERSION)..."
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-if [ "$VERSION" = "main" ]; then
+if [ "$VERSION" = "master" ]; then
     # 下载主分支
-    DOWNLOAD_URL="$REPO_URL/archive/refs/heads/main.tar.gz"
+    DOWNLOAD_URL="$REPO_URL/archive/refs/heads/master.tar.gz"
 else
     # 下载指定版本标签
     DOWNLOAD_URL="$REPO_URL/archive/refs/tags/$VERSION.tar.gz"
@@ -155,7 +155,7 @@ echo "=========================================="
 success "Fantastic-Probe 安装完成！"
 echo "=========================================="
 echo ""
-echo "🎉 Cron 任务已配置，每分钟自动扫描一次"
+echo "🎉 Cron 任务已配置，每 3 分钟自动扫描一次"
 echo ""
 echo "常用命令："
 echo "  查看 Cron 日志:   tail -f /var/log/fantastic_probe.log"

@@ -70,6 +70,7 @@ validate_config() {
         "EMBY_URL"
         "EMBY_API_KEY"
         "EMBY_NOTIFY_TIMEOUT"
+        "EMBY_DELETE_INVALID_ITEMS"
     )
 
     # 检查缺失的配置项
@@ -97,6 +98,9 @@ validate_config() {
                     ;;
                 EMBY_NOTIFY_TIMEOUT)
                     echo "EMBY_NOTIFY_TIMEOUT=5" >> "$CONFIG_FILE"
+                    ;;
+                EMBY_DELETE_INVALID_ITEMS)
+                    echo "EMBY_DELETE_INVALID_ITEMS=false" >> "$CONFIG_FILE"
                     ;;
             esac
             echo "   ✅ 已添加: $key"
@@ -127,6 +131,7 @@ show_current_config() {
     echo "    Emby URL: ${EMBY_URL:-(未配置)}"
     echo "    API Key: ${EMBY_API_KEY:+(已配置)}"
     echo "    通知超时: ${EMBY_NOTIFY_TIMEOUT:-5}秒"
+    echo "    无效媒体自动删除: ${EMBY_DELETE_INVALID_ITEMS:-false}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 }
@@ -134,26 +139,45 @@ show_current_config() {
 # 重启服务
 restart_service() {
     echo ""
-    echo "🔄 应用配置..."
+    echo "🔄 重启服务（清理状态 + 重新启动）..."
+    echo ""
 
-    # 检查是否使用 Cron 模式（检测 cron 配置文件）
-    if [ -f "/etc/cron.d/fantastic-probe" ]; then
-        # Cron 模式：配置会在下一次定时任务执行时自动生效
-        echo "   ℹ️  检测到 Cron 模式（定时任务）"
-        echo "   ✅ 配置已更新，将在下一次扫描时生效（最多等待 1 分钟）"
-        echo ""
-        echo "   💡 提示："
-        echo "      • Cron 任务每分钟执行一次"
-        echo "      • 配置更改会自动应用，无需手动重启"
-        echo "      • 查看运行日志: tail -f /var/log/fantastic_probe.log"
-        echo ""
-        return 0
-    fi
+    # 1. 清理旧状态（轻量级清理，不询问）
+    echo "   🧹 清理旧状态..."
 
-    # systemd 服务模式（向后兼容）
-    if systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
-        echo "   ℹ️  检测到 systemd 服务模式"
-        if systemctl restart "$SERVICE_NAME"; then
+    # 终止所有相关进程
+    local killed_count=0
+    for proc_name in "fantastic-probe-cron-scanner" "fantastic-probe-monitor"; do
+        while IFS= read -r pid; do
+            if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+                kill -9 "$pid" 2>/dev/null && killed_count=$((killed_count + 1))
+            fi
+        done < <(pgrep -f "$proc_name" 2>/dev/null || true)
+    done
+    [ $killed_count -gt 0 ] && echo "   ✅ 已终止 $killed_count 个旧进程"
+
+    # 清理锁文件和队列文件
+    rm -f /tmp/fantastic_probe_monitor.lock \
+          /tmp/fantastic-probe.lock \
+          /var/lock/fantastic-probe.lock \
+          /tmp/fantastic_probe_queue.fifo \
+          /tmp/fantastic-probe-queue 2>/dev/null || true
+    echo "   ✅ 已清理锁文件和队列"
+
+    # 2. 启动服务
+    echo ""
+    if [ -f "/etc/cron.d/fantastic-probe.disabled" ]; then
+        # Cron 被禁用，重新启用
+        echo "   📅 重新启用 Cron 定时任务..."
+        mv /etc/cron.d/fantastic-probe.disabled /etc/cron.d/fantastic-probe 2>/dev/null || true
+        echo "   ✅ Cron 任务已启用，将在 3 分钟内开始运行"
+    elif [ -f "/etc/cron.d/fantastic-probe" ]; then
+        # Cron 模式，无需额外操作
+        echo "   📅 Cron 模式已运行，配置将在下次扫描时生效（最多 3 分钟）"
+    elif systemctl list-unit-files 2>/dev/null | grep -q "^$SERVICE_NAME.service"; then
+        # systemd 服务模式
+        echo "   🚀 重启 systemd 服务..."
+        if systemctl restart "$SERVICE_NAME" 2>/dev/null; then
             echo "   ✅ 服务重启成功"
             sleep 2
             if systemctl is-active --quiet "$SERVICE_NAME"; then
@@ -168,12 +192,12 @@ restart_service() {
             return 1
         fi
     else
-        # 找不到服务，但配置已更新
-        echo "   ⚠️  未检测到 systemd 服务或 Cron 任务"
-        echo "   ✅ 配置文件已更新"
-        echo "   ℹ️  请手动重启服务或等待 Cron 任务执行"
+        echo "   ⚠️  未检测到服务配置"
+        echo "   ℹ️  配置文件已更新，但无法自动启动服务"
     fi
 
+    echo ""
+    echo "   ✅ 重启完成！所有旧状态已清理"
     echo ""
 }
 
@@ -250,7 +274,7 @@ change_strm_root() {
     else
         echo "   ⚠️  配置已更新，但需要应用后才能生效"
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
-            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 3 分钟）"
         else
             echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
         fi
@@ -548,7 +572,7 @@ reconfigure_ffprobe() {
     else
         echo "   ⚠️  配置已更新，但需要应用后才能生效"
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
-            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 3 分钟）"
         else
             echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
         fi
@@ -673,6 +697,56 @@ configure_emby() {
         EMBY_API_KEY="$new_api_key"
 
         echo "   ✅ Emby 集成已启用"
+
+        # 配置无效媒体自动删除
+        echo ""
+        echo "   🗑️  无效媒体自动删除配置"
+        echo "   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "   说明："
+        echo "   • 启用后，当媒体信息提取失败或影片时长 < 30 分钟时"
+        echo "   • 自动删除 Emby 索引和 STRM 文件所在的整个文件夹"
+        echo "   • ⚠️  此操作不可逆，请谨慎启用"
+        echo ""
+        echo "   当前状态: ${EMBY_DELETE_INVALID_ITEMS:-false}"
+        echo ""
+
+        local current_delete_enabled="${EMBY_DELETE_INVALID_ITEMS:-false}"
+        local delete_prompt="y/N"
+        if [ "$current_delete_enabled" = "true" ]; then
+            delete_prompt="Y/n"
+        fi
+
+        read -p "   是否启用无效媒体自动删除？[$delete_prompt]: " enable_delete
+
+        if [ "$current_delete_enabled" = "true" ]; then
+            enable_delete="${enable_delete:-Y}"
+        else
+            enable_delete="${enable_delete:-N}"
+        fi
+
+        if [[ "$enable_delete" =~ ^[Yy]$ ]]; then
+            # 二次确认
+            echo ""
+            echo "   ⚠️  警告：启用此功能后，系统将自动删除无效媒体"
+            echo "   删除范围：Emby 索引 + STRM 文件所在的整个文件夹"
+            echo "   删除条件：媒体信息提取失败或时长 < 30 分钟"
+            echo ""
+            read -p "   确认启用无效媒体自动删除？[y/N]: " confirm_delete
+            confirm_delete="${confirm_delete:-N}"
+
+            if [[ "$confirm_delete" =~ ^[Yy]$ ]]; then
+                update_config_line "EMBY_DELETE_INVALID_ITEMS" "true"
+                EMBY_DELETE_INVALID_ITEMS="true"
+                echo "   ✅ 无效媒体自动删除已启用"
+                echo "   ℹ️  所有删除操作将记录在日志中"
+            else
+                echo "   ℹ️  已取消启用"
+            fi
+        else
+            update_config_line "EMBY_DELETE_INVALID_ITEMS" "false"
+            EMBY_DELETE_INVALID_ITEMS="false"
+            echo "   ✅ 无效媒体自动删除已禁用"
+        fi
     else
         # 禁用 Emby 集成
         update_config_line "EMBY_ENABLED" "false"
@@ -690,7 +764,7 @@ configure_emby() {
     else
         echo "   ⚠️  配置已更新，但需要应用后才能生效"
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
-            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 3 分钟）"
         else
             echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
         fi
@@ -732,7 +806,7 @@ edit_config_file() {
     else
         echo "   ⚠️  配置已修改，但需要应用后才能生效"
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
-            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 3 分钟）"
         else
             echo "   手动重启: sudo systemctl restart $SERVICE_NAME"
         fi
@@ -768,7 +842,7 @@ show_service_status() {
         echo "   💡 提示:"
         echo "      • 查看实时日志: tail -f /var/log/fantastic_probe.log"
         echo "      • 查看错误日志: fp-config logs-error"
-        echo "      • Cron 任务每分钟自动执行一次"
+        echo "      • Cron 任务每 3 分钟自动执行一次"
     elif systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
         echo "   ℹ️  运行模式: systemd 服务"
         echo ""
@@ -790,7 +864,7 @@ start_service() {
     if [ -f "/etc/cron.d/fantastic-probe" ]; then
         echo "   ℹ️  Cron 模式: 任务已自动启用"
         echo "   ✅ Cron 任务配置: /etc/cron.d/fantastic-probe"
-        echo "   ℹ️  任务将每分钟自动执行，无需手动启动"
+        echo "   ℹ️  任务将每 3 分钟自动执行，无需手动启动"
         echo ""
         echo "   💡 提示: 查看实时日志 tail -f /var/log/fantastic_probe.log"
         return 0
@@ -822,42 +896,91 @@ start_service() {
 # 停止服务
 stop_service() {
     echo ""
-    echo "⏹️  停止服务..."
+    echo "⏹️  停止服务并清理状态..."
+    echo ""
 
-    # 检查是否使用 Cron 模式
+    # 1. 停止 Cron 任务或 systemd 服务
     if [ -f "/etc/cron.d/fantastic-probe" ]; then
-        echo "   ⚠️  Cron 模式: 无法直接停止定时任务"
-        echo ""
-        echo "   如需停止，请选择以下方式之一："
-        echo "   1️⃣  临时禁用（保留配置）:"
-        echo "      sudo mv /etc/cron.d/fantastic-probe /etc/cron.d/fantastic-probe.disabled"
-        echo ""
-        echo "   2️⃣  永久卸载（删除所有）:"
-        echo "      sudo fp-config uninstall"
-        echo ""
-        read -p "   是否临时禁用 Cron 任务？[y/N]: " disable_cron
-        if [[ "$disable_cron" =~ ^[Yy]$ ]]; then
-            mv /etc/cron.d/fantastic-probe /etc/cron.d/fantastic-probe.disabled
-            echo "   ✅ Cron 任务已禁用"
-            echo "   ℹ️  重新启用: sudo mv /etc/cron.d/fantastic-probe.disabled /etc/cron.d/fantastic-probe"
-        else
-            echo "   ℹ️  操作已取消"
-        fi
-        return 0
+        echo "   📅 禁用 Cron 定时任务..."
+        mv /etc/cron.d/fantastic-probe /etc/cron.d/fantastic-probe.disabled 2>/dev/null || true
+        echo "   ✅ Cron 任务已禁用"
+    elif systemctl list-unit-files 2>/dev/null | grep -q "^$SERVICE_NAME.service"; then
+        echo "   🛑 停止 systemd 服务..."
+        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        echo "   ✅ systemd 服务已停止"
     fi
 
-    # systemd 服务模式
-    if systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
-        if systemctl stop "$SERVICE_NAME"; then
-            echo "   ✅ 服务已停止"
-        else
-            echo "   ❌ 服务停止失败"
-            return 1
-        fi
+    # 2. 终止所有相关进程（包括僵尸进程）
+    echo "   🔪 终止所有相关进程..."
+    local killed_count=0
+
+    # 查找并终止所有 fantastic-probe 相关进程
+    for proc_name in "fantastic-probe-cron-scanner" "fantastic-probe-monitor"; do
+        while IFS= read -r pid; do
+            if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+                kill -9 "$pid" 2>/dev/null && killed_count=$((killed_count + 1))
+            fi
+        done < <(pgrep -f "$proc_name" 2>/dev/null || true)
+    done
+
+    if [ $killed_count -gt 0 ]; then
+        echo "   ✅ 已终止 $killed_count 个进程"
     else
-        echo "   ⚠️  未检测到 systemd 服务"
+        echo "   ℹ️  没有运行中的进程"
     fi
 
+    # 3. 清理锁文件
+    echo "   🔓 清理锁文件..."
+    local lock_files=(
+        "/tmp/fantastic_probe_monitor.lock"
+        "/tmp/fantastic-probe.lock"
+        "/var/lock/fantastic-probe.lock"
+    )
+    local cleaned_locks=0
+    for lock_file in "${lock_files[@]}"; do
+        if [ -f "$lock_file" ] || [ -L "$lock_file" ]; then
+            rm -f "$lock_file" 2>/dev/null && cleaned_locks=$((cleaned_locks + 1))
+        fi
+    done
+    if [ $cleaned_locks -gt 0 ]; then
+        echo "   ✅ 已清理 $cleaned_locks 个锁文件"
+    else
+        echo "   ℹ️  没有残留的锁文件"
+    fi
+
+    # 4. 清理队列文件
+    echo "   🗑️  清理队列文件..."
+    local queue_files=(
+        "/tmp/fantastic_probe_queue.fifo"
+        "/tmp/fantastic-probe-queue"
+    )
+    local cleaned_queues=0
+    for queue_file in "${queue_files[@]}"; do
+        if [ -p "$queue_file" ] || [ -f "$queue_file" ]; then
+            rm -f "$queue_file" 2>/dev/null && cleaned_queues=$((cleaned_queues + 1))
+        fi
+    done
+    if [ $cleaned_queues -gt 0 ]; then
+        echo "   ✅ 已清理 $cleaned_queues 个队列文件"
+    else
+        echo "   ℹ️  没有残留的队列文件"
+    fi
+
+    # 5. 可选：清理失败记录
+    echo ""
+    read -p "   是否清理失败记录数据库？[y/N]: " clean_db
+    if [[ "$clean_db" =~ ^[Yy]$ ]]; then
+        if [ -f "/var/lib/fantastic-probe/failure_cache.db" ]; then
+            rm -f "/var/lib/fantastic-probe/failure_cache.db"
+            echo "   ✅ 失败记录已清理"
+        else
+            echo "   ℹ️  没有失败记录"
+        fi
+    fi
+
+    echo ""
+    echo "   ✅ 服务已完全停止，所有状态已清理"
+    echo "   ℹ️  重新启用: 使用'重启服务'或'systemctl start $SERVICE_NAME'"
     echo ""
 }
 
@@ -993,7 +1116,7 @@ install_updates() {
         # 检查是否使用 Cron 模式
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
             echo "   ℹ️  Cron 模式: 配置已更新"
-            echo "   ✅ 任务将在下次扫描时自动应用（最多等待 1 分钟）"
+            echo "   ✅ 任务将在下次扫描时自动应用（最多等待 3 分钟）"
             echo ""
             echo "   查看运行日志: tail -f /var/log/fantastic_probe.log"
         elif systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"; then
@@ -1227,7 +1350,7 @@ view_logs() {
     echo ""
     echo "💡 提示："
     echo "   • 按 Ctrl+C 退出实时日志"
-    echo "   • 日志每分钟更新一次（Cron 任务）"
+    echo "   • 日志每 3 分钟更新一次（Cron 任务）"
     echo "   • 可使用以下命令过滤日志："
     echo "     - grep '成功'：只显示成功的记录"
     echo "     - grep '失败'：只显示失败的记录"
@@ -1239,7 +1362,7 @@ view_logs() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo "🔄 开始实时监控..."
+    echo "🔄 开始实时查看日志..."
     echo ""
 
     if [ -f "$LOG_FILE" ]; then
@@ -1253,7 +1376,7 @@ view_logs() {
         echo "❌ 日志文件不存在: $LOG_FILE"
         echo ""
         echo "💡 可能原因："
-        echo "   1. Cron 任务尚未运行（等待 1 分钟）"
+        echo "   1. Cron 任务尚未运行（等待 3 分钟）"
         echo "   2. 日志路径配置错误"
         echo "   3. 权限不足，无法写入日志"
         echo ""
@@ -1600,24 +1723,34 @@ system_menu() {
     while true; do
         echo ""
         echo "【系统管理】"
-        echo "  1) 检查更新"
-        echo "  2) 安装更新"
-        echo "  3) 卸载服务"
+        echo "  1) 查看服务状态"
+        echo "  2) 停止服务"
+        echo "  3) 重启服务"
+        echo "  4) 检查更新"
+        echo "  5) 卸载服务"
         echo "  0) 返回主菜单"
         echo ""
-        read -p "请选择 [0-3]: " sys_choice
+        read -p "请选择 [0-5]: " sys_choice
         echo ""
 
         case "$sys_choice" in
             1)
-                check_updates
+                show_service_status
                 read -p "按 Enter 继续..."
                 ;;
             2)
-                install_updates
+                stop_service
                 read -p "按 Enter 继续..."
                 ;;
             3)
+                restart_service
+                read -p "按 Enter 继续..."
+                ;;
+            4)
+                check_updates
+                read -p "按 Enter 继续..."
+                ;;
+            5)
                 uninstall_service
                 ;;
             0)
@@ -1641,20 +1774,14 @@ show_menu() {
     echo "║    Fantastic-Probe 管理工具                    ║"
     echo "╚════════════════════════════════════════════════╝"
     echo ""
-    echo "  【配置管理】"
     echo "  1) 查看当前配置"
-    echo "  2) 配置向导（STRM、FFprobe、Emby 等）"
-    echo "  3) 直接编辑配置文件"
-    echo ""
-    echo "  【快捷菜单】"
-    echo "  4) 失败文件管理"
-    echo "  5) 服务管理"
-    echo "  6) 日志管理"
-    echo "  7) 系统管理（更新、卸载）"
+    echo "  2) 配置向导"
+    echo "  3) 日志管理"
+    echo "  4) 系统管理"
     echo ""
     echo "  0) 退出"
     echo ""
-    read -p "请选择操作 [0-7]: " choice
+    read -p "请选择操作 [0-4]: " choice
     echo ""
 
     case "$choice" in
@@ -1689,7 +1816,7 @@ show_menu() {
                         read -p "按 Enter 继续..."
                         ;;
                     0)
-                        break  # 直接返回主菜单，无需按 Enter
+                        break
                         ;;
                     *)
                         echo "❌ 无效选择"
@@ -1699,19 +1826,9 @@ show_menu() {
             done
             ;;
         3)
-            edit_config_file
-            read -p "按 Enter 返回菜单..."
-            ;;
-        4)
-            failure_menu
-            ;;
-        5)
-            service_menu
-            ;;
-        6)
             logs_menu
             ;;
-        7)
+        4)
             system_menu
             ;;
         0)

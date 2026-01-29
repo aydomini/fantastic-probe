@@ -2,7 +2,7 @@
 
 #==============================================================================
 # ISO 文件处理核心库
-# 功能：提供独立的文件处理函数，供 Cron 扫描器和实时监控器复用
+# 功能：提供独立的文件处理函数，供 Cron 扫描器复用
 # 作者：Fantastic-Probe Team
 #==============================================================================
 
@@ -507,6 +507,209 @@ convert_to_emby_format() {
 }
 
 #==============================================================================
+# 验证媒体时长是否有效
+#==============================================================================
+
+validate_media_duration() {
+    local ffprobe_json="$1"
+    local min_duration=1800  # 30 分钟（硬编码）
+
+    # 从 ffprobe JSON 中提取 duration
+    local duration
+    duration=$(echo "$ffprobe_json" | jq -r '.format.duration // "0"' 2>/dev/null)
+
+    # 转换为整数（去除小数部分）
+    duration=$(echo "$duration" | awk '{print int($1)}')
+
+    if [ -z "$duration" ] || [ "$duration" = "null" ] || [ "$duration" -eq 0 ]; then
+        log_warn "  ⚠️  媒体时长无效或为空"
+        return 1  # 无效
+    fi
+
+    if [ "$duration" -lt "$min_duration" ]; then
+        log_warn "  ⚠️  媒体时长过短: ${duration}秒 < ${min_duration}秒（30分钟）"
+        return 1  # 无效
+    fi
+
+    log_info "  ✅ 媒体时长有效: ${duration}秒"
+    return 0  # 有效
+}
+
+#==============================================================================
+# 通过文件路径查找 Emby Item ID
+#==============================================================================
+
+find_emby_item_by_path() {
+    local strm_file="$1"
+    local emby_url="${EMBY_URL}"
+    local api_key="${EMBY_API_KEY}"
+
+    # 检查是否启用 Emby
+    if [ "${EMBY_ENABLED:-false}" != "true" ]; then
+        log_debug "  Emby 集成未启用，跳过查找"
+        return 1
+    fi
+
+    # 验证配置
+    if [ -z "$emby_url" ] || [ -z "$api_key" ]; then
+        log_warn "  ⚠️  Emby 配置不完整，跳过查找"
+        return 1
+    fi
+
+    # 移除 URL 末尾的斜杠
+    emby_url="${emby_url%/}"
+
+    # URL 编码路径（简单处理，仅处理空格）
+    local encoded_path=$(echo "$strm_file" | sed 's/ /%20/g')
+
+    log_debug "  查找 Emby Item: $strm_file"
+
+    # 调用 Emby API 查找 Item
+    local response
+    local http_code
+
+    if ! command -v curl &> /dev/null; then
+        log_warn "  ⚠️  curl 命令不可用，无法查找 Emby Item"
+        return 1
+    fi
+
+    response=$(curl -s -w "\n%{http_code}" --max-time 10 \
+        -X GET "${emby_url}/Items?Path=${encoded_path}&Fields=Path&api_key=${api_key}" \
+        2>&1)
+
+    http_code=$(echo "$response" | tail -1)
+    local body=$(echo "$response" | head -n -1)
+
+    if [ "$http_code" != "200" ]; then
+        log_warn "  ⚠️  Emby API 查找失败（HTTP $http_code）"
+        return 1
+    fi
+
+    # 提取 Item ID
+    local item_id
+    item_id=$(echo "$body" | jq -r '.Items[0].Id // empty' 2>/dev/null)
+
+    if [ -z "$item_id" ] || [ "$item_id" = "null" ]; then
+        log_debug "  未在 Emby 中找到对应的 Item"
+        return 1
+    fi
+
+    log_debug "  找到 Emby Item ID: $item_id"
+    echo "$item_id"
+    return 0
+}
+
+#==============================================================================
+# 删除 Emby Item（数据库记录）
+#==============================================================================
+
+delete_emby_item() {
+    local item_id="$1"
+    local emby_url="${EMBY_URL}"
+    local api_key="${EMBY_API_KEY}"
+
+    # 移除 URL 末尾的斜杠
+    emby_url="${emby_url%/}"
+
+    log_info "  🗑️  删除 Emby 索引记录: $item_id"
+
+    # 调用 Emby DELETE API
+    local response
+    local http_code
+
+    response=$(curl -s -w "\n%{http_code}" --max-time 10 \
+        -X DELETE "${emby_url}/Items?Ids=${item_id}&api_key=${api_key}" \
+        2>&1)
+
+    http_code=$(echo "$response" | tail -1)
+
+    if [ "$http_code" = "204" ] || [ "$http_code" = "200" ]; then
+        log_success "  ✅ Emby 索引记录已删除（HTTP $http_code）"
+        return 0
+    else
+        log_error "  ❌ Emby 删除失败（HTTP $http_code）"
+        log_debug "  响应: $(echo "$response" | head -n -1)"
+        return 1
+    fi
+}
+
+#==============================================================================
+# 删除无效媒体（Emby 索引 + 文件夹）
+#==============================================================================
+
+delete_invalid_media() {
+    local strm_file="$1"
+    local reason="${2:-未知原因}"
+
+    # 检查是否启用自动删除
+    if [ "${EMBY_DELETE_INVALID_ITEMS:-false}" != "true" ]; then
+        log_debug "  无效媒体自动删除功能未启用，跳过删除"
+        return 0
+    fi
+
+    log_warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_warn "🗑️  检测到无效媒体，开始自动删除流程"
+    log_warn "  文件: $strm_file"
+    log_warn "  原因: $reason"
+    log_warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # 获取文件夹路径
+    local folder_path
+    folder_path=$(dirname "$strm_file")
+
+    # 步骤 1：删除 Emby 索引（如果启用了 Emby）
+    if [ "${EMBY_ENABLED:-false}" = "true" ]; then
+        log_info "  步骤 1/2：删除 Emby 索引记录"
+
+        local item_id
+        item_id=$(find_emby_item_by_path "$strm_file")
+
+        if [ -n "$item_id" ] && [ "$item_id" != "null" ]; then
+            if delete_emby_item "$item_id"; then
+                log_success "  ✅ Emby 索引删除成功"
+            else
+                log_warn "  ⚠️  Emby 索引删除失败，但继续删除文件"
+            fi
+        else
+            log_info "  ℹ️  未在 Emby 中找到对应项目，跳过 Emby 删除"
+        fi
+    else
+        log_info "  ℹ️  Emby 未启用，跳过 Emby 索引删除"
+    fi
+
+    # 步骤 2：删除文件系统中的文件夹
+    log_info "  步骤 2/2：删除文件夹及所有内容"
+    log_info "  文件夹: $folder_path"
+
+    if [ ! -d "$folder_path" ]; then
+        log_error "  ❌ 文件夹不存在: $folder_path"
+        return 1
+    fi
+
+    # 记录将要删除的内容（用于审计）
+    local file_count
+    file_count=$(find "$folder_path" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+    log_info "  包含 $file_count 个文件"
+
+    # 执行删除
+    if rm -rf "$folder_path" 2>/dev/null; then
+        log_success "  ✅ 文件夹删除成功: $folder_path"
+        log_warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_success "🗑️  无效媒体删除完成"
+        log_success "  原因: $reason"
+        log_success "  已删除: $folder_path"
+        log_success "  文件数: $file_count"
+        log_warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 0
+    else
+        log_error "  ❌ 文件夹删除失败: $folder_path"
+        log_error "  可能的原因: 权限不足或文件正在使用"
+        return 1
+    fi
+}
+
+#==============================================================================
 # 处理单个 ISO strm 文件（完整流程）
 #==============================================================================
 
@@ -584,6 +787,20 @@ process_iso_strm_full() {
 
     if [ -z "$ffprobe_output" ] || ! echo "$ffprobe_output" | jq -e '.streams' >/dev/null 2>&1; then
         log_error "媒体信息提取失败: $iso_path"
+
+        # 触发自动删除（如果启用）
+        delete_invalid_media "$strm_file" "媒体信息提取失败"
+
+        return 1
+    fi
+
+    # 验证媒体时长
+    if ! validate_media_duration "$ffprobe_output"; then
+        log_error "媒体时长无效: $strm_file"
+
+        # 触发自动删除（如果启用）
+        delete_invalid_media "$strm_file" "媒体时长无效（< 30 分钟）"
+
         return 1
     fi
 

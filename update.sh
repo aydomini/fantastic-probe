@@ -9,11 +9,11 @@ set -e
 
 # GitHub Releases API URL（不再需要 version.json）
 GITHUB_API_URL="https://api.github.com/repos/aydomini/fantastic-probe/releases/latest"
-INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/main/install.sh"
+INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/master/install.sh"
 
 # 动态读取当前版本号（从 Git tags → 硬编码默认值）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CURRENT_VERSION="3.1.9"  # 硬编码默认值
+CURRENT_VERSION="3.1.11"  # 硬编码默认值
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
