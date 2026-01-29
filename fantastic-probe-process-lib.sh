@@ -780,30 +780,35 @@ append_media_info_to_nfo() {
     # 追加到 NFO（在结束标签前）
     local temp_nfo="${nfo_file}.tmp"
 
-    # 识别 NFO 类型并插入
+    # 识别 NFO 类型并使用 awk 安全插入（避免 sed 对 XML 标签误解析）
     if grep -q "</movie>" "$nfo_file"; then
-        sed "/<\/movie>/i\\
-$fileinfo_xml" "$nfo_file" > "$temp_nfo"
+        awk -v insert="$fileinfo_xml" '/<\/movie>/ {print insert} {print}' "$nfo_file" > "$temp_nfo"
     elif grep -q "</tvshow>" "$nfo_file"; then
-        sed "/<\/tvshow>/i\\
-$fileinfo_xml" "$nfo_file" > "$temp_nfo"
+        awk -v insert="$fileinfo_xml" '/<\/tvshow>/ {print insert} {print}' "$nfo_file" > "$temp_nfo"
     elif grep -q "</episodedetails>" "$nfo_file"; then
-        sed "/<\/episodedetails>/i\\
-$fileinfo_xml" "$nfo_file" > "$temp_nfo"
+        awk -v insert="$fileinfo_xml" '/<\/episodedetails>/ {print insert} {print}' "$nfo_file" > "$temp_nfo"
     else
         log_error "  无法识别 NFO 类型"
         return 1
     fi
 
-    # 原子替换
-    if [ -f "$temp_nfo" ]; then
-        mv "$temp_nfo" "$nfo_file"
-        log_success "  ✅ 视频流信息已追加到 NFO"
-        return 0
-    else
+    # 验证临时文件是否生成成功且不为空
+    if [ ! -f "$temp_nfo" ]; then
         log_error "  临时文件生成失败"
         return 1
     fi
+
+    local temp_size=$(stat -c%s "$temp_nfo" 2>/dev/null || stat -f%z "$temp_nfo" 2>/dev/null || echo "0")
+    if [ "$temp_size" -lt 100 ]; then
+        log_error "  临时文件异常（大小: ${temp_size} 字节），放弃覆盖原 NFO"
+        rm -f "$temp_nfo"
+        return 1
+    fi
+
+    # 原子替换
+    mv "$temp_nfo" "$nfo_file"
+    log_success "  ✅ 视频流信息已追加到 NFO"
+    return 0
 }
 
 #------------------------------------------------------------------------------
@@ -2879,6 +2884,18 @@ download_image_with_retry() {
     local retry_delay="${IMAGE_DOWNLOAD_RETRY_DELAY:-2}"
     local min_size="${IMAGE_DOWNLOAD_MIN_SIZE:-1024}"
 
+    # 检查文件是否已存在且大小合格（跳过重复下载）
+    if [ -f "$output_file" ]; then
+        local existing_size=$(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null || echo "0")
+        if [ "$existing_size" -ge "$min_size" ]; then
+            log_debug "  ${description}已存在（大小: ${existing_size}字节），跳过下载"
+            return 0
+        else
+            log_debug "  ${description}文件过小（${existing_size}字节），重新下载"
+            rm -f "$output_file"
+        fi
+    fi
+
     # 代理配置
     local proxy_enabled="${TMDB_PROXY_ENABLED:-false}"
     local proxy_url="${TMDB_PROXY_URL:-}"
@@ -3137,11 +3154,16 @@ download_season_backdrop() {
     fi
 
     # 提取背景图路径（backdrops 用作横幅图，按评分排序）
+    # 注意：添加 null 检查避免 "Cannot iterate over null" 错误
     local backdrop_path=$(echo "$images_data" | jq -r '
-        .backdrops
-        | sort_by(.vote_average)
-        | reverse
-        | .[0].file_path // empty
+        if .backdrops == null or (.backdrops | length) == 0 then
+            empty
+        else
+            .backdrops
+            | sort_by(.vote_average)
+            | reverse
+            | .[0].file_path // empty
+        end
     ')
 
     if [[ -z "$backdrop_path" || "$backdrop_path" == "null" ]]; then
