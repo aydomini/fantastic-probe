@@ -10,11 +10,15 @@
 # 使用方式: source fantastic-probe-process-lib.sh
 
 #==============================================================================
-# 全局变量 - TMDB 速率限制
+# 全局变量 - TMDB 速率限制与缓存
 #==============================================================================
 
 # 上次TMDB请求时间戳（毫秒）
 LAST_TMDB_REQUEST_TIME=0
+
+# TMDB 数据缓存（关联数组）- 用于缓存同一剧集的重复请求
+# 格式：TMDB_CACHE["{tv|movie}_${id}"]="JSON数据"
+declare -A TMDB_CACHE
 
 #==============================================================================
 # TMDB 速率限制包装函数
@@ -2145,9 +2149,10 @@ query_tmdb_movie() {
     if [[ -n "$tmdb_id" ]]; then
         log_info "  使用 TMDB ID 查询: $tmdb_id"
 
+        # 使用 append_to_response 一次性获取所有数据（优化性能）
         tmdb_data=$(tmdb_api_call_with_retry \
-            "https://api.themoviedb.org/3/movie/${tmdb_id}?api_key=${api_key}&language=${language}" \
-            "通过ID查询电影")
+            "https://api.themoviedb.org/3/movie/${tmdb_id}?api_key=${api_key}&language=${language}&append_to_response=credits,external_ids,release_dates" \
+            "通过ID查询电影（含演职人员+外部ID+分级）")
 
         if [[ "$tmdb_data" != "{}" ]] && echo "$tmdb_data" | jq -e '.id' >/dev/null 2>&1; then
             log_success "  ✅ TMDB 查询成功（ID: $tmdb_id）"
@@ -2200,15 +2205,27 @@ query_tmdb_movie() {
         fi
 
         # 提取第一个结果
-        tmdb_data=$(echo "$search_result" | jq -r '.results[0] // empty')
+        local search_match=$(echo "$search_result" | jq -r '.results[0] // empty')
 
-        if [[ -n "$tmdb_data" && "$tmdb_data" != "null" ]]; then
-            local found_title=$(echo "$tmdb_data" | jq -r '.title')
-            local found_id=$(echo "$tmdb_data" | jq -r '.id')
+        if [[ -n "$search_match" && "$search_match" != "null" ]]; then
+            local found_title=$(echo "$search_match" | jq -r '.title')
+            local found_id=$(echo "$search_match" | jq -r '.id')
 
             log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id, 搜索词: $search_title)"
-            echo "$tmdb_data"
-            return 0
+
+            # 使用 ID 再次查询完整数据（带 append_to_response 优化）
+            log_debug "  获取完整电影数据（含演职人员+外部ID+分级）..."
+            tmdb_data=$(tmdb_api_call_with_retry \
+                "https://api.themoviedb.org/3/movie/${found_id}?api_key=${api_key}&language=${language}&append_to_response=credits,external_ids,release_dates" \
+                "获取完整电影数据")
+
+            if [[ "$tmdb_data" != "{}" ]]; then
+                echo "$tmdb_data"
+                return 0
+            else
+                log_warn "  ⚠️  获取完整数据失败，尝试下一个搜索词"
+                continue
+            fi
         else
             log_warn "  ⚠️  TMDB 未找到匹配结果: $search_title"
         fi
@@ -2264,20 +2281,33 @@ query_tmdb_tv() {
     fi
 
     local show_data=""
+    local cache_key=""
 
-    # 如果有 tmdb_id，直接查询（最高优先级）
+    # 如果有 tmdb_id，检查缓存（优化性能）
     if [[ -n "$tmdb_id" ]]; then
-        log_info "  使用 TMDB ID 查询电视剧: $tmdb_id"
+        cache_key="tv_${tmdb_id}"
 
-        show_data=$(tmdb_api_call_with_retry \
-            "https://api.themoviedb.org/3/tv/${tmdb_id}?api_key=${api_key}&language=${language}" \
-            "通过ID查询电视剧")
-
-        if [[ "$show_data" != "{}" ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
-            log_success "  ✅ TMDB 查询成功（ID: $tmdb_id）"
+        # 检查缓存
+        if [[ -n "${TMDB_CACHE[$cache_key]:-}" ]]; then
+            log_debug "  ✅ 使用缓存数据（TMDB ID: $tmdb_id）"
+            show_data="${TMDB_CACHE[$cache_key]}"
         else
-            log_warn "  ⚠️  TMDB ID 查询失败，尝试搜索"
-            show_data=""
+            log_info "  使用 TMDB ID 查询电视剧: $tmdb_id"
+
+            # 使用 append_to_response 一次性获取所有数据（优化性能）
+            show_data=$(tmdb_api_call_with_retry \
+                "https://api.themoviedb.org/3/tv/${tmdb_id}?api_key=${api_key}&language=${language}&append_to_response=credits,external_ids" \
+                "通过ID查询电视剧（含演职人员+外部ID）")
+
+            if [[ "$show_data" != "{}" ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
+                log_success "  ✅ TMDB 查询成功（ID: $tmdb_id）"
+                # 存入缓存
+                TMDB_CACHE[$cache_key]="$show_data"
+                log_debug "  💾 已缓存剧集数据（ID: $tmdb_id）"
+            else
+                log_warn "  ⚠️  TMDB ID 查询失败，尝试搜索"
+                show_data=""
+            fi
         fi
     fi
 
@@ -2323,14 +2353,30 @@ query_tmdb_tv() {
                 continue
             fi
 
-            show_data=$(echo "$search_result" | jq -r '.results[0] // empty')
+            local search_match=$(echo "$search_result" | jq -r '.results[0] // empty')
 
-            if [[ -n "$show_data" && "$show_data" != "null" ]]; then
-                local found_title=$(echo "$show_data" | jq -r '.name')
-                local found_id=$(echo "$show_data" | jq -r '.id')
+            if [[ -n "$search_match" && "$search_match" != "null" ]]; then
+                local found_title=$(echo "$search_match" | jq -r '.name')
+                local found_id=$(echo "$search_match" | jq -r '.id')
 
                 log_success "  ✅ TMDB 匹配成功: $found_title (ID: $found_id, 搜索词: $search_title)"
-                break
+
+                # 使用 ID 再次查询完整数据（带 append_to_response 优化）
+                log_debug "  获取完整剧集数据（含演职人员+外部ID）..."
+                show_data=$(tmdb_api_call_with_retry \
+                    "https://api.themoviedb.org/3/tv/${found_id}?api_key=${api_key}&language=${language}&append_to_response=credits,external_ids" \
+                    "获取完整剧集数据")
+
+                if [[ "$show_data" != "{}" ]]; then
+                    # 存入缓存
+                    cache_key="tv_${found_id}"
+                    TMDB_CACHE[$cache_key]="$show_data"
+                    log_debug "  💾 已缓存剧集数据（ID: $found_id）"
+                    break
+                else
+                    log_warn "  ⚠️  获取完整数据失败，尝试下一个搜索词"
+                    show_data=""
+                fi
             else
                 log_warn "  ⚠️  TMDB 未找到匹配结果: $search_title"
                 show_data=""
@@ -2467,7 +2513,17 @@ get_movie_videos() {
     fi
 
     # 筛选YouTube预告片，生成链接列表（最多3个）
-    echo "$response" | jq -r '.results[] | select(.site == "YouTube") | select(.type == "Trailer" or .type == "Teaser") | "https://www.youtube.com/watch?v=" + .key' | head -3
+    # 添加 null 检查避免 "Cannot iterate over null" 错误
+    echo "$response" | jq -r '
+        if .results == null or (.results | length) == 0 then
+            empty
+        else
+            .results[]
+            | select(.site == "YouTube")
+            | select(.type == "Trailer" or .type == "Teaser")
+            | "https://www.youtube.com/watch?v=" + .key
+        end
+    ' | head -3
     return 0
 }
 
@@ -2502,7 +2558,17 @@ get_tv_videos() {
     fi
 
     # 筛选YouTube预告片，生成链接列表（最多3个）
-    echo "$response" | jq -r '.results[] | select(.site == "YouTube") | select(.type == "Trailer" or .type == "Teaser") | "https://www.youtube.com/watch?v=" + .key' | head -3
+    # 添加 null 检查避免 "Cannot iterate over null" 错误
+    echo "$response" | jq -r '
+        if .results == null or (.results | length) == 0 then
+            empty
+        else
+            .results[]
+            | select(.site == "YouTube")
+            | select(.type == "Trailer" or .type == "Teaser")
+            | "https://www.youtube.com/watch?v=" + .key
+        end
+    ' | head -3
     return 0
 }
 
@@ -2607,14 +2673,14 @@ generate_movie_nfo() {
     # 提取MPAA分级（美国分级）
     local mpaa=$(echo "$tmdb_data" | jq -r '.release_dates.results[] | select(.iso_3166_1 == "US") | .release_dates[0].certification // ""' 2>/dev/null || echo "")
 
-    # 获取演职人员信息
-    local credits_data=$(get_movie_credits "$tmdb_id")
+    # 从合并数据中提取演职人员信息（已通过 append_to_response 获取）
+    local credits_data=$(echo "$tmdb_data" | jq -c '.credits // {}')
 
-    # 获取预告片信息
-    local trailers=$(get_movie_videos "$tmdb_id")
+    # 获取预告片信息（已禁用以优化性能）
+    # local trailers=$(get_movie_videos "$tmdb_id")
 
-    # 获取外部 ID（IMDB、TVDB 等）
-    local external_ids=$(get_movie_external_ids "$tmdb_id")
+    # 从合并数据中提取外部 ID（已通过 append_to_response 获取）
+    local external_ids=$(echo "$tmdb_data" | jq -c '.external_ids // {}')
     local imdb_id=$(echo "$external_ids" | jq -r '.imdb_id // ""')
     local tvdb_id=$(echo "$external_ids" | jq -r '.tvdb_id // ""')
 
@@ -2693,14 +2759,14 @@ EOF
         echo "    </set>" >> "$output_file"
     fi
 
-    # 添加预告片链接（最多3个）
-    if [[ -n "$trailers" ]]; then
-        while IFS= read -r trailer; do
-            if [[ -n "$trailer" ]]; then
-                echo "    <trailer>$trailer</trailer>" >> "$output_file"
-            fi
-        done <<< "$trailers"
-    fi
+    # 添加预告片链接（最多3个）- 已禁用以优化性能
+    # if [[ -n "$trailers" ]]; then
+    #     while IFS= read -r trailer; do
+    #         if [[ -n "$trailer" ]]; then
+    #             echo "    <trailer>$trailer</trailer>" >> "$output_file"
+    #         fi
+    #     done <<< "$trailers"
+    # fi
 
     # 添加演员信息（前10位主演）
     if [[ -n "$credits_data" && "$credits_data" != "{}" && "$credits_data" != "null" ]]; then
@@ -2813,11 +2879,11 @@ generate_tv_nfo() {
     local runtime=$(echo "$tmdb_data" | jq -r '.episode.runtime // .episode_run_time[0] // 0')
     local year=$(echo "$air_date" | cut -d'-' -f1)
 
-    # 获取剧集演职人员信息
-    local credits_data=$(get_tv_credits "$tmdb_id")
+    # 从合并数据中提取演职人员信息（已通过 append_to_response 获取）
+    local credits_data=$(echo "$tmdb_data" | jq -c '.credits // {}')
 
-    # 获取外部 ID（IMDB、TVDB 等）
-    local external_ids=$(get_tv_external_ids "$tmdb_id")
+    # 从合并数据中提取外部 ID（已通过 append_to_response 获取）
+    local external_ids=$(echo "$tmdb_data" | jq -c '.external_ids // {}')
     local imdb_id=$(echo "$external_ids" | jq -r '.imdb_id // ""')
     local tvdb_id=$(echo "$external_ids" | jq -r '.tvdb_id // ""')
 
@@ -2933,14 +2999,16 @@ generate_series_nfo() {
     # 提取制作国家
     local countries=$(echo "$tmdb_data" | jq -r '.origin_country[]? // .production_countries[]?.name' | head -3)
 
-    # 获取剧集演职人员信息
-    local credits_data=$(get_tv_credits "$tmdb_id")
+    # 从合并数据中提取演职人员信息（已通过 append_to_response 获取）
+    local credits_data=$(echo "$tmdb_data" | jq -c '.credits // {}')
 
-    # 获取预告片信息
-    local trailers=$(get_tv_videos "$tmdb_id")
+    # 获取预告片信息（已禁用以优化性能）
+    # local trailers=$(get_tv_videos "$tmdb_id")
 
-    # 获取外部 ID（IMDB、TVDB 等）
-    local external_ids=$(get_tv_external_ids "$tmdb_id")
+    # 从合并数据中提取外部 ID（已通过 append_to_response 获取）
+    local external_ids=$(echo "$tmdb_data" | jq -c '.external_ids // {}')
+    local imdb_id=$(echo "$external_ids" | jq -r '.imdb_id // ""')
+    local tvdb_id=$(echo "$external_ids" | jq -r '.tvdb_id // ""')
     local imdb_id=$(echo "$external_ids" | jq -r '.imdb_id // ""')
     local tvdb_id=$(echo "$external_ids" | jq -r '.tvdb_id // ""')
 
@@ -3003,14 +3071,14 @@ EOF
         fi
     done <<< "$countries"
 
-    # 添加预告片链接（最多3个）
-    if [[ -n "$trailers" ]]; then
-        while IFS= read -r trailer; do
-            if [[ -n "$trailer" ]]; then
-                echo "    <trailer>$trailer</trailer>" >> "$output_file"
-            fi
-        done <<< "$trailers"
-    fi
+    # 添加预告片链接（最多3个）- 已禁用以优化性能
+    # if [[ -n "$trailers" ]]; then
+    #     while IFS= read -r trailer; do
+    #         if [[ -n "$trailer" ]]; then
+    #             echo "    <trailer>$trailer</trailer>" >> "$output_file"
+    #         fi
+    #     done <<< "$trailers"
+    # fi
 
     # 添加演员信息（前15位主演）
     if [[ -n "$credits_data" && "$credits_data" != "{}" && "$credits_data" != "null" ]]; then
@@ -3387,6 +3455,7 @@ download_backdrop() {
 #   $1: TMDB 剧集 ID
 #   $2: 季号（去除前导零，如 "1", "2"）
 #   $3: 输出文件路径（banner 或 fanart）
+#   $4: 图片类型描述（如 "横幅图" 或 "背景图"）
 # 返回：
 #   退出码：0=成功，1=失败
 #------------------------------------------------------------------------------
@@ -3395,6 +3464,7 @@ download_season_backdrop() {
     local show_id="$1"
     local season_number="$2"
     local output_file="$3"
+    local image_type="${4:-横幅/背景图}"  # 默认值
     local api_key="${TMDB_API_KEY}"
 
     if [[ -z "$show_id" || "$show_id" == "null" ]]; then
@@ -3402,7 +3472,7 @@ download_season_backdrop() {
         return 1
     fi
 
-    log_info "  下载季度横幅/背景图: Season ${season_number}"
+    log_info "  下载季度${image_type}: Season ${season_number}"
 
     # 调用季度图片 API
     local images_url="https://api.themoviedb.org/3/tv/${show_id}/season/${season_number}/images?api_key=${api_key}"
@@ -3435,15 +3505,15 @@ download_season_backdrop() {
     ')
 
     if [[ -z "$backdrop_path" || "$backdrop_path" == "null" ]]; then
-        log_warn "  ⚠️  未找到季度横幅图路径"
+        log_warn "  ⚠️  未找到季度${image_type}路径"
         return 1
     fi
 
     local backdrop_url="https://image.tmdb.org/t/p/original${backdrop_path}"
-    log_debug "  季度横幅图 URL: $backdrop_url"
+    log_debug "  季度${image_type} URL: $backdrop_url"
 
     # 使用带重试的下载函数
-    download_image_with_retry "$backdrop_url" "$output_file" "季度横幅图"
+    download_image_with_retry "$backdrop_url" "$output_file" "季度${image_type}"
     return $?
 }
 
@@ -3773,15 +3843,15 @@ scrape_metadata_full() {
         fi
 
         # 4.2 下载季级图片到季文件夹（每个季只下载一次）
+        # Season 图片类型：竖版海报 (poster) + 横版背景图 (fanart/backdrop)
         local season_poster="${season_dir}/season-poster.jpg"
-        local season_banner="${season_dir}/season-banner.jpg"
         local season_fanart="${season_dir}/season-fanart.jpg"
 
         # 从 tmdb_data 中提取剧集 ID 和季号
         local show_id=$(echo "$tmdb_data" | jq -r '.id // empty')
         local season_int=$((10#$season))  # 去除前导零
 
-        # 下载季海报（poster）
+        # 下载季海报（poster，竖版）
         local season_poster_path=$(echo "$tmdb_data" | jq -r '.season.poster_path // empty')
         if [[ ! -f "$season_poster" && -n "$season_poster_path" && "$season_poster_path" != "null" ]]; then
             log_info "  下载季海报 (Season $season)"
@@ -3792,19 +3862,10 @@ scrape_metadata_full() {
             log_debug "  跳过（已有季海报或无季海报路径）"
         fi
 
-        # 下载季横幅图（banner） - 使用 backdrop 作为横幅
-        if [[ ! -f "$season_banner" && -n "$show_id" && "$show_id" != "null" ]]; then
-            log_info "  下载季横幅图 (Season $season)"
-            download_season_backdrop "$show_id" "$season_int" "$season_banner" &
-            local season_banner_pid=$!
-        else
-            log_debug "  跳过（已有季横幅图或缺少剧集 ID）"
-        fi
-
-        # 下载季背景图（fanart） - 也使用 backdrop
+        # 下载季背景图（fanart/backdrop，横版）
         if [[ ! -f "$season_fanart" && -n "$show_id" && "$show_id" != "null" ]]; then
             log_info "  下载季背景图 (Season $season)"
-            download_season_backdrop "$show_id" "$season_int" "$season_fanart" &
+            download_season_backdrop "$show_id" "$season_int" "$season_fanart" "背景图" &
             local season_fanart_pid=$!
         else
             log_debug "  跳过（已有季背景图或缺少剧集 ID）"
