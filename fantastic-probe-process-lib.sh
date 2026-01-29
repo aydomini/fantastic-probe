@@ -16,10 +16,6 @@
 # 上次TMDB请求时间戳（毫秒）
 LAST_TMDB_REQUEST_TIME=0
 
-# TMDB 数据缓存（关联数组）- 用于缓存同一剧集的重复请求
-# 格式：TMDB_CACHE["{tv|movie}_${id}"]="JSON数据"
-declare -A TMDB_CACHE
-
 #==============================================================================
 # TMDB 速率限制包装函数
 #==============================================================================
@@ -2281,33 +2277,21 @@ query_tmdb_tv() {
     fi
 
     local show_data=""
-    local cache_key=""
 
-    # 如果有 tmdb_id，检查缓存（优化性能）
+    # 如果有 tmdb_id，直接查询
     if [[ -n "$tmdb_id" ]]; then
-        cache_key="tv_${tmdb_id}"
+        log_info "  使用 TMDB ID 查询电视剧: $tmdb_id"
 
-        # 检查缓存
-        if [[ -n "${TMDB_CACHE["$cache_key"]:-}" ]]; then
-            log_debug "  ✅ 使用缓存数据（TMDB ID: $tmdb_id）"
-            show_data="${TMDB_CACHE["$cache_key"]}"
+        # 使用 append_to_response 一次性获取所有数据（优化性能）
+        show_data=$(tmdb_api_call_with_retry \
+            "https://api.themoviedb.org/3/tv/${tmdb_id}?api_key=${api_key}&language=${language}&append_to_response=credits,external_ids" \
+            "通过ID查询电视剧（含演职人员+外部ID）")
+
+        if [[ "$show_data" != "{}" ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
+            log_success "  ✅ TMDB 查询成功（ID: $tmdb_id）"
         else
-            log_info "  使用 TMDB ID 查询电视剧: $tmdb_id"
-
-            # 使用 append_to_response 一次性获取所有数据（优化性能）
-            show_data=$(tmdb_api_call_with_retry \
-                "https://api.themoviedb.org/3/tv/${tmdb_id}?api_key=${api_key}&language=${language}&append_to_response=credits,external_ids" \
-                "通过ID查询电视剧（含演职人员+外部ID）")
-
-            if [[ "$show_data" != "{}" ]] && echo "$show_data" | jq -e '.id' >/dev/null 2>&1; then
-                log_success "  ✅ TMDB 查询成功（ID: $tmdb_id）"
-                # 存入缓存
-                TMDB_CACHE["$cache_key"]="$show_data"
-                log_debug "  💾 已缓存剧集数据（ID: $tmdb_id）"
-            else
-                log_warn "  ⚠️  TMDB ID 查询失败，尝试搜索"
-                show_data=""
-            fi
+            log_warn "  ⚠️  TMDB ID 查询失败，尝试搜索"
+            show_data=""
         fi
     fi
 
@@ -2368,10 +2352,6 @@ query_tmdb_tv() {
                     "获取完整剧集数据")
 
                 if [[ "$show_data" != "{}" ]]; then
-                    # 存入缓存
-                    cache_key="tv_${found_id}"
-                    TMDB_CACHE["$cache_key"]="$show_data"
-                    log_debug "  💾 已缓存剧集数据（ID: $found_id）"
                     break
                 else
                     log_warn "  ⚠️  获取完整数据失败，尝试下一个搜索词"
