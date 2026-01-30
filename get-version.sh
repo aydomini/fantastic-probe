@@ -15,7 +15,7 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 默认版本号（最后的回退方案）
-VERSION="3.1.12"
+VERSION="3.1.13"
 
 #==============================================================================
 # 方法 1：从本地 Git tags 获取（如果在 git 仓库中）
@@ -62,7 +62,7 @@ get_version_from_script_comment() {
 # 注意：不从 GitHub API 获取，那是"远程版本"，应由调用者自行处理
 VERSION=$(get_version_from_git_tag) || \
 VERSION=$(get_version_from_script_comment "$1") || \
-VERSION="3.1.12"  # 最终回退到硬编码默认值
+VERSION="3.1.13"  # 最终回退到硬编码默认值
 
 #==============================================================================
 # 导出变量

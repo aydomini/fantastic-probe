@@ -22,12 +22,6 @@ fi
 echo "1️⃣  删除脚本和工具..."
 FILES_REMOVED=0
 
-if [ -f "/usr/local/bin/fantastic-probe-monitor" ]; then
-    rm -f /usr/local/bin/fantastic-probe-monitor
-    echo "   ✅ 监控脚本已删除"
-    FILES_REMOVED=$((FILES_REMOVED + 1))
-fi
-
 if [ -f "/usr/local/bin/fantastic-probe-cron-scanner" ]; then
     rm -f /usr/local/bin/fantastic-probe-cron-scanner
     echo "   ✅ Cron 扫描器已删除"
@@ -81,12 +75,6 @@ echo ""
 # 6. 清理临时文件和锁文件
 echo "2️⃣  清理临时文件和锁文件..."
 TEMP_FILES_REMOVED=0
-
-if [ -f "/tmp/fantastic_probe_monitor.lock" ]; then
-    rm -f /tmp/fantastic_probe_monitor.lock
-    echo "   ✅ 锁文件已删除"
-    TEMP_FILES_REMOVED=$((TEMP_FILES_REMOVED + 1))
-fi
 
 if [ -p "/tmp/fantastic_probe_queue.fifo" ]; then
     rm -f /tmp/fantastic_probe_queue.fifo
