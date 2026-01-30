@@ -293,6 +293,29 @@ convert_to_emby_format() {
     local iso_file_size="${3:-0}"
 
     echo "$ffprobe_json" | jq -c --arg strm_file "$strm_file" --arg iso_size "$iso_file_size" '
+    # 安全数值转换函数：容错处理非法值
+    def safe_number:
+        if . == null or . == "" then null
+        elif type == "number" then .
+        elif type == "string" then (tonumber? // null)
+        else null
+        end;
+
+    # 安全帧率转换函数：支持多种格式
+    def safe_framerate:
+        if . == null or . == "" or . == "0/0" then null
+        elif (type == "number") then (. | floor)
+        elif (contains("/")) then
+            (split("/") |
+             if length == 2 and (.[1] | safe_number) != null and (.[1] | safe_number) != 0 then
+                 ((.[0] | safe_number) / (.[1] | safe_number) | floor)
+             else null
+             end)
+        else
+            # 纯数字字符串（如 "25"），DIY ISO 常见格式
+            (safe_number | if . then (. | floor) else null end)
+        end;
+
     def lang_code:
         if . == "chi" or . == "zh" or . == "zho" then "Chinese"
         elif . == "eng" then "English"
@@ -352,7 +375,7 @@ convert_to_emby_format() {
             "Name": ($strm_file | split("/")[-1] | split(".iso.strm")[0]),
             "IsRemote": true,
             "HasMixedProtocols": false,
-            "RunTimeTicks": ((.format.duration // "0" | tonumber) * 10000000 | floor),
+            "RunTimeTicks": ((.format.duration // "0" | safe_number // 0) * 10000000 | floor),
             "SupportsTranscoding": true,
             "SupportsDirectStream": true,
             "SupportsDirectPlay": true,
@@ -408,9 +431,9 @@ convert_to_emby_format() {
                         else null end
                     ),
                     "IsInterlaced": (if .field_order then (.field_order != "progressive") else false end),
-                    "BitRate": (.bit_rate // null | if . then (. | tonumber) else null end),
-                    "BitDepth": (.bits_per_raw_sample // null | if . then (. | tonumber) else null end),
-                    "RefFrames": (.refs // null | if . then (. | tonumber) else null end),
+                    "BitRate": (.bit_rate | safe_number),
+                    "BitDepth": (.bits_per_raw_sample | safe_number),
+                    "RefFrames": (.refs | safe_number),
                     "IsDefault": (.disposition.default == 1),
                     "IsForced": (.disposition.forced == 1),
                     "IsHearingImpaired": (
@@ -420,18 +443,10 @@ convert_to_emby_format() {
                             (.disposition.hearing_impaired == 1)
                         end
                     ),
-                    "Height": (.height // null | if . then (. | tonumber) else null end),
-                    "Width": (.width // null | if . then (. | tonumber) else null end),
-                    "AverageFrameRate": (
-                        if .avg_frame_rate and .avg_frame_rate != "0/0" then
-                            (.avg_frame_rate | split("/") | (.[0] | tonumber) / (.[1] | tonumber) | floor)
-                        else null end
-                    ),
-                    "RealFrameRate": (
-                        if .r_frame_rate and .r_frame_rate != "0/0" then
-                            (.r_frame_rate | split("/") | (.[0] | tonumber) / (.[1] | tonumber) | floor)
-                        else null end
-                    ),
+                    "Height": (.height | safe_number),
+                    "Width": (.width | safe_number),
+                    "AverageFrameRate": (.avg_frame_rate | safe_framerate),
+                    "RealFrameRate": (.r_frame_rate | safe_framerate),
                     "Profile": .profile,
                     "Type": (.codec_type |
                         if . == "video" then "Video"
@@ -450,7 +465,7 @@ convert_to_emby_format() {
                     "SupportsExternalStream": (.codec_type == "subtitle"),
                     "Protocol": "File",
                     "PixelFormat": (if .codec_type == "video" then .pix_fmt else null end),
-                    "Level": (.level // null | if . then (. | tonumber) else null end),
+                    "Level": (.level | safe_number),
                     "IsAnamorphic": false,
                     "ExtendedVideoType": (
                         if .codec_type == "video" then
@@ -481,14 +496,14 @@ convert_to_emby_format() {
                         end
                     ),
                     "ChannelLayout": (if .codec_type == "audio" then .channel_layout else null end),
-                    "Channels": (.channels // null | if . then (. | tonumber) else null end),
-                    "SampleRate": (.sample_rate // null | if . then (. | tonumber) else null end),
+                    "Channels": (.channels | safe_number),
+                    "SampleRate": (.sample_rate | safe_number),
                     "AttachmentSize": 0,
                     "SubtitleLocationType": (if .codec_type == "subtitle" then "InternalStream" else null end)
                 } | with_entries(select(.value != null))
             ],
             "Formats": [],
-            "Bitrate": (.format.bit_rate // null | if . then (. | tonumber) else null end),
+            "Bitrate": (.format.bit_rate | safe_number),
             "RequiredHttpHeaders": {},
             "AddApiKeyToDirectStreamUrl": false,
             "ReadAtNativeFramerate": false
@@ -496,14 +511,25 @@ convert_to_emby_format() {
         "Chapters": [
             ((.chapters // []) | to_entries[] |
             {
-                "StartPositionTicks": (.value.start_time // "0" | tonumber * 10000000 | floor),
+                "StartPositionTicks": (.value.start_time // "0" | safe_number // 0 | . * 10000000 | floor),
                 "Name": (.value.tags.title // ("Chapter " + ((.key + 1) | tostring | if length == 1 then ("0" + .) else . end))),
                 "MarkerType": "Chapter",
                 "ChapterIndex": .key
             })
         ]
     }]
-    ' 2>/dev/null
+    ' 2>&1  # 临时改为显示错误，用于诊断 JSON 转换失败问题
+}
+
+# 临时诊断函数：保存失败的 ffprobe 输出
+debug_save_ffprobe() {
+    local ffprobe_output="$1"
+    local strm_file="$2"
+    local timestamp=$(date +%s)
+    local debug_file="/tmp/failed-ffprobe-${timestamp}.json"
+    echo "$ffprobe_output" > "$debug_file"
+    log_error "已保存失败的 ffprobe 输出: $debug_file"
+    log_error "文件路径: $strm_file"
 }
 
 #==============================================================================
@@ -787,10 +813,6 @@ process_iso_strm_full() {
 
     if [ -z "$ffprobe_output" ] || ! echo "$ffprobe_output" | jq -e '.streams' >/dev/null 2>&1; then
         log_error "媒体信息提取失败: $iso_path"
-
-        # 触发自动删除（如果启用）
-        delete_invalid_media "$strm_file" "媒体信息提取失败"
-
         return 1
     fi
 
@@ -826,6 +848,8 @@ process_iso_strm_full() {
     emby_json=$(convert_to_emby_format "$ffprobe_output" "$strm_file" "$iso_size")
 
     if [ -z "$emby_json" ]; then
+        # 保存失败的 ffprobe 输出用于诊断
+        debug_save_ffprobe "$ffprobe_output" "$strm_file"
         log_error "JSON 转换失败: $strm_file"
         return 1
     fi

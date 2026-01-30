@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.1.11"  # 硬编码默认值
+VERSION="3.1.12"  # 硬编码默认值
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.1.11")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "3.1.12")
 fi
 
 #==============================================================================
@@ -181,6 +181,13 @@ SQL
         log_error "文件已达到最大重试次数，将不再尝试: $file_path"
         log_error "错误原因: $error_message"
         log_info "如需重新尝试，请删除缓存数据库: $FAILURE_CACHE_DB"
+
+        # 触发自动删除（如果启用）
+        if command -v delete_invalid_media > /dev/null 2>&1; then
+            delete_invalid_media "$file_path" "$error_message"
+        else
+            log_warn "  ⚠️  delete_invalid_media 函数未加载，无法执行自动删除"
+        fi
     fi
 }
 
