@@ -309,14 +309,26 @@ extract_bluray_language_tags() {
 
     log_info "  执行 bd_list_titles 提取语言标签..."
 
-    # 执行 bd_list_titles -l，忽略 stderr（BD-J 警告）
-    local bd_output=$(bd_list_titles -l "$mount_point" 2>/dev/null)
+    # 执行 bd_list_titles -l（临时保留 stderr 用于诊断）
+    local bd_error_file="/tmp/bd-error-$$.txt"
+    local bd_output=$(bd_list_titles -l "$mount_point" 2>"$bd_error_file")
+
+    # 检查是否有错误输出
+    if [ -s "$bd_error_file" ]; then
+        log_warn "  ⚠️  bd_list_titles 有错误输出:"
+        head -5 "$bd_error_file" | while read line; do log_warn "    $line"; done
+    fi
+    rm -f "$bd_error_file"
 
     if [ -z "$bd_output" ]; then
         log_error "  ❌ bd_list_titles 输出为空"
         echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
         return 1
     fi
+
+    # 记录 bd_list_titles 输出前几行（用于诊断）
+    log_debug "  bd_list_titles 输出前 5 行:"
+    echo "$bd_output" | head -5 | while read line; do log_debug "    $line"; done
 
     # 使用 Python 解析输出（通过 stdin 传递，避免 heredoc 注入风险）
     local result=$(echo "$bd_output" | python3 << 'EOF'
