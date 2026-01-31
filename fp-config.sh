@@ -1259,23 +1259,29 @@ uninstall_service() {
         echo "      ℹ️  日志文件保留"
     fi
 
-    # 9. 询问是否删除生成的 JSON 文件
+    # 9. 生成的 JSON 文件处理（已禁用，防止误删用户数据）
     echo ""
     echo "   9️⃣  生成的 JSON 文件处理..."
-    echo "      ⚠️  注意：删除 JSON 文件会导致 Emby 需要重新扫描媒体库"
-    read -p "      是否删除所有 .iso-mediainfo.json 文件？[y/N]: " delete_json
+    echo "      ℹ️  JSON 文件已被保留（包含宝贵的媒体信息扫描结果）"
+    echo "      ℹ️  如需手动清理，请运行："
+    echo "         find <STRM_ROOT> -type f -name '*-mediainfo.json' -delete"
 
-    if [[ "$delete_json" =~ ^[Yy]$ ]] && [ -d "$STRM_ROOT" ]; then
-        JSON_COUNT=$(find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" 2>/dev/null | wc -l)
-        if [ "$JSON_COUNT" -gt 0 ]; then
-            find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" -delete
-            echo "      ✅ 已删除 $JSON_COUNT 个 JSON 文件"
-        else
-            echo "      ℹ️  没有找到 JSON 文件"
-        fi
-    else
-        echo "      ℹ️  JSON 文件保留"
-    fi
+    # 以下代码已禁用，防止卸载时误删用户数据
+    # 如需删除 JSON 文件，请手动执行上述命令
+    #
+    # read -p "      是否删除所有 .iso-mediainfo.json 文件？[y/N]: " delete_json
+    #
+    # if [[ "$delete_json" =~ ^[Yy]$ ]] && [ -d "$STRM_ROOT" ]; then
+    #     JSON_COUNT=$(find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" 2>/dev/null | wc -l)
+    #     if [ "$JSON_COUNT" -gt 0 ]; then
+    #         find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" -delete
+    #         echo "      ✅ 已删除 $JSON_COUNT 个 JSON 文件"
+    #     else
+    #         echo "      ℹ️  没有找到 JSON 文件"
+    #     fi
+    # else
+    #     echo "      ℹ️  JSON 文件保留"
+    # fi
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
