@@ -440,7 +440,11 @@ convert_to_emby_format() {
     local iso_file_size="${3:-0}"
     local language_tags_json="${4:-{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}}"
 
-    echo "$ffprobe_json" | jq -c --arg strm_file "$strm_file" --arg iso_size "$iso_file_size" --argjson lang_tags "$language_tags_json" '
+    # 使用临时文件捕获 jq 错误
+    local jq_error_file="/tmp/jq-error-$$.txt"
+    local jq_output
+
+    jq_output=$(echo "$ffprobe_json" | jq -c --arg strm_file "$strm_file" --arg iso_size "$iso_file_size" --argjson lang_tags "$language_tags_json" '
     # 安全数值转换函数：容错处理非法值
     def safe_number:
         if . == null or . == "" then null
@@ -724,7 +728,25 @@ convert_to_emby_format() {
             })
         ]
     }]
-    ' 2>&1  # 临时改为显示错误，用于诊断 JSON 转换失败问题
+    ' 2> "$jq_error_file")
+
+    local jq_exit_code=$?
+
+    # 检查 jq 是否失败
+    if [ $jq_exit_code -ne 0 ]; then
+        log_error "jq 转换失败（退出码: $jq_exit_code）"
+        if [ -s "$jq_error_file" ]; then
+            log_error "jq 错误详情:"
+            head -10 "$jq_error_file" | while IFS= read -r line; do
+                log_error "  $line"
+            done
+        fi
+        rm -f "$jq_error_file"
+        return 1
+    fi
+
+    rm -f "$jq_error_file"
+    echo "$jq_output"
 }
 
 # 临时诊断函数：保存失败的 ffprobe 输出
