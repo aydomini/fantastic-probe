@@ -1142,11 +1142,32 @@ process_iso_strm_full() {
     fi
 
     # 验证和清理 language_tags_json（防止 jq --argjson 失败）
-    if ! echo "$language_tags_json" | jq -e . >/dev/null 2>&1; then
+    # 1. 检查是否为空
+    if [ -z "$language_tags_json" ]; then
+        log_warn "  ⚠️  语言标签 JSON 为空，使用默认值"
+        language_tags_json='{"audio_languages":[],"subtitle_languages":[],"chapters":0}'
+    # 2. 检查是否为有效 JSON
+    elif ! echo "$language_tags_json" | jq -e . >/dev/null 2>&1; then
         log_warn "  ⚠️  语言标签 JSON 格式无效，使用默认值"
         log_warn "  原始值: $language_tags_json"
         language_tags_json='{"audio_languages":[],"subtitle_languages":[],"chapters":0}'
+    else
+        # 3. 重新格式化为紧凑单行 JSON（移除换行符和多余空格）
+        local cleaned_json
+        cleaned_json=$(echo "$language_tags_json" | jq -c . 2>/dev/null)
+        if [ -n "$cleaned_json" ]; then
+            language_tags_json="$cleaned_json"
+        else
+            log_warn "  ⚠️  语言标签 JSON 清理失败，使用默认值"
+            language_tags_json='{"audio_languages":[],"subtitle_languages":[],"chapters":0}'
+        fi
     fi
+
+    # 诊断：记录 language_tags_json 的长度和内容（仅前 200 字符）
+    local json_length=${#language_tags_json}
+    local json_preview="${language_tags_json:0:200}"
+    log_info "  🔍 语言标签 JSON 长度: $json_length 字符"
+    log_info "  🔍 语言标签 JSON 内容: $json_preview"
 
     # 转换为 Emby 格式（合并语言标签）
     local emby_json
