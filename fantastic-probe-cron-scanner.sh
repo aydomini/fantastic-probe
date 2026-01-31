@@ -3,7 +3,7 @@ export LC_ALL=C.UTF-8
 
 #==============================================================================
 # ISO 媒体信息提取服务 - Cron 扫描模式
-# 功能：每 3 分钟扫描一次未处理文件，替代 inotifywait 实时监控
+# 功能：每 1 分钟扫描一次未处理文件，替代 inotifywait 实时监控
 # 作者：Fantastic-Probe Team
 #==============================================================================
 
@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="4.1.5"  # 硬编码默认值
+VERSION="4.1.6"  # 硬编码默认值
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "4.1.5")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "4.1.6")
 fi
 
 #==============================================================================

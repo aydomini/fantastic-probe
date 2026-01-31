@@ -176,10 +176,10 @@ restart_service() {
         # Cron 被禁用，重新启用
         echo "   📅 重新启用 Cron 定时任务..."
         mv /etc/cron.d/fantastic-probe.disabled /etc/cron.d/fantastic-probe 2>/dev/null || true
-        echo "   ✅ Cron 任务已启用，将在 3 分钟内开始运行"
+        echo "   ✅ Cron 任务已启用，将在 1 分钟内开始运行"
     elif [ -f "/etc/cron.d/fantastic-probe" ]; then
         # Cron 模式，无需额外操作
-        echo "   📅 Cron 模式已运行，配置将在下次扫描时生效（最多 3 分钟）"
+        echo "   📅 Cron 模式已运行，配置将在下次扫描时生效（最多 1 分钟）"
     else
         echo "   ⚠️  未检测到 Cron 任务配置"
         echo "   ℹ️  配置文件已更新，请运行安装脚本配置 Cron 任务"
@@ -263,7 +263,7 @@ change_strm_root() {
     else
         echo "   ⚠️  配置已更新，但需要应用后才能生效"
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
-            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 3 分钟）"
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
         else
             echo "   手动重启: sudo fp-config restart"
         fi
@@ -561,7 +561,7 @@ reconfigure_ffprobe() {
     else
         echo "   ⚠️  配置已更新，但需要应用后才能生效"
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
-            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 3 分钟）"
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
         else
             echo "   手动重启: sudo fp-config restart"
         fi
@@ -753,7 +753,7 @@ configure_emby() {
     else
         echo "   ⚠️  配置已更新，但需要应用后才能生效"
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
-            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 3 分钟）"
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
         else
             echo "   手动重启: sudo fp-config restart"
         fi
@@ -795,7 +795,7 @@ edit_config_file() {
     else
         echo "   ⚠️  配置已修改，但需要应用后才能生效"
         if [ -f "/etc/cron.d/fantastic-probe" ]; then
-            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 3 分钟）"
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
         else
             echo "   手动重启: sudo fp-config restart"
         fi
@@ -831,7 +831,7 @@ show_service_status() {
         echo "   💡 提示:"
         echo "      • 查看实时日志: tail -f /var/log/fantastic_probe.log"
         echo "      • 查看错误日志: fp-config logs-error"
-        echo "      • Cron 任务每 3 分钟自动执行一次"
+        echo "      • Cron 任务每 1 分钟自动执行一次"
     else
         echo "   ⚠️  未检测到 Cron 任务配置"
         echo "   请运行安装脚本配置 Cron 任务"
@@ -849,7 +849,7 @@ start_service() {
     if [ -f "/etc/cron.d/fantastic-probe" ]; then
         echo "   ℹ️  Cron 模式: 任务已自动启用"
         echo "   ✅ Cron 任务配置: /etc/cron.d/fantastic-probe"
-        echo "   ℹ️  任务将每 3 分钟自动执行，无需手动启动"
+        echo "   ℹ️  任务将每 1 分钟自动执行，无需手动启动"
         echo ""
         echo "   💡 提示: 查看实时日志 tail -f /var/log/fantastic_probe.log"
     else
@@ -1082,7 +1082,7 @@ install_updates() {
         if [ -f "/etc/cron.d/fantastic-probe.disabled" ]; then
             mv /etc/cron.d/fantastic-probe.disabled /etc/cron.d/fantastic-probe 2>/dev/null || true
             echo "   ✅ Cron 任务已重新启用"
-            echo "   ℹ️  任务将在下次扫描时自动应用（最多等待 3 分钟）"
+            echo "   ℹ️  任务将在下次扫描时自动应用（最多等待 1 分钟）"
             echo ""
             echo "   查看运行日志: tail -f /var/log/fantastic_probe.log"
         else
@@ -1342,7 +1342,7 @@ view_logs() {
     echo ""
     echo "💡 提示："
     echo "   • 按 Ctrl+C 退出实时日志"
-    echo "   • 日志每 3 分钟更新一次（Cron 任务）"
+    echo "   • 日志每 1 分钟更新一次（Cron 任务）"
     echo "   • 可使用以下命令过滤日志："
     echo "     - grep '成功'：只显示成功的记录"
     echo "     - grep '失败'：只显示失败的记录"
@@ -1368,7 +1368,7 @@ view_logs() {
         echo "❌ 日志文件不存在: $LOG_FILE"
         echo ""
         echo "💡 可能原因："
-        echo "   1. Cron 任务尚未运行（等待 3 分钟）"
+        echo "   1. Cron 任务尚未运行（等待 1 分钟）"
         echo "   2. 日志路径配置错误"
         echo "   3. 权限不足，无法写入日志"
         echo ""

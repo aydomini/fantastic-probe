@@ -622,7 +622,8 @@ convert_to_emby_format() {
                             (.bit_rate | safe_number)
                         elif .codec_type == "video" and $video_bitrate_total then
                             # 视频轨道且总视频比特率存在，按权重分配
-                            (($video_tracks | map(select(.index == $all_streams[$idx].index)) | .[0].weight) as $current_weight |
+                            .index as $current_index |
+                            (($video_tracks | map(select(.index == $current_index)) | .[0].weight // null) as $current_weight |
                              if $current_weight and $video_weight_sum > 0 then
                                  (($video_bitrate_total * $current_weight / $video_weight_sum) | floor)
                              else
@@ -662,7 +663,10 @@ convert_to_emby_format() {
                             (.codec_name | IN("subrip", "ass", "webvtt", "mov_text", "srt"))
                         else false end
                     ),
-                    "SupportsExternalStream": (.codec_type == "subtitle"),
+                    "SupportsExternalStream": (
+                        if .codec_type == "subtitle" then true
+                        else false end
+                    ),
                     "Protocol": "File",
                     "PixelFormat": (if .codec_type == "video" then .pix_fmt else null end),
                     "Level": (.level | safe_number),
@@ -702,7 +706,7 @@ convert_to_emby_format() {
                     "SampleRate": (.sample_rate | safe_number),
                     "AttachmentSize": 0,
                     "SubtitleLocationType": (if .codec_type == "subtitle" then "InternalStream" else null end)
-                } | with_entries(select(.value != null))
+                }
             ],
             "Formats": [],
             "Bitrate": (.format.bit_rate | safe_number),
@@ -947,7 +951,7 @@ process_iso_strm_full() {
     local strm_name="$(basename "$strm_file" .iso.strm)"
 
     # 检查是否已有 JSON 文件
-    local json_pattern="${strm_dir}/${strm_name}-mediainfo.json"
+    local json_pattern="${strm_dir}/${strm_name}.iso-mediainfo.json"
     if [ -f "$json_pattern" ]; then
         log_info "跳过（已有JSON）: $strm_file"
         return 0
@@ -1119,11 +1123,15 @@ process_iso_strm_full() {
     # 验证 JSON 格式
     if ! echo "$emby_json" | jq -e . >/dev/null 2>&1; then
         log_error "生成的 JSON 格式无效: $strm_file"
+        log_error "jq 错误输出:"
+        echo "$emby_json" | jq . 2>&1 | head -10 | while IFS= read -r line; do
+            log_error "  $line"
+        done
         return 1
     fi
 
     # 原子写入
-    local json_file="${strm_dir}/${strm_name}-mediainfo.json"
+    local json_file="${strm_dir}/${strm_name}.iso-mediainfo.json"
     local temp_json="${json_file}.tmp"
 
     if ! echo "$emby_json" > "$temp_json"; then

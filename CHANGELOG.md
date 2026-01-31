@@ -4,6 +4,26 @@
 
 ---
 
+## [4.1.6] - 2026-02-01
+
+### 修复
+
+- 🔧 **修复 JSON 格式兼容性问题**
+  - JSON 文件名格式改回 `.iso-mediainfo.json`（兼容 Emby 预期格式）
+  - 修复 jq 语法错误：BitRate 计算中使用正确的索引变量
+  - 移除 `with_entries(select(.value != null))` 过滤器，确保所有字段都输出
+  - `SupportsExternalStream` 始终返回明确的布尔值
+  - 添加 JSON 验证失败时的详细错误输出
+
+### 改进
+
+- 📝 更新所有用户可见提示文本
+  - 将所有"3 分钟"扫描间隔提示更新为"1 分钟"
+  - 统一 fp-config、install.sh、fantastic-probe-install.sh 等文件中的时间提示
+  - 确保用户界面提示与实际 Cron 配置一致
+
+---
+
 ## [4.1.5] - 2026-02-01
 
 ### 新增
