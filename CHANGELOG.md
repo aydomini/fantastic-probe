@@ -4,6 +4,28 @@
 
 ---
 
+## [4.1.8] - 2026-02-01
+
+### 修复
+
+- 🔧 **修复 jq --argjson 参数错误**
+  - **根本原因**：`language_tags_json` 可能包含无效的 JSON 格式
+  - **错误表现**：`jq: invalid JSON text passed to --argjson`
+  - **解决方案**：
+    - 调用 `convert_to_emby_format` 前验证 `language_tags_json` 是否为有效 JSON
+    - 如果无效，使用默认值 `{"audio_languages":[],"subtitle_languages":[],"chapters":0}`
+    - 添加详细的错误日志，显示原始无效值
+
+### 改进
+
+- 📊 **增强 Python 脚本错误诊断**
+  - Python JSON 输出改为紧凑格式：`separators=(',', ':')`
+  - 使用 `printf` 代替 `echo` 传递数据，避免字符转义问题
+  - 捕获 Python stderr 到临时文件，失败时显示错误详情
+  - 语言标签解析失败时显示原始输出，便于诊断
+
+---
+
 ## [4.1.7] - 2026-02-01
 
 ### 修复

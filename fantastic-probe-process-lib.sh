@@ -384,18 +384,20 @@ if main_match:
     if pg_match:
         subtitle_langs = pg_match.group(1).strip().split()
 
-# 输出 JSON
+# 输出 JSON（紧凑格式，无缩进）
 result = {
     'audio_languages': audio_langs,
     'subtitle_languages': subtitle_langs,
     'chapters': chapters
 }
 
-print(json.dumps(result))
+print(json.dumps(result, separators=(',', ':')))
 PYTHON_SCRIPT
 
-    # 通过管道传递数据给 Python 脚本
-    local result=$(echo "$bd_output" | python3 "$python_script")
+    # 通过管道传递数据给 Python 脚本（使用 printf 避免 echo 的转义问题）
+    local python_error_file="/tmp/python-error-$$.txt"
+    local result
+    result=$(printf '%s\n' "$bd_output" | python3 "$python_script" 2>"$python_error_file")
     local parse_exit_code=$?
 
     # 清理临时文件
@@ -403,12 +405,19 @@ PYTHON_SCRIPT
 
     if [ $parse_exit_code -ne 0 ]; then
         log_error "  ❌ Python 解析脚本执行失败（退出码: $parse_exit_code）"
+        if [ -s "$python_error_file" ]; then
+            log_error "  Python 错误详情:"
+            head -5 "$python_error_file" | while read line; do log_error "    $line"; done
+        fi
+        rm -f "$python_error_file"
         echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
         return 1
     fi
 
+    rm -f "$python_error_file"
+
     if [ -z "$result" ]; then
-        log_error "  ❌ 语言标签解析失败"
+        log_error "  ❌ 语言标签解析失败（输出为空）"
         echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
         return 1
     fi
@@ -416,6 +425,7 @@ PYTHON_SCRIPT
     # 验证 JSON 格式
     if ! echo "$result" | jq -e . >/dev/null 2>&1; then
         log_error "  ❌ 语言标签 JSON 格式无效"
+        log_error "  原始输出: $result"
         echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
         return 1
     fi
@@ -1129,6 +1139,13 @@ process_iso_strm_full() {
     else
         log_warn "  ⚠️  无法获取 ISO 文件大小"
         iso_size="0"
+    fi
+
+    # 验证和清理 language_tags_json（防止 jq --argjson 失败）
+    if ! echo "$language_tags_json" | jq -e . >/dev/null 2>&1; then
+        log_warn "  ⚠️  语言标签 JSON 格式无效，使用默认值"
+        log_warn "  原始值: $language_tags_json"
+        language_tags_json='{"audio_languages":[],"subtitle_languages":[],"chapters":0}'
     fi
 
     # 转换为 Emby 格式（合并语言标签）
