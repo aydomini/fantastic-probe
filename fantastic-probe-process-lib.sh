@@ -890,7 +890,7 @@ delete_invalid_media() {
 process_iso_strm_full() {
     local strm_file="$1"
     local strm_dir="$(dirname "$strm_file")"
-    local strm_name="$(basename "$strm_file" .strm)"
+    local strm_name="$(basename "$strm_file" .iso.strm)"
 
     # 检查是否已有 JSON 文件
     local json_pattern="${strm_dir}/${strm_name}-mediainfo.json"

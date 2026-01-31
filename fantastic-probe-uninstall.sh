@@ -185,34 +185,41 @@ else
 fi
 echo ""
 
-# 10. 询问是否删除生成的 JSON 文件
+# 10. 生成的 JSON 文件处理（已禁用，防止误删用户数据）
 echo "8️⃣  生成的 JSON 文件处理..."
-echo "   ⚠️  注意：删除 JSON 文件会导致 Emby 需要重新扫描媒体库"
-read -p "   是否删除所有生成的 .iso-mediainfo.json 文件？ (y/N): " -n 1 -r
+echo "   ℹ️  JSON 文件已被保留（包含宝贵的媒体信息扫描结果）"
+echo "   ℹ️  如需手动清理，请运行："
+echo "      find <STRM_ROOT> -type f -name '*-mediainfo.json' -delete"
 echo ""
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    # 尝试从配置文件读取 STRM_ROOT
-    STRM_ROOT="/mnt/sata1/media/媒体库/strm"  # 默认值
-    if [ -f "/etc/fantastic-probe/config" ]; then
-        # shellcheck source=/dev/null
-        source "/etc/fantastic-probe/config"
-    fi
 
-    if [ -d "$STRM_ROOT" ]; then
-        JSON_COUNT=$(find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" 2>/dev/null | wc -l)
-        if [ "$JSON_COUNT" -gt 0 ]; then
-            find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" -delete
-            echo "   ✅ 已删除 $JSON_COUNT 个 JSON 文件"
-        else
-            echo "   ℹ️  没有找到 JSON 文件"
-        fi
-    else
-        echo "   ℹ️  STRM 目录不存在: $STRM_ROOT"
-    fi
-else
-    echo "   ℹ️  JSON 文件保留"
-fi
-echo ""
+# 以下代码已禁用，防止卸载时误删用户数据
+# 如需删除 JSON 文件，请手动执行上述命令
+#
+# read -p "   是否删除所有生成的 .iso-mediainfo.json 文件？ (y/N): " -n 1 -r
+# echo ""
+# if [[ $REPLY =~ ^[Yy]$ ]]; then
+#     # 尝试从配置文件读取 STRM_ROOT
+#     STRM_ROOT="/mnt/sata1/media/媒体库/strm"  # 默认值
+#     if [ -f "/etc/fantastic-probe/config" ]; then
+#         # shellcheck source=/dev/null
+#         source "/etc/fantastic-probe/config"
+#     fi
+#
+#     if [ -d "$STRM_ROOT" ]; then
+#         JSON_COUNT=$(find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" 2>/dev/null | wc -l)
+#         if [ "$JSON_COUNT" -gt 0 ]; then
+#             find "$STRM_ROOT" -type f -name "*.iso-mediainfo.json" -delete
+#             echo "   ✅ 已删除 $JSON_COUNT 个 JSON 文件"
+#         else
+#             echo "   ℹ️  没有找到 JSON 文件"
+#         fi
+#     else
+#         echo "   ℹ️  STRM 目录不存在: $STRM_ROOT"
+#     fi
+# else
+#     echo "   ℹ️  JSON 文件保留"
+# fi
+# echo ""
 
 # 卸载完成
 echo "=========================================="
