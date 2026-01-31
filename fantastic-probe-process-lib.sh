@@ -513,6 +513,20 @@ convert_to_emby_format() {
         else "SDR"
         end;
 
+    # 计算视频轨道权重（分辨率 × 帧率）
+    def video_weight:
+        ((.width // 1920) * (.height // 1080) * ((.avg_frame_rate // "24/1" | safe_framerate) // 24));
+
+    # 预计算：总比特率和各类型比特率总和
+    (.format.bit_rate | safe_number) as $total_bitrate |
+    ([.streams[] | select(.codec_type == "audio") | (.bit_rate | safe_number // 0)] | add // 0) as $audio_bitrate_sum |
+    ([.streams[] | select(.codec_type == "subtitle") | (.bit_rate | safe_number // 0)] | add // 0) as $subtitle_bitrate_sum |
+    # 计算总视频比特率（从总比特率减去音频和字幕）
+    (if $total_bitrate then ($total_bitrate - $audio_bitrate_sum - $subtitle_bitrate_sum) else null end) as $video_bitrate_total |
+    # 统计视频轨道及其权重
+    ([.streams[] | select(.codec_type == "video") | {index: .index, weight: video_weight}]) as $video_tracks |
+    ([.streams[] | select(.codec_type == "video") | video_weight] | add // 1) as $video_weight_sum |
+
     [{
         "MediaSourceInfo": {
             "Chapters": [],
@@ -602,7 +616,22 @@ convert_to_emby_format() {
                         else null end
                     ),
                     "IsInterlaced": (if .field_order then (.field_order != "progressive") else false end),
-                    "BitRate": (.bit_rate | safe_number),
+                    "BitRate": (
+                        if (.bit_rate | safe_number) then
+                            # 如果流本身有 bit_rate，直接使用
+                            (.bit_rate | safe_number)
+                        elif .codec_type == "video" and $video_bitrate_total then
+                            # 视频轨道且总视频比特率存在，按权重分配
+                            (($video_tracks | map(select(.index == $all_streams[$idx].index)) | .[0].weight) as $current_weight |
+                             if $current_weight and $video_weight_sum > 0 then
+                                 (($video_bitrate_total * $current_weight / $video_weight_sum) | floor)
+                             else
+                                 $video_bitrate_total
+                             end)
+                        else
+                            null
+                        end
+                    ),
                     "BitDepth": (.bits_per_raw_sample | safe_number),
                     "RefFrames": (.refs | safe_number),
                     "IsDefault": (.disposition.default == 1),
@@ -676,14 +705,7 @@ convert_to_emby_format() {
                 } | with_entries(select(.value != null))
             ],
             "Formats": [],
-            "Bitrate": (
-                (.format.bit_rate | safe_number) //
-                (if (.format.duration | safe_number) != null and (.format.duration | safe_number) > 0 and ($iso_size | tonumber) > 0 then
-                    (($iso_size | tonumber) * 8 / (.format.duration | safe_number) | floor)
-                else
-                    null
-                end)
-            ),
+            "Bitrate": (.format.bit_rate | safe_number),
             "RequiredHttpHeaders": {},
             "AddApiKeyToDirectStreamUrl": false,
             "ReadAtNativeFramerate": false
