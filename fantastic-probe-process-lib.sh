@@ -284,6 +284,128 @@ extract_mediainfo() {
 }
 
 #==============================================================================
+# 提取蓝光语言标签（bd_list_titles）
+#==============================================================================
+
+extract_bluray_language_tags() {
+    local mount_point="$1"
+
+    log_debug "  准备提取蓝光语言标签..."
+
+    # 检查 bd_list_titles 是否可用
+    if ! command -v bd_list_titles &> /dev/null; then
+        log_warn "  ⚠️  bd_list_titles 未安装，跳过语言标签提取"
+        log_warn "  安装命令: sudo apt-get install libbluray-bin"
+        echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
+        return 1
+    fi
+
+    # 检查是否为蓝光目录
+    if [ ! -d "$mount_point/BDMV" ]; then
+        log_debug "  非蓝光目录，跳过 bd_list_titles"
+        echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
+        return 1
+    fi
+
+    log_info "  执行 bd_list_titles 提取语言标签..."
+
+    # 执行 bd_list_titles -l，忽略 stderr（BD-J 警告）
+    local bd_output=$(bd_list_titles -l "$mount_point" 2>/dev/null)
+
+    if [ -z "$bd_output" ]; then
+        log_error "  ❌ bd_list_titles 输出为空"
+        echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
+        return 1
+    fi
+
+    # 使用 Python 解析输出（通过 stdin 传递，避免 heredoc 注入风险）
+    local result=$(echo "$bd_output" | python3 << 'EOF'
+import sys
+import re
+import json
+
+# 从 stdin 读取 bd_list_titles 输出
+content = sys.stdin.read()
+
+# 找到最长标题（主标题）
+max_duration = 0
+max_index = None
+chapters = 0
+
+for match in re.finditer(r'index:\s*(\d+)\s+duration:\s*(\d+):(\d+):(\d+)\s+chapters:\s*(\d+)', content):
+    index = int(match.group(1))
+    h, m, s = int(match.group(2)), int(match.group(3)), int(match.group(4))
+    chapter_count = int(match.group(5))
+    duration = h * 3600 + m * 60 + s
+
+    if duration > max_duration:
+        max_duration = duration
+        max_index = index
+        chapters = chapter_count
+
+if max_index is None:
+    print(json.dumps({
+        'audio_languages': [],
+        'subtitle_languages': [],
+        'chapters': 0
+    }))
+    sys.exit(0)
+
+# 提取主标题区段
+pattern = rf'index:\s*{max_index}\s.*?(?=index:\s*\d+|\Z)'
+main_match = re.search(pattern, content, re.DOTALL)
+
+audio_langs = []
+subtitle_langs = []
+
+if main_match:
+    main_text = main_match.group(0)
+
+    # 提取音频语言（必须是带缩进的行）
+    aud_match = re.search(r'^\s+AUD:\s*(.+)', main_text, re.MULTILINE)
+    if aud_match:
+        audio_langs = aud_match.group(1).strip().split()
+
+    # 提取字幕语言（必须是带缩进的行）
+    pg_match = re.search(r'^\s+PG\s*:\s*(.+)', main_text, re.MULTILINE)
+    if pg_match:
+        subtitle_langs = pg_match.group(1).strip().split()
+
+# 输出 JSON
+result = {
+    'audio_languages': audio_langs,
+    'subtitle_languages': subtitle_langs,
+    'chapters': chapters
+}
+
+print(json.dumps(result))
+EOF
+)
+
+    if [ -z "$result" ]; then
+        log_error "  ❌ 语言标签解析失败"
+        echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
+        return 1
+    fi
+
+    # 验证 JSON 格式
+    if ! echo "$result" | jq -e . >/dev/null 2>&1; then
+        log_error "  ❌ 语言标签 JSON 格式无效"
+        echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
+        return 1
+    fi
+
+    local audio_count=$(echo "$result" | jq '.audio_languages | length')
+    local subtitle_count=$(echo "$result" | jq '.subtitle_languages | length')
+    local chapter_count=$(echo "$result" | jq '.chapters')
+
+    log_info "  ✅ 语言标签提取成功: ${audio_count} 音频, ${subtitle_count} 字幕, ${chapter_count} 章节"
+
+    echo "$result"
+    return 0
+}
+
+#==============================================================================
 # 转换为 Emby MediaSourceInfo 格式
 #==============================================================================
 
@@ -291,8 +413,9 @@ convert_to_emby_format() {
     local ffprobe_json="$1"
     local strm_file="$2"
     local iso_file_size="${3:-0}"
+    local language_tags_json="${4:-{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}}"
 
-    echo "$ffprobe_json" | jq -c --arg strm_file "$strm_file" --arg iso_size "$iso_file_size" '
+    echo "$ffprobe_json" | jq -c --arg strm_file "$strm_file" --arg iso_size "$iso_file_size" --argjson lang_tags "$language_tags_json" '
     # 安全数值转换函数：容错处理非法值
     def safe_number:
         if . == null or . == "" then null
@@ -385,10 +508,33 @@ convert_to_emby_format() {
             "RequiresLooping": false,
             "SupportsProbing": true,
             "MediaStreams": [
-                .streams[] |
+                .streams as $all_streams |
+                .streams | to_entries[] |
+                .key as $idx |
+                .value |
+                # 计算当前流在同类型中的索引
+                (if .codec_type == "audio" then
+                    [$all_streams[] | select(.codec_type == "audio") | .index] |
+                    to_entries | map(select(.value == $all_streams[$idx].index)) | .[0].key
+                 elif .codec_type == "subtitle" then
+                    [$all_streams[] | select(.codec_type == "subtitle") | .index] |
+                    to_entries | map(select(.value == $all_streams[$idx].index)) | .[0].key
+                 else 0
+                 end) as $type_index |
                 {
                     "Codec": (.codec_name | codec_upper),
-                    "Language": (if .codec_type != "video" then (.tags.language // null) else null end),
+                    "Language": (
+                        if .codec_type == "video" then null
+                        elif .codec_type == "audio" then
+                            # 从 bd_list_titles 获取音频语言，否则使用 "und"
+                            ($lang_tags.audio_languages[$type_index] // .tags.language // "und")
+                        elif .codec_type == "subtitle" then
+                            # 从 bd_list_titles 获取字幕语言，否则使用 "und"
+                            ($lang_tags.subtitle_languages[$type_index] // .tags.language // "und")
+                        else
+                            (.tags.language // null)
+                        end
+                    ),
                     "ColorTransfer": (if .codec_type == "video" then .color_transfer else null end),
                     "ColorPrimaries": (if .codec_type == "video" then .color_primaries else null end),
                     "ColorSpace": (if .codec_type == "video" then .color_space else null end),
@@ -470,6 +616,8 @@ convert_to_emby_format() {
                     "ExtendedVideoType": (
                         if .codec_type == "video" then
                             if video_range == "DolbyVision" then "DolbyVision"
+                            elif video_range == "HDR10" then "HDR10"
+                            elif video_range == "HLG" then "HLG"
                             else "None"
                             end
                         else "None"
@@ -816,6 +964,39 @@ process_iso_strm_full() {
         return 1
     fi
 
+    # 提取蓝光语言标签（需要挂载 ISO）
+    local language_tags_json="{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
+
+    if [ "$iso_type" = "bluray" ]; then
+        log_info "  挂载 ISO 以提取语言标签..."
+
+        local mount_point="/tmp/bd-lang-$$"
+        local mount_success=false
+
+        # 创建挂载点
+        if sudo mkdir -p "$mount_point" 2>/dev/null; then
+            # 尝试挂载
+            if sudo mount -o loop,ro "$iso_path" "$mount_point" 2>/dev/null; then
+                mount_success=true
+                log_info "  ✅ ISO 挂载成功"
+
+                # 提取语言标签
+                language_tags_json=$(extract_bluray_language_tags "$mount_point")
+
+                # 立即卸载
+                sudo umount "$mount_point" 2>/dev/null || true
+                sudo rmdir "$mount_point" 2>/dev/null || true
+
+                log_info "  ✅ ISO 已卸载"
+            else
+                log_warn "  ⚠️  ISO 挂载失败，跳过语言标签提取"
+                sudo rmdir "$mount_point" 2>/dev/null || true
+            fi
+        else
+            log_warn "  ⚠️  创建挂载点失败，跳过语言标签提取"
+        fi
+    fi
+
     # 验证媒体时长
     if ! validate_media_duration "$ffprobe_output"; then
         log_error "媒体时长无效: $strm_file"
@@ -843,9 +1024,9 @@ process_iso_strm_full() {
         iso_size="0"
     fi
 
-    # 转换为 Emby 格式
+    # 转换为 Emby 格式（合并语言标签）
     local emby_json
-    emby_json=$(convert_to_emby_format "$ffprobe_output" "$strm_file" "$iso_size")
+    emby_json=$(convert_to_emby_format "$ffprobe_output" "$strm_file" "$iso_size" "$language_tags_json")
 
     if [ -z "$emby_json" ]; then
         # 保存失败的 ffprobe 输出用于诊断

@@ -90,6 +90,20 @@ get_package_name() {
                 echo "sqlite3"
             fi
             ;;
+        libbluray)
+            # bd_list_titles 工具包名
+            if [ "$pkg_manager" = "apt" ]; then
+                echo "libbluray-bin"
+            elif [ "$pkg_manager" = "pacman" ]; then
+                echo "libbluray"
+            elif [ "$pkg_manager" = "dnf" ] || [ "$pkg_manager" = "yum" ]; then
+                echo "libbluray-utils"
+            elif [ "$pkg_manager" = "zypper" ]; then
+                echo "libbluray-tools"
+            else
+                echo "libbluray-bin"
+            fi
+            ;;
         *)
             echo "$package_type"
             ;;
@@ -133,6 +147,7 @@ if [ "$PKG_MANAGER" = "unknown" ]; then
     echo "请手动安装以下依赖："
     echo "  - jq"
     echo "  - sqlite3"
+    echo "  - libbluray-bin (或 libbluray-utils / libbluray-tools，提供 bd_list_titles)"
     echo ""
     exit 1
 fi
@@ -159,7 +174,14 @@ fi
 # 检查 jq
 if ! command -v jq &> /dev/null; then
     pkg_name=$(get_package_name "$PKG_MANAGER" "jq")
-    echo "   需要安装: $pkg_name (jq)"
+    echo "   需要安装: $pkg_name (jq，JSON 处理必需)"
+    PACKAGES_TO_INSTALL+=($pkg_name)
+fi
+
+# 检查 bd_list_titles（蓝光语言标签提取，必需）
+if ! command -v bd_list_titles &> /dev/null; then
+    pkg_name=$(get_package_name "$PKG_MANAGER" "libbluray")
+    echo "   需要安装: $pkg_name (bd_list_titles，蓝光语言标签提取必需)"
     PACKAGES_TO_INSTALL+=($pkg_name)
 fi
 
