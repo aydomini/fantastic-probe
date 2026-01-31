@@ -11,12 +11,12 @@ set -euo pipefail
 
 # 动态读取版本号
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="4.1.2"  # 硬编码默认值
+VERSION="4.1.3"  # 硬编码默认值
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
-    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "4.1.2")
+    VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "4.1.3")
 fi
 
 #==============================================================================
@@ -110,6 +110,29 @@ release_lock() {
 }
 
 trap release_lock EXIT
+
+#==============================================================================
+# 清理残留挂载点（防止之前异常退出留下的）
+#==============================================================================
+
+cleanup_stale_mounts() {
+    log_debug "检查并清理残留的 bd-lang 挂载点..."
+
+    # 查找所有 /tmp/bd-lang-* 挂载点
+    local stale_mounts=$(mount | grep "/tmp/bd-lang-" | awk '{print $3}' || true)
+
+    if [ -n "$stale_mounts" ]; then
+        log_warn "发现残留挂载点，正在清理..."
+        echo "$stale_mounts" | while read mount_point; do
+            log_info "  清理: $mount_point"
+            sudo umount -f "$mount_point" 2>/dev/null || true
+            sudo rmdir "$mount_point" 2>/dev/null || true
+        done
+    fi
+
+    # 清理空的 /tmp/bd-lang-* 目录
+    find /tmp -maxdepth 1 -type d -name "bd-lang-*" -empty -exec sudo rmdir {} \; 2>/dev/null || true
+}
 
 #==============================================================================
 # 失败缓存管理（SQLite）
@@ -366,6 +389,9 @@ main() {
     if ! acquire_lock; then
         exit 0  # 静默退出（上一个任务仍在运行）
     fi
+
+    # 清理残留挂载点
+    cleanup_stale_mounts
 
     # 执行扫描
     scan_and_process

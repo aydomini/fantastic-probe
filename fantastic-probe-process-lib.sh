@@ -302,7 +302,7 @@ extract_bluray_language_tags() {
 
     # 检查是否为蓝光目录
     if [ ! -d "$mount_point/BDMV" ]; then
-        log_debug "  非蓝光目录，跳过 bd_list_titles"
+        log_info "  ⚠️  非蓝光目录（无 BDMV 文件夹），跳过 bd_list_titles"
         echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
         return 1
     fi
@@ -327,11 +327,12 @@ extract_bluray_language_tags() {
     fi
 
     # 记录 bd_list_titles 输出前几行（用于诊断）
-    log_debug "  bd_list_titles 输出前 5 行:"
-    echo "$bd_output" | head -5 | while read line; do log_debug "    $line"; done
+    log_info "  📋 bd_list_titles 输出前 5 行（用于诊断）:"
+    echo "$bd_output" | head -5 | while read line; do log_info "    $line"; done
 
-    # 使用 Python 解析输出（通过 stdin 传递，避免 heredoc 注入风险）
-    local result=$(echo "$bd_output" | python3 << 'EOF'
+    # 使用 Python 解析输出（通过临时脚本文件 + 管道，避免 heredoc stdin 冲突）
+    local python_script="/tmp/bd-parse-$$.py"
+    cat > "$python_script" << 'PYTHON_SCRIPT'
 import sys
 import re
 import json
@@ -391,8 +392,20 @@ result = {
 }
 
 print(json.dumps(result))
-EOF
-)
+PYTHON_SCRIPT
+
+    # 通过管道传递数据给 Python 脚本
+    local result=$(echo "$bd_output" | python3 "$python_script")
+    local parse_exit_code=$?
+
+    # 清理临时文件
+    rm -f "$python_script"
+
+    if [ $parse_exit_code -ne 0 ]; then
+        log_error "  ❌ Python 解析脚本执行失败（退出码: $parse_exit_code）"
+        echo "{\"audio_languages\":[],\"subtitle_languages\":[],\"chapters\":0}"
+        return 1
+    fi
 
     if [ -z "$result" ]; then
         log_error "  ❌ 语言标签解析失败"
@@ -663,7 +676,14 @@ convert_to_emby_format() {
                 } | with_entries(select(.value != null))
             ],
             "Formats": [],
-            "Bitrate": (.format.bit_rate | safe_number),
+            "Bitrate": (
+                (.format.bit_rate | safe_number) //
+                (if (.format.duration | safe_number) != null and (.format.duration | safe_number) > 0 and ($iso_size | tonumber) > 0 then
+                    (($iso_size | tonumber) * 8 / (.format.duration | safe_number) | floor)
+                else
+                    null
+                end)
+            ),
             "RequiredHttpHeaders": {},
             "AddApiKeyToDirectStreamUrl": false,
             "ReadAtNativeFramerate": false
@@ -985,21 +1005,48 @@ process_iso_strm_full() {
         local mount_point="/tmp/bd-lang-$$"
         local mount_success=false
 
+        # 清理可能残留的挂载点（防止之前异常退出留下的）
+        if mountpoint -q "$mount_point" 2>/dev/null; then
+            log_warn "  ⚠️  检测到残留挂载点，尝试清理..."
+            sudo umount -f "$mount_point" 2>/dev/null || true
+        fi
+        sudo rmdir "$mount_point" 2>/dev/null || true
+
         # 创建挂载点
         if sudo mkdir -p "$mount_point" 2>/dev/null; then
             # 尝试挂载
             if sudo mount -o loop,ro "$iso_path" "$mount_point" 2>/dev/null; then
                 mount_success=true
-                log_info "  ✅ ISO 挂载成功"
+                log_info "  ✅ ISO 挂载成功: $mount_point"
 
                 # 提取语言标签
                 language_tags_json=$(extract_bluray_language_tags "$mount_point")
 
-                # 立即卸载
-                sudo umount "$mount_point" 2>/dev/null || true
+                # 立即卸载（带重试和强制卸载）
+                local unmount_retries=0
+                while mountpoint -q "$mount_point" 2>/dev/null && [ $unmount_retries -lt 3 ]; do
+                    if sudo umount "$mount_point" 2>/dev/null; then
+                        break
+                    fi
+                    ((unmount_retries++)) || true
+                    sleep 1
+                done
+
+                # 如果正常卸载失败，强制卸载
+                if mountpoint -q "$mount_point" 2>/dev/null; then
+                    log_warn "  ⚠️  正常卸载失败，尝试强制卸载..."
+                    sudo umount -f "$mount_point" 2>/dev/null || log_error "  ❌ 强制卸载失败: $mount_point"
+                fi
+
+                # 删除挂载点目录
                 sudo rmdir "$mount_point" 2>/dev/null || true
 
-                log_info "  ✅ ISO 已卸载"
+                # 验证卸载结果
+                if ! mountpoint -q "$mount_point" 2>/dev/null; then
+                    log_info "  ✅ ISO 已卸载"
+                else
+                    log_error "  ❌ ISO 卸载失败，挂载点可能泄漏: $mount_point"
+                fi
             else
                 log_warn "  ⚠️  ISO 挂载失败，跳过语言标签提取"
                 sudo rmdir "$mount_point" 2>/dev/null || true
