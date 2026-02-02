@@ -743,13 +743,23 @@ convert_to_emby_format() {
 
     # Pre-calculate: total bitrate and per-type bitrate sums
     # Bitrate fallback: if format.bit_rate missing, calculate from file size
+    # Fix: ISO/BDMV files have incorrect format.bit_rate, always use file size calculation
     (.format.bit_rate | safe_number) as $format_bitrate |
     (.format.duration | safe_number) as $duration |
     ($iso_size | tonumber) as $file_size |
-    (if $format_bitrate and $format_bitrate > 0 then
+    (if $file_size > 0 and $duration > 0 then
+        # Calculate theoretical max bitrate from file size
+        (($file_size * 8) / $duration | floor) as $calculated_bitrate |
+        # Check if format.bit_rate is reasonable (within 150% of calculated)
+        if $format_bitrate and $format_bitrate > 0 and $format_bitrate <= ($calculated_bitrate * 1.5) then
+            $format_bitrate
+        else
+            # format.bit_rate is missing, zero, or anomalous - use calculated value
+            $calculated_bitrate
+        end
+     elif $format_bitrate and $format_bitrate > 0 then
+        # No file size available, use format.bit_rate as fallback
         $format_bitrate
-     elif $file_size > 0 and $duration > 0 then
-        (($file_size * 8) / $duration | floor)
      else
         null
      end) as $total_bitrate |
@@ -902,31 +912,39 @@ convert_to_emby_format() {
                     ),
                     "IsInterlaced": (if .field_order then (.field_order != "progressive") else false end),
                     "BitRate": (
-                        # Fix: BDMV 格式的视频流 bit_rate 字段不准确（ffprobe 读取容器元数据错误）
-                        # 优先使用基于文件大小的计算值（按分辨率权重分配）
-                        # 判断条件：BDMV 检测标志不为空，或者 codec_tag_string 是 HDMV，或者容器是 mpegts
-                        if .codec_type == "video" and $video_bitrate_total and
-                           ($bdmv_dv_detected != null or .codec_tag_string == "HDMV") then
-                            # BDMV 视频流：强制使用权重分配计算（准确）
-                            .index as $current_index |
-                            (($video_tracks | map(select(.index == $current_index)) | .[0].weight // null) as $current_weight |
-                             if $current_weight and $video_weight_sum > 0 then
-                                 (($video_bitrate_total * $current_weight / $video_weight_sum) | floor)
-                             else
-                                 $video_bitrate_total
-                             end)
+                        # Fix: BDMV/ISO 格式的视频流 bit_rate 字段常常不准确
+                        # 策略：检测异常比特率，如果不合理则使用权重分配计算
+                        if .codec_type == "video" and $video_bitrate_total and $video_bitrate_total > 0 then
+                            # 视频流：检查 ffprobe 的 bit_rate 是否可信
+                            (.bit_rate | safe_number) as $stream_bitrate |
+                            if $stream_bitrate and $stream_bitrate > 0 then
+                                # 有 bit_rate 值，检查是否异常（超过总比特率的 1.5 倍视为异常）
+                                if $stream_bitrate > ($total_bitrate * 1.5) then
+                                    # 异常：使用权重分配计算（准确）
+                                    .index as $current_index |
+                                    (($video_tracks | map(select(.index == $current_index)) | .[0].weight // null) as $current_weight |
+                                     if $current_weight and $video_weight_sum > 0 then
+                                         (($video_bitrate_total * $current_weight / $video_weight_sum) | floor)
+                                     else
+                                         $video_bitrate_total
+                                     end)
+                                else
+                                    # 正常：直接使用
+                                    $stream_bitrate
+                                end
+                            else
+                                # 无 bit_rate：使用权重分配
+                                .index as $current_index |
+                                (($video_tracks | map(select(.index == $current_index)) | .[0].weight // null) as $current_weight |
+                                 if $current_weight and $video_weight_sum > 0 then
+                                     (($video_bitrate_total * $current_weight / $video_weight_sum) | floor)
+                                 else
+                                     $video_bitrate_total
+                                 end)
+                            end
                         elif (.bit_rate | safe_number) then
-                            # 其他格式：如果有 bit_rate，直接使用
+                            # 非视频流或无法计算总比特率：直接使用 ffprobe 的值
                             (.bit_rate | safe_number)
-                        elif .codec_type == "video" and $video_bitrate_total then
-                            # 其他格式但无 bit_rate：按权重分配
-                            .index as $current_index |
-                            (($video_tracks | map(select(.index == $current_index)) | .[0].weight // null) as $current_weight |
-                             if $current_weight and $video_weight_sum > 0 then
-                                 (($video_bitrate_total * $current_weight / $video_weight_sum) | floor)
-                             else
-                                 $video_bitrate_total
-                             end)
                         else
                             null
                         end
