@@ -666,7 +666,29 @@ convert_to_emby_format() {
             if $dovi then
                 # Extract Dolby Vision Profile if present
                 if $dovi.dv_profile then
-                    "DolbyVision Profile " + ($dovi.dv_profile | tostring)
+                    # Profile 8 single-layer detection: el_present_flag == 0
+                    if ($dovi.dv_profile == 8 or $dovi.dv_profile == "8") and
+                       (($dovi.el_present_flag // null) == 0 or ($dovi.el_present_flag // null) == "0") then
+                        # Profile 8 detected, check compatibility_id for sub-profiles
+                        if $dovi.dv_bl_signal_compatibility_id then
+                            if $dovi.dv_bl_signal_compatibility_id == 1 or $dovi.dv_bl_signal_compatibility_id == "1" then
+                                "DolbyVision Profile 8.1"
+                            elif $dovi.dv_bl_signal_compatibility_id == 2 or $dovi.dv_bl_signal_compatibility_id == "2" then
+                                "DolbyVision Profile 8.2"
+                            elif $dovi.dv_bl_signal_compatibility_id == 4 or $dovi.dv_bl_signal_compatibility_id == "4" then
+                                "DolbyVision Profile 8.4"
+                            else
+                                # Unknown compatibility_id, fallback to generic Profile 8
+                                "DolbyVision Profile 8"
+                            end
+                        else
+                            # compatibility_id missing, fallback to Profile 8.4 (most common, iPhone)
+                            "DolbyVision Profile 8.4"
+                        end
+                    # Existing logic: Profile 7/5 or other profiles
+                    else
+                        "DolbyVision Profile " + ($dovi.dv_profile | tostring)
+                    end
                 else
                     "DolbyVision"
                 end
@@ -682,7 +704,25 @@ convert_to_emby_format() {
             if .side_data_list then
                 ([.side_data_list[] | select(.side_data_type == "DOVI configuration record")] | .[0]) as $dovi |
                 if $dovi and $dovi.dv_profile then
-                    "DolbyVision Profile " + ($dovi.dv_profile | tostring)
+                    # Profile 8 single-layer detection (same logic as Priority 1)
+                    if ($dovi.dv_profile == 8 or $dovi.dv_profile == "8") and
+                       (($dovi.el_present_flag // null) == 0 or ($dovi.el_present_flag // null) == "0") then
+                        if $dovi.dv_bl_signal_compatibility_id then
+                            if $dovi.dv_bl_signal_compatibility_id == 1 or $dovi.dv_bl_signal_compatibility_id == "1" then
+                                "DolbyVision Profile 8.1"
+                            elif $dovi.dv_bl_signal_compatibility_id == 2 or $dovi.dv_bl_signal_compatibility_id == "2" then
+                                "DolbyVision Profile 8.2"
+                            elif $dovi.dv_bl_signal_compatibility_id == 4 or $dovi.dv_bl_signal_compatibility_id == "4" then
+                                "DolbyVision Profile 8.4"
+                            else
+                                "DolbyVision Profile 8"
+                            end
+                        else
+                            "DolbyVision Profile 8.4"
+                        end
+                    else
+                        "DolbyVision Profile " + ($dovi.dv_profile | tostring)
+                    end
                 else
                     "DolbyVision"
                 end
@@ -862,11 +902,22 @@ convert_to_emby_format() {
                     ),
                     "IsInterlaced": (if .field_order then (.field_order != "progressive") else false end),
                     "BitRate": (
-                        if (.bit_rate | safe_number) then
-                            # If stream has bit_rate, use it directly
+                        # Fix: BDMV 格式的视频流 bit_rate 字段不准确（ffprobe 读取容器元数据错误）
+                        # 优先使用基于文件大小的计算值（按分辨率权重分配）
+                        if .codec_type == "video" and $video_bitrate_total and (.codec_tag_string == "HDMV") then
+                            # BDMV 视频流：强制使用权重分配计算（准确）
+                            .index as $current_index |
+                            (($video_tracks | map(select(.index == $current_index)) | .[0].weight // null) as $current_weight |
+                             if $current_weight and $video_weight_sum > 0 then
+                                 (($video_bitrate_total * $current_weight / $video_weight_sum) | floor)
+                             else
+                                 $video_bitrate_total
+                             end)
+                        elif (.bit_rate | safe_number) then
+                            # 其他格式：如果有 bit_rate，直接使用
                             (.bit_rate | safe_number)
                         elif .codec_type == "video" and $video_bitrate_total then
-                            # Video track and total video bitrate exists, allocate by weight
+                            # 其他格式但无 bit_rate：按权重分配
                             .index as $current_index |
                             (($video_tracks | map(select(.index == $current_index)) | .[0].weight // null) as $current_weight |
                              if $current_weight and $video_weight_sum > 0 then
@@ -956,6 +1007,9 @@ convert_to_emby_format() {
                         if .codec_type == "video" then
                             (($bdmv_dv_detected // video_range) |
                             if startswith("DolbyVision Profile 7") then "DoviProfile76"
+                            elif startswith("DolbyVision Profile 8.1") then "DoviProfile81"
+                            elif startswith("DolbyVision Profile 8.2") then "DoviProfile82"
+                            elif startswith("DolbyVision Profile 8.4") then "DoviProfile84"
                             elif startswith("DolbyVision Profile 8") then "DoviProfile84"
                             elif startswith("DolbyVision") and .side_data_list then
                                 (.side_data_list[] | select(.side_data_type == "DOVI configuration record") |
@@ -969,6 +1023,9 @@ convert_to_emby_format() {
                         if .codec_type == "video" then
                             (($bdmv_dv_detected // video_range) |
                             if startswith("DolbyVision Profile 7") then "Profile 7.6 (Bluray)"
+                            elif startswith("DolbyVision Profile 8.1") then "Profile 8.1 (HDR10 Compatible)"
+                            elif startswith("DolbyVision Profile 8.2") then "Profile 8.2 (SDR Compatible)"
+                            elif startswith("DolbyVision Profile 8.4") then "Profile 8.4 (HLG Compatible)"
                             elif startswith("DolbyVision Profile 8") then "Profile 8.4"
                             elif startswith("DolbyVision") and .side_data_list then
                                 (.side_data_list[] | select(.side_data_type == "DOVI configuration record") |
