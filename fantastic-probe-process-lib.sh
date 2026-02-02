@@ -904,7 +904,9 @@ convert_to_emby_format() {
                     "BitRate": (
                         # Fix: BDMV 格式的视频流 bit_rate 字段不准确（ffprobe 读取容器元数据错误）
                         # 优先使用基于文件大小的计算值（按分辨率权重分配）
-                        if .codec_type == "video" and $video_bitrate_total and (.codec_tag_string == "HDMV") then
+                        # 判断条件：BDMV 检测标志不为空，或者 codec_tag_string 是 HDMV，或者容器是 mpegts
+                        if .codec_type == "video" and $video_bitrate_total and
+                           ($bdmv_dv_detected != null or .codec_tag_string == "HDMV") then
                             # BDMV 视频流：强制使用权重分配计算（准确）
                             .index as $current_index |
                             (($video_tracks | map(select(.index == $current_index)) | .[0].weight // null) as $current_weight |
