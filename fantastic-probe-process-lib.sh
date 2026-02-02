@@ -300,10 +300,13 @@ extract_mediainfo() {
         fi
         rm -f "$ffprobe_stderr"
 
-        if [ -n "$ffprobe_json" ] && echo "$ffprobe_json" | jq -e '.streams' >/dev/null 2>&1; then
-            log_info "  ✅ ${iso_type} 协议成功（尝试 $((retry_count + 1))/$max_retries，耗时 ${duration}秒）"
+        if [ -n "$ffprobe_json" ] && echo "$ffprobe_json" | jq -e '.streams | length > 0' >/dev/null 2>&1; then
+            local stream_count=$(echo "$ffprobe_json" | jq '.streams | length')
+            log_info "  ✅ ${iso_type} 协议成功（尝试 $((retry_count + 1))/$max_retries，耗时 ${duration}秒，流数量: ${stream_count}）"
             echo "$ffprobe_json"
             return 0
+        elif [ -n "$ffprobe_json" ] && echo "$ffprobe_json" | jq -e '.streams' >/dev/null 2>&1; then
+            log_warn "  ⚠️  ffprobe 返回空流数组（尝试 $((retry_count + 1))/$max_retries）"
         fi
 
         ffprobe_json=""
@@ -554,9 +557,22 @@ convert_to_emby_format() {
     local strm_file="$2"
     local iso_file_size="${3:-0}"
     local iso_type="${4:-unknown}"
+    local lang_tags_file="${5:-/tmp/lang-tags-$$.json}"  # 接收路径参数（带默认值兼容旧调用）
 
-    # Use fixed path temp file (created by caller)
-    local lang_tags_file="/tmp/lang-tags-$$.json"
+    # Fix 14: 验证输入参数
+    if [ -z "$ffprobe_json" ]; then
+        log_error "  ❌ convert_to_emby_format 接收到空的 ffprobe_json"
+        return 1
+    fi
+
+    if [ "${LOG_LEVEL:-INFO}" = "DEBUG" ]; then
+        log_debug "  🔍 convert_to_emby_format 接收到的参数："
+        log_debug "    - ffprobe_json 长度: ${#ffprobe_json} 字符"
+        log_debug "    - ffprobe_json 前200字符: ${ffprobe_json:0:200}"
+        log_debug "    - iso_file_size: $iso_file_size"
+        log_debug "    - iso_type: $iso_type"
+        log_debug "    - lang_tags_file: $lang_tags_file"
+    fi
 
     if [ ! -f "$lang_tags_file" ]; then
         log_warn "  ⚠️  语言标签临时文件不存在: $lang_tags_file"
@@ -575,6 +591,11 @@ convert_to_emby_format() {
     # Use temp file to capture jq errors
     local jq_error_file="/tmp/jq-error-$$.txt"
     local jq_output
+
+    # 临时：保存 jq 脚本用于调试
+    if [ "${LOG_LEVEL:-INFO}" = "DEBUG" ]; then
+        log_debug "  🔍 DEBUG: 保存 jq 脚本到 /tmp/jq-script-$$.jq"
+    fi
 
     jq_output=$(echo "$ffprobe_json" | jq -c --arg strm_file "$strm_file" --arg iso_size "$iso_file_size" --arg enable_strict_filter "$enable_strict_filter" --slurpfile lang_tags "$lang_tags_file" '
     # Safe number conversion: fault-tolerant for illegal values
@@ -737,25 +758,40 @@ convert_to_emby_format() {
                 # Parse strict filter flag
                 ($enable_strict_filter == "true") as $strict_filter |
                 .streams | to_entries[] |
+                # Fix 15: 跳过损坏的流（codec_name 或 codec_type 为 null，防止 ascii_upcase 报错）
+                select(.value.codec_name != null and .value.codec_type != null) |
                 .key as $idx |
                 .value |
-                # Calculate current stream index within same type
+                # Store current stream index for later use
+                .index as $current_stream_index |
+                # Calculate current stream index within same type (with comprehensive error handling)
                 (if .codec_type == "audio" then
-                    [$all_streams[] | select(.codec_type == "audio") | .index] |
-                    to_entries | map(select(.value == $all_streams[$idx].index)) | .[0].key
+                    # Find position of current stream among all audio streams
+                    ([$all_streams[] | select(.codec_type == "audio") | .index] |
+                    . as $audio_indices |
+                    ($audio_indices | to_entries | map(select(.value == $current_stream_index)) |
+                    if length > 0 then .[0].key else null end) // 999)
                  elif .codec_type == "subtitle" then
-                    [$all_streams[] | select(.codec_type == "subtitle") | .index] |
-                    to_entries | map(select(.value == $all_streams[$idx].index)) | .[0].key
+                    # Find position of current stream among all subtitle streams
+                    ([$all_streams[] | select(.codec_type == "subtitle") | .index] |
+                    . as $subtitle_indices |
+                    ($subtitle_indices | to_entries | map(select(.value == $current_stream_index)) |
+                    if length > 0 then .[0].key else null end) // 999)
                  else 0
                  end) as $type_index |
-                # Filter logic:
-                # - If strict filter enabled (Blu-ray with language tags): only output streams with language tags
-                # - Otherwise (DVD or no language tags): keep all streams
+                # Filter logic (宽松容错):
+                # - Video streams: always keep
+                # - If strict filter disabled: keep all streams
+                # - If $type_index is invalid (null/999/non-number): keep stream (容错)
+                # - If $type_index is number: check against language tag count
                 select(
                     if .codec_type == "video" then true
                     elif $strict_filter == false then true
-                    elif .codec_type == "audio" then $type_index < $audio_lang_count
-                    elif .codec_type == "subtitle" then $type_index < $subtitle_lang_count
+                    elif ($type_index | type) != "number" then true
+                    elif $type_index == 999 then true
+                    elif .codec_type == "audio" and $type_index < $audio_lang_count then true
+                    elif .codec_type == "subtitle" and $type_index < $subtitle_lang_count then true
+                    elif .codec_type == "audio" or .codec_type == "subtitle" then false
                     else true
                     end
                 ) |
@@ -977,11 +1013,67 @@ convert_to_emby_format() {
                 log_error "  $line"
             done
         fi
-        rm -f "$jq_error_file" "$lang_tags_file"
+        # Fix 13: 仅删除错误文件，保留缓存以便快速重试
+        rm -f "$jq_error_file"
+        # 保留 lang_tags_file，下次可直接使用缓存
         return 1
     fi
 
-    rm -f "$jq_error_file" "$lang_tags_file"
+    # 检测空输出（jq 成功但可能是逻辑错误）
+    if [ -z "$jq_output" ]; then
+        log_error "jq 执行成功但输出为空（可能是逻辑错误或输入数据无效）"
+        log_error "  输入数据预览（前300字符）:"
+        echo "$ffprobe_output" | head -c 300 | while IFS= read -r line; do
+            log_error "    $line"
+        done
+        if [ -f "$lang_tags_file" ]; then
+            log_error "  语言标签文件内容:"
+            cat "$lang_tags_file" | while IFS= read -r line; do
+                log_error "    $line"
+            done
+        fi
+        # Fix 13: 仅删除错误文件，保留缓存以便快速重试
+        rm -f "$jq_error_file"
+        # 保留 lang_tags_file，下次可直接使用缓存
+        return 1
+    fi
+
+    # 检查过滤后的流数量（如果为空且启用了严格过滤，记录警告）
+    local filtered_streams_count=$(echo "$jq_output" | jq -r '.[0].MediaSourceInfo.MediaStreams | length' 2>/dev/null)
+    filtered_streams_count=${filtered_streams_count:-0}
+    if [ "$filtered_streams_count" -eq 0 ]; then
+        if [ "$enable_strict_filter" = "true" ]; then
+            log_warn "  ⚠️  严格过滤导致所有流被过滤（MediaStreams为空）"
+            log_warn "  💡 建议：检查ffprobe输出或语言标签匹配逻辑"
+            log_warn "  📋 语言标签: $(cat "$lang_tags_file")"
+            # 添加详细调试信息
+            local original_video_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="video")] | length' 2>/dev/null || echo "0")
+            local original_audio_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="audio")] | length' 2>/dev/null || echo "0")
+            local original_subtitle_count=$(echo "$ffprobe_json" | jq '[.streams[] | select(.codec_type=="subtitle")] | length' 2>/dev/null || echo "0")
+            log_warn "  🔍 DEBUG: ffprobe 原始流: 视频=$original_video_count, 音频=$original_audio_count, 字幕=$original_subtitle_count"
+            log_warn "  🔍 DEBUG: 严格过滤参数: enable_strict_filter=$enable_strict_filter"
+            # 测试简单的视频流过滤是否工作
+            local test_video_filter=$(echo "$ffprobe_json" | jq -c '[.streams[] | select(.codec_type=="video")]' 2>/dev/null)
+            if [ -n "$test_video_filter" ] && [ "$test_video_filter" != "[]" ]; then
+                log_warn "  🔍 DEBUG: 简单视频流过滤有效，问题可能在复杂的 select 逻辑中"
+            else
+                log_warn "  🔍 DEBUG: 简单视频流过滤也失败，ffprobe 输出可能有问题"
+            fi
+            # 新增：检查 jq_output 是否为空数组
+            log_warn "  🔍 DEBUG: jq_output 长度: ${#jq_output} 字符"
+            log_warn "  🔍 DEBUG: jq_output 前100字符: ${jq_output:0:100}"
+            # 新增：测试简化的 jq 表达式
+            local simple_test=$(echo "$ffprobe_json" | jq -c '[{test: "simple"}]' 2>/dev/null)
+            log_warn "  🔍 DEBUG: 简单 jq 测试: $simple_test"
+        else
+            log_warn "  ⚠️  转换后 MediaStreams 为空（未启用严格过滤）"
+        fi
+    fi
+
+    # Fix 13: 仅删除错误文件，保留缓存以便快速重试
+    # 这是关键修复：之前即使 jq 成功也会删除缓存，导致下次重新挂载
+    rm -f "$jq_error_file"
+    # 保留 lang_tags_file，让下次处理可以复用缓存
     echo "$jq_output"
 }
 
@@ -1179,14 +1271,32 @@ process_iso_strm_full() {
     log_info "  ISO 类型: ${iso_type^^}"
 
     # For Blu-ray ISO, mount first to extract language tags and accurate duration
-    local lang_tags_file="/tmp/lang-tags-$$.json"
+    # 使用 ISO 路径哈希作为缓存键（避免重复提取）
+    local iso_hash=$(echo "$iso_path" | md5sum | cut -d' ' -f1)
+    local lang_tags_file="/tmp/lang-tags-${iso_hash}.json"
+    local lang_tags_cache_valid=false
+
+    # 检查缓存是否存在且有效（24小时内）
+    if [ -f "$lang_tags_file" ]; then
+        local cache_age=$(($(date +%s) - $(stat -f %m "$lang_tags_file" 2>/dev/null || stat -c %Y "$lang_tags_file" 2>/dev/null || echo 0)))
+        if [ "$cache_age" -lt 86400 ]; then
+            if jq -e . "$lang_tags_file" >/dev/null 2>&1; then
+                lang_tags_cache_valid=true
+                local cached_audio=$(jq -r '.audio_languages | length' "$lang_tags_file" 2>/dev/null || echo "0")
+                local cached_subtitle=$(jq -r '.subtitle_languages | length' "$lang_tags_file" 2>/dev/null || echo "0")
+                log_info "  ✅ 使用缓存的语言标签: $cached_audio 音频 / $cached_subtitle 字幕（跳过挂载）"
+            fi
+        fi
+    fi
 
     if [ "$iso_type" = "bluray" ]; then
 
-        local mount_point="/tmp/bd-lang-$$"
-        local mount_success=false
+        # 只有在缓存无效时才挂载 ISO 提取语言标签
+        if [ "$lang_tags_cache_valid" = "false" ]; then
+            local mount_point="/tmp/bd-lang-$$"
+            local mount_success=false
 
-        # Clean up possible leftover mount points (from abnormal exits)
+            # Clean up possible leftover mount points (from abnormal exits)
         if mountpoint -q "$mount_point" 2>/dev/null; then
             log_warn "  ⚠️  检测到残留挂载点，尝试清理..."
             sudo umount -f "$mount_point" 2>/dev/null || true
@@ -1246,7 +1356,9 @@ process_iso_strm_full() {
         else
             log_warn "  ⚠️  无法创建挂载点: $mount_point，将跳过语言标签提取"
         fi
-    fi
+
+        fi  # 结束缓存检查块：if [ "$lang_tags_cache_valid" = "false" ]
+    fi  # 结束蓝光检查块：if [ "$iso_type" = "bluray" ]
 
     # Extract media info (ffprobe auto-selects playlist, duration corrected by bd_list_titles)
     local ffprobe_output
@@ -1293,9 +1405,21 @@ process_iso_strm_full() {
             log_warn "  ⚠️  时长差异检测: ffprobe=${ffprobe_duration}秒, bd_list_titles=${bd_duration}秒, 差异=${duration_diff}秒"
             log_warn "  ⚠️  使用 bd_list_titles 时长覆盖（更权威）: ${bd_duration}秒"
 
-            ffprobe_output=$(echo "$ffprobe_output" | jq --arg duration "$bd_duration" '.format.duration = $duration')
+            # Fix 14: 验证 jq 修改是否成功
+            local updated_ffprobe
+            updated_ffprobe=$(echo "$ffprobe_output" | jq --arg duration "$bd_duration" '.format.duration = $duration' 2>&1)
+            local jq_status=$?
 
-            log_info "  ✅ 时长已修正为: ${bd_duration}秒 ($(($bd_duration / 3600))小时$(($bd_duration % 3600 / 60))分钟)"
+            if [ $jq_status -eq 0 ] && [ -n "$updated_ffprobe" ] && echo "$updated_ffprobe" | jq -e '.format' >/dev/null 2>&1; then
+                ffprobe_output="$updated_ffprobe"
+                log_info "  ✅ 时长已修正为: ${bd_duration}秒 ($(($bd_duration / 3600))小时$(($bd_duration % 3600 / 60))分钟)"
+            else
+                log_error "  ❌ jq 修改时长失败（退出码: $jq_status）"
+                log_error "  🔍 DEBUG: bd_duration='$bd_duration'"
+                log_error "  🔍 DEBUG: ffprobe_output 前300字符: ${ffprobe_output:0:300}"
+                log_error "  🔍 DEBUG: jq 输出: ${updated_ffprobe:0:300}"
+                log_warn "  💡 跳过时长修正，使用原始 ffprobe 输出"
+            fi
         else
             log_info "  ✅ 时长一致性验证通过: 差异 ${duration_diff}秒"
         fi
@@ -1304,9 +1428,21 @@ process_iso_strm_full() {
         log_warn "  ⚠️  ffprobe 时长异常: ${ffprobe_duration}秒 (< 30 分钟)"
         log_warn "  ⚠️  使用 bd_list_titles 时长覆盖: ${bd_duration}秒"
 
-        ffprobe_output=$(echo "$ffprobe_output" | jq --arg duration "$bd_duration" '.format.duration = $duration')
+        # Fix 14: 验证 jq 修改是否成功
+        local updated_ffprobe
+        updated_ffprobe=$(echo "$ffprobe_output" | jq --arg duration "$bd_duration" '.format.duration = $duration' 2>&1)
+        local jq_status=$?
 
-        log_info "  ✅ 时长已修正为: ${bd_duration}秒 ($(($bd_duration / 3600))小时$(($bd_duration % 3600 / 60))分钟)"
+        if [ $jq_status -eq 0 ] && [ -n "$updated_ffprobe" ] && echo "$updated_ffprobe" | jq -e '.format' >/dev/null 2>&1; then
+            ffprobe_output="$updated_ffprobe"
+            log_info "  ✅ 时长已修正为: ${bd_duration}秒 ($(($bd_duration / 3600))小时$(($bd_duration % 3600 / 60))分钟)"
+        else
+            log_error "  ❌ jq 修改时长失败（退出码: $jq_status）"
+            log_error "  🔍 DEBUG: bd_duration='$bd_duration'"
+            log_error "  🔍 DEBUG: ffprobe_output 前300字符: ${ffprobe_output:0:300}"
+            log_error "  🔍 DEBUG: jq 输出: ${updated_ffprobe:0:300}"
+            log_warn "  💡 跳过时长修正，使用原始 ffprobe 输出"
+        fi
     elif [ "$ffprobe_duration" -ge 1800 ]; then
         log_info "  ✅ ffprobe 时长正常: ${ffprobe_duration}秒 ($(($ffprobe_duration / 3600))小时$(($ffprobe_duration % 3600 / 60))分钟)"
     elif [ "$ffprobe_duration" -gt 0 ] && [ "$ffprobe_duration" -lt 1800 ]; then
@@ -1332,13 +1468,45 @@ process_iso_strm_full() {
     fi
 
     # Convert to Emby format (convert_to_emby_format reads $lang_tags_file)
+    # Fix 14: 增强诊断日志
+    local ffprobe_video_count=$(echo "$ffprobe_output" | jq '[.streams[] | select(.codec_type=="video")] | length' 2>/dev/null || echo "0")
+    local ffprobe_audio_count=$(echo "$ffprobe_output" | jq '[.streams[] | select(.codec_type=="audio")] | length' 2>/dev/null || echo "0")
+    local ffprobe_subtitle_count=$(echo "$ffprobe_output" | jq '[.streams[] | select(.codec_type=="subtitle")] | length' 2>/dev/null || echo "0")
+
+    if [ "${LOG_LEVEL:-INFO}" = "DEBUG" ]; then
+        log_debug "  🔍 调用 convert_to_emby_format 前的参数检查："
+        log_debug "    - ffprobe_output 长度: ${#ffprobe_output} 字符"
+        log_debug "    - ffprobe_output 前200字符: ${ffprobe_output:0:200}"
+        log_debug "    - ffprobe 原始流数量: 视频=$ffprobe_video_count, 音频=$ffprobe_audio_count, 字幕=$ffprobe_subtitle_count"
+        log_debug "    - strm_file: $strm_file"
+        log_debug "    - iso_size: $iso_size"
+        log_debug "    - iso_type: $iso_type"
+        log_debug "    - lang_tags_file: $lang_tags_file"
+        if [ -f "$lang_tags_file" ]; then
+            log_debug "    - lang_tags_file 内容: $(cat "$lang_tags_file")"
+        else
+            log_debug "    - lang_tags_file 不存在！"
+        fi
+    fi
+
+    # Fix 14: 在调用前验证 ffprobe_output 有效性
+    if [ -z "$ffprobe_output" ]; then
+        log_error "  ❌ ffprobe_output 为空，无法转换"
+        return 1
+    elif ! echo "$ffprobe_output" | jq -e '.streams' >/dev/null 2>&1; then
+        log_error "  ❌ ffprobe_output 格式无效"
+        log_error "  🔍 DEBUG: ffprobe_output 前500字符: ${ffprobe_output:0:500}"
+        return 1
+    fi
+
     local emby_json
-    emby_json=$(convert_to_emby_format "$ffprobe_output" "$strm_file" "$iso_size" "$iso_type")
+    emby_json=$(convert_to_emby_format "$ffprobe_output" "$strm_file" "$iso_size" "$iso_type" "$lang_tags_file")
 
     if [ -z "$emby_json" ]; then
         debug_save_ffprobe "$ffprobe_output" "$strm_file"
         log_error "JSON 转换失败: $strm_file"
-        rm -f "$lang_tags_file"
+        log_warn "  💡 保留缓存文件以便下次快速重试: $lang_tags_file"
+        # 不删除 lang_tags_file，让下次重试可以使用缓存
         return 1
     fi
 
@@ -1348,8 +1516,31 @@ process_iso_strm_full() {
         echo "$emby_json" | jq . 2>&1 | head -10 | while IFS= read -r line; do
             log_error "  $line"
         done
-        rm -f "$lang_tags_file"
+        # Fix 13: 保留缓存以便快速重试，不删除 lang_tags_file
+        log_warn "  💡 保留缓存文件以便下次快速重试: $lang_tags_file"
         return 1
+    fi
+
+    # 验证 MediaStreams 字段存在性
+    if ! echo "$emby_json" | jq -e '.[0].MediaSourceInfo.MediaStreams' >/dev/null 2>&1; then
+        log_error "  ❌ MediaStreams 字段缺失或为 null: $strm_file"
+        log_error "  🔍 emby_json 预览（前500字符）:"
+        echo "$emby_json" | head -c 500 | while IFS= read -r line; do
+            log_error "    $line"
+        done
+        debug_save_ffprobe "$ffprobe_output" "$strm_file"
+        log_warn "  💡 保留缓存文件以便下次快速重试: $lang_tags_file"
+        # 不删除 lang_tags_file，让下次重试可以使用缓存
+        return 1
+    fi
+
+    # 调试日志：输出 emby_json 基本信息
+    if [ "${LOG_LEVEL:-INFO}" = "DEBUG" ]; then
+        local json_length=${#emby_json}
+        local streams_count=$(echo "$emby_json" | jq -r '.[0].MediaSourceInfo.MediaStreams | length' 2>/dev/null)
+        streams_count=${streams_count:-0}
+        log_debug "  🔍 emby_json 长度: $json_length 字符"
+        log_debug "  🔍 MediaStreams 总数: $streams_count"
     fi
 
     # Atomic write
@@ -1391,9 +1582,18 @@ process_iso_strm_full() {
     local ffprobe_audio_count=$(echo "$ffprobe_output" | jq '[.streams[] | select(.codec_type=="audio")] | length')
     local ffprobe_subtitle_count=$(echo "$ffprobe_output" | jq '[.streams[] | select(.codec_type=="subtitle")] | length')
 
-    local output_video_count=$(echo "$emby_json" | jq '.[0].MediaSourceInfo.MediaStreams | [.[] | select(.Type=="Video")] | length')
-    local output_audio_count=$(echo "$emby_json" | jq '.[0].MediaSourceInfo.MediaStreams | [.[] | select(.Type=="Audio")] | length')
-    local output_subtitle_count=$(echo "$emby_json" | jq '.[0].MediaSourceInfo.MediaStreams | [.[] | select(.Type=="Subtitle")] | length')
+    # 提取流统计信息（带错误处理和默认值）
+    local output_video_count=$(echo "$emby_json" | jq -r '.[0].MediaSourceInfo.MediaStreams | [.[] | select(.Type=="Video")] | length' 2>/dev/null)
+    output_video_count=${output_video_count:-0}
+    [ "$output_video_count" = "null" ] && output_video_count=0
+
+    local output_audio_count=$(echo "$emby_json" | jq -r '.[0].MediaSourceInfo.MediaStreams | [.[] | select(.Type=="Audio")] | length' 2>/dev/null)
+    output_audio_count=${output_audio_count:-0}
+    [ "$output_audio_count" = "null" ] && output_audio_count=0
+
+    local output_subtitle_count=$(echo "$emby_json" | jq -r '.[0].MediaSourceInfo.MediaStreams | [.[] | select(.Type=="Subtitle")] | length' 2>/dev/null)
+    output_subtitle_count=${output_subtitle_count:-0}
+    [ "$output_subtitle_count" = "null" ] && output_subtitle_count=0
 
     local lang_audio_count=$(jq -r '.audio_languages | length' "$lang_tags_file" 2>/dev/null || echo "0")
     local lang_subtitle_count=$(jq -r '.subtitle_languages | length' "$lang_tags_file" 2>/dev/null || echo "0")
@@ -1414,7 +1614,11 @@ process_iso_strm_full() {
 
     notify_emby_refresh "$json_file"
 
-    rm -f "$lang_tags_file"
+    # Fix 16: 任务成功后删除缓存文件（节省磁盘空间）
+    if [ -f "$lang_tags_file" ]; then
+        rm -f "$lang_tags_file"
+        log_info "  🗑️  已清理缓存文件（任务成功）: $(basename "$lang_tags_file")"
+    fi
 
     return 0
 }
