@@ -268,8 +268,10 @@ echo "   ✅ 安装 Cron 扫描器和处理库..."
 
 CRON_SCANNER="$SCRIPT_DIR/fantastic-probe-cron-scanner.sh"
 PROCESS_LIB="$SCRIPT_DIR/fantastic-probe-process-lib.sh"
+UPLOAD_LIB="$SCRIPT_DIR/fantastic-probe-upload-lib.sh"
 TARGET_CRON_SCANNER="/usr/local/bin/fantastic-probe-cron-scanner"
 TARGET_PROCESS_LIB="/usr/local/lib/fantastic-probe-process-lib.sh"
+TARGET_UPLOAD_LIB="/usr/local/lib/fantastic-probe-upload-lib.sh"
 
 # 检查文件是否存在
 if [ -f "$CRON_SCANNER" ]; then
@@ -287,6 +289,15 @@ if [ -f "$PROCESS_LIB" ]; then
     echo "   ✅ 处理库已安装到: $TARGET_PROCESS_LIB"
 else
     echo "   ⚠️  未找到处理库（跳过，不影响正常使用）"
+fi
+
+if [ -f "$UPLOAD_LIB" ]; then
+    mkdir -p /usr/local/lib
+    cp "$UPLOAD_LIB" "$TARGET_UPLOAD_LIB"
+    chmod +x "$TARGET_UPLOAD_LIB"
+    echo "   ✅ 上传库已安装到: $TARGET_UPLOAD_LIB"
+else
+    echo "   ⚠️  未找到上传库（跳过，不影响正常使用）"
 fi
 
 # 创建失败缓存目录（Cron 模式使用）
