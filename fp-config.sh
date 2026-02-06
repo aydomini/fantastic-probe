@@ -193,7 +193,7 @@ show_current_config() {
     echo "    API Key: ${EMBY_API_KEY:+(已配置)}"
     echo "    通知超时: ${EMBY_NOTIFY_TIMEOUT:-5}秒"
     echo ""
-    echo "  📤 自动上传:"
+    echo "  📤 目录上传:"
     echo "    启用状态: ${AUTO_UPLOAD_ENABLED:-false}"
     echo "    上传类型: ${UPLOAD_FILE_TYPES:-json}"
     echo "    批次间隔: ${UPLOAD_INTERVAL:-10}秒（目录之间）"
@@ -776,15 +776,15 @@ configure_emby() {
     fi
 }
 
-# 配置自动上传
+# 配置目录上传
 configure_upload() {
     echo ""
-    echo "📤 配置自动上传到网络存储"
+    echo "📤 配置目录上传到网络存储"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "   说明："
-    echo "   • 启用后，生成媒体信息文件时自动上传到网络存储（rclone）"
+    echo "   • 启用后，生成媒体信息文件时按目录上传到网络存储"
     echo "   • 支持多种文件类型：JSON、NFO、字幕、图片"
-    echo "   • 自动适应电影和剧集目录结构"
+    echo "   • 同一目录文件连续上传，目录之间批次间隔"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     echo "   当前状态："
@@ -802,7 +802,7 @@ configure_upload() {
         enable_prompt="y/N"
     fi
 
-    read -p "   是否启用自动上传？[$enable_prompt]: " enable_upload
+    read -p "   是否启用目录上传？[$enable_prompt]: " enable_upload
 
     if [ "$current_enabled" = "true" ]; then
         enable_upload="${enable_upload:-Y}"
@@ -811,7 +811,7 @@ configure_upload() {
     fi
 
     if [[ "$enable_upload" =~ ^[Yy]$ ]]; then
-        # 启用自动上传
+        # 启用目录上传
         echo ""
         echo "   配置上传参数："
         echo ""
@@ -843,14 +843,14 @@ configure_upload() {
         UPLOAD_INTERVAL="$new_upload_interval"
 
         echo ""
-        echo "   ✅ 自动上传已启用"
+        echo "   ✅ 目录上传已启用"
         echo "      上传类型: $new_upload_types"
-        echo "      上传间隔: ${new_upload_interval}秒"
+        echo "      批次间隔: ${new_upload_interval}秒"
     else
-        # 禁用自动上传
+        # 禁用目录上传
         update_config_line "AUTO_UPLOAD_ENABLED" "false"
         AUTO_UPLOAD_ENABLED="false"
-        echo "   ✅ 自动上传已禁用"
+        echo "   ✅ 目录上传已禁用"
     fi
 
     # 询问是否重启服务
@@ -1406,16 +1406,16 @@ uninstall_service() {
 # 上传管理函数
 #==============================================================================
 
-# 批量上传JSON文件
+# 目录上传
 bulk_upload_json() {
     echo ""
-    echo "📤 批量上传JSON文件"
+    echo "📤 目录上传"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 
     # 检查上传库是否可用
     if ! command -v upload_all_pending &> /dev/null; then
-        echo "   ❌ 上传库未加载，无法执行批量上传"
+        echo "   ❌ 上传库未加载，无法执行目录上传"
         echo "   请确保 fantastic-probe-upload-lib.sh 存在且已正确安装"
         echo ""
         return 1
@@ -1431,7 +1431,7 @@ bulk_upload_json() {
 
     echo "   扫描目录: $strm_root"
     echo ""
-    read -p "   确认开始批量上传？[Y/n]: " confirm
+    read -p "   确认开始目录上传？[Y/n]: " confirm
     confirm="${confirm:-Y}"
 
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
@@ -1441,15 +1441,15 @@ bulk_upload_json() {
     fi
 
     echo ""
-    echo "   🚀 开始批量上传..."
+    echo "   🚀 开始目录上传..."
     echo ""
 
-    # 调用上传库的批量上传函数
+    # 调用上传库的目录上传函数
     upload_all_pending "$strm_root"
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "   ✅ 批量上传完成"
+    echo "   ✅ 目录上传完成"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 }
@@ -2006,7 +2006,7 @@ system_menu() {
         echo "  4) 重启服务"
         echo "  5) 检查更新"
         echo "  6) 卸载服务"
-        echo "  7) 批量上传JSON文件"
+        echo "  7) 目录上传"
         echo "  8) 重试失败上传"
         echo "  9) 查看上传统计"
         echo "  0) 返回主菜单"
@@ -2094,7 +2094,7 @@ show_menu() {
                 echo "  1) 修改 STRM 根目录"
                 echo "  2) 重新配置 FFprobe"
                 echo "  3) 配置 Emby 集成"
-                echo "  4) 配置自动上传"
+                echo "  4) 配置目录上传"
                 echo "  0) 返回主菜单"
                 echo ""
                 read -p "请选择 [0-4]: " config_choice

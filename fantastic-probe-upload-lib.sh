@@ -19,8 +19,8 @@ UPLOAD_CACHE_DB="${UPLOAD_CACHE_DB:-/var/lib/fantastic-probe/upload_cache.db}"
 # Upload lock file (ensure serial uploads)
 UPLOAD_LOCK_FILE="${UPLOAD_LOCK_FILE:-/tmp/fantastic-probe-upload.lock}"
 
-# Upload interval (seconds between uploads, default 15s)
-UPLOAD_INTERVAL="${UPLOAD_INTERVAL:-15}"
+# Upload interval (seconds between directory batches, default 10s)
+UPLOAD_INTERVAL="${UPLOAD_INTERVAL:-10}"
 
 # Log file path (inherit from main config if available)
 LOG_FILE="${LOG_FILE:-/var/log/fantastic_probe.log}"

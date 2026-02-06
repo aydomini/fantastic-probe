@@ -733,7 +733,7 @@ if [ "$CONFIG_WIZARD_SKIP" != "true" ]; then
             echo "UPLOAD_FILE_TYPES=\"json\"" >> "$CONFIG_FILE"
             echo "UPLOAD_LOG_FILE=\"/var/log/fantastic_probe_upload.log\"" >> "$CONFIG_FILE"
             echo "UPLOAD_CACHE_DB=\"/var/lib/fantastic-probe/upload_cache.db\"" >> "$CONFIG_FILE"
-            echo "UPLOAD_INTERVAL=15" >> "$CONFIG_FILE"
+            echo "UPLOAD_INTERVAL=10" >> "$CONFIG_FILE"
             echo "   ✅ 已补充自动上传配置项（默认关闭）"
         else
             echo "   ✅ 自动上传配置已保留"
