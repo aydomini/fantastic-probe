@@ -355,6 +355,26 @@ upload_json_single() {
         upload_log_debug "  源文件: $json_file"
         upload_log_debug "  目标路径: $target_path"
 
+        # Check if target file already exists with same size
+        if [ -f "$target_path" ]; then
+            upload_log_debug "  目标文件已存在，检查文件大小..."
+
+            # Get file sizes (compatible with both macOS and Linux)
+            local source_size target_size
+            source_size=$(stat -f%z "$json_file" 2>/dev/null || stat -c%s "$json_file" 2>/dev/null)
+            target_size=$(stat -f%z "$target_path" 2>/dev/null || stat -c%s "$target_path" 2>/dev/null)
+
+            if [ "$source_size" = "$target_size" ]; then
+                # File already exists with same size, skip upload
+                record_upload_success "$json_file"
+                upload_console_success "$(basename "$json_file") (已存在，跳过上传)"
+                upload_log_success "文件已存在且大小相同，跳过上传: $(basename "$json_file") (${source_size} 字节)"
+                return 0
+            else
+                upload_log_debug "  文件大小不同（源: ${source_size}, 目标: ${target_size}），继续上传"
+            fi
+        fi
+
         # Ensure target directory exists
         local target_dir
         target_dir=$(dirname "$target_path")
