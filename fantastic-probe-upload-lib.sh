@@ -512,7 +512,12 @@ upload_all_pending() {
         return 0
     fi
 
-    strm_dirs=($(printf '%s\n' "${strm_dirs[@]}" | sort -u))
+    # Use mapfile to preserve spaces in directory names
+    local -a unique_dirs=()
+    while IFS= read -r dir; do
+        unique_dirs+=("$dir")
+    done < <(printf '%s\n' "${strm_dirs[@]}" | sort -u)
+    strm_dirs=("${unique_dirs[@]}")
     upload_console_info "找到 ${#strm_dirs[@]} 个 ISO 目录"
     upload_console ""
 
@@ -525,8 +530,6 @@ upload_all_pending() {
 
     # Step 2: Process each directory
     for strm_dir in "${strm_dirs[@]}"; do
-        total_dirs=$((total_dirs + 1))
-
         # Find all matching files in this directory (maxdepth 1)
         local -a dir_files=()
         while IFS= read -r file; do
@@ -537,6 +540,9 @@ upload_all_pending() {
         if [ ${#dir_files[@]} -eq 0 ]; then
             continue
         fi
+
+        # Only count directories with matching files
+        total_dirs=$((total_dirs + 1))
 
         # Display directory header
         local dir_name=$(basename "$strm_dir")
