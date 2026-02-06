@@ -50,6 +50,22 @@ load_process_library() {
         if [ -f "$lib_path" ]; then
             # shellcheck source=/dev/null
             source "$lib_path"
+
+            # Load upload library after process library
+            local upload_lib_paths=(
+                "/usr/local/lib/fantastic-probe-upload-lib.sh"
+                "$SCRIPT_DIR/fantastic-probe-upload-lib.sh"
+                "/usr/local/bin/fantastic-probe-upload-lib.sh"
+            )
+
+            for upload_lib_path in "${upload_lib_paths[@]}"; do
+                if [ -f "$upload_lib_path" ]; then
+                    # shellcheck source=/dev/null
+                    source "$upload_lib_path"
+                    break
+                fi
+            done
+
             return 0
         fi
     done
