@@ -6,6 +6,19 @@
 #==============================================================================
 
 #==============================================================================
+# Load Upload Library
+#==============================================================================
+
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load upload library if exists
+if [ -f "$SCRIPT_DIR/fantastic-probe-upload-lib.sh" ]; then
+    # shellcheck source=./fantastic-probe-upload-lib.sh
+    source "$SCRIPT_DIR/fantastic-probe-upload-lib.sh"
+fi
+
+#==============================================================================
 # Dependency Check Functions
 #==============================================================================
 
@@ -1690,6 +1703,11 @@ process_iso_strm_full() {
     fi
 
     notify_emby_refresh "$json_file"
+
+    # Trigger async JSON upload to network storage
+    if command -v upload_json_async &> /dev/null; then
+        upload_json_async "$json_file"
+    fi
 
     # Fix 16: 任务成功后删除缓存文件（节省磁盘空间）
     if [ -f "$lang_tags_file" ]; then

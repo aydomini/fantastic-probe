@@ -1288,6 +1288,181 @@ uninstall_service() {
 }
 
 #==============================================================================
+# 上传管理函数
+#==============================================================================
+
+# 批量上传JSON文件
+bulk_upload_json() {
+    echo ""
+    echo "📤 批量上传JSON文件"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # 检查上传库是否可用
+    if ! command -v upload_all_pending &> /dev/null; then
+        echo "   ❌ 上传库未加载，无法执行批量上传"
+        echo "   请确保 fantastic-probe-upload-lib.sh 存在且已正确安装"
+        echo ""
+        return 1
+    fi
+
+    # 加载配置文件获取STRM_ROOT
+    if [ -f "$CONFIG_FILE" ]; then
+        # shellcheck source=/dev/null
+        source "$CONFIG_FILE"
+    fi
+
+    local strm_root="${STRM_ROOT:-/mnt/sata1/media/媒体库/strm}"
+
+    echo "   扫描目录: $strm_root"
+    echo ""
+    read -p "   确认开始批量上传？[Y/n]: " confirm
+    confirm="${confirm:-Y}"
+
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "   ℹ️  操作已取消"
+        echo ""
+        return 0
+    fi
+
+    echo ""
+    echo "   🚀 开始批量上传..."
+    echo ""
+
+    # 调用上传库的批量上传函数
+    upload_all_pending "$strm_root"
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   ✅ 批量上传完成"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+}
+
+# 重试失败上传
+retry_failed_uploads_menu() {
+    echo ""
+    echo "🔄 重试失败上传"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # 检查上传库是否可用
+    if ! command -v retry_failed_uploads &> /dev/null; then
+        echo "   ❌ 上传库未加载，无法执行重试操作"
+        echo "   请确保 fantastic-probe-upload-lib.sh 存在且已正确安装"
+        echo ""
+        return 1
+    fi
+
+    # 检查数据库中失败的上传数量
+    local upload_db="${UPLOAD_CACHE_DB:-/var/lib/fantastic-probe/upload_cache.db}"
+
+    if [ ! -f "$upload_db" ]; then
+        echo "   ℹ️  上传数据库不存在，无失败记录"
+        echo ""
+        return 0
+    fi
+
+    local failed_count
+    failed_count=$(sqlite3 "$upload_db" \
+        "SELECT COUNT(*) FROM upload_cache WHERE status='failed';" 2>/dev/null || echo "0")
+
+    if [ "$failed_count" -eq 0 ]; then
+        echo "   ℹ️  没有失败的上传任务"
+        echo ""
+        return 0
+    fi
+
+    echo "   失败任务数: $failed_count"
+    echo ""
+    read -p "   确认重试所有失败的上传？[Y/n]: " confirm
+    confirm="${confirm:-Y}"
+
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "   ℹ️  操作已取消"
+        echo ""
+        return 0
+    fi
+
+    echo ""
+    echo "   🚀 开始重试..."
+    echo ""
+
+    # 调用上传库的重试函数
+    retry_failed_uploads
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   ✅ 重试完成"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+}
+
+# 查看上传统计
+show_upload_stats_menu() {
+    echo ""
+    echo "📊 上传统计信息"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # 检查上传库是否可用
+    if ! command -v get_upload_stats &> /dev/null; then
+        echo "   ❌ 上传库未加载，无法查看统计"
+        echo "   请确保 fantastic-probe-upload-lib.sh 存在且已正确安装"
+        echo ""
+        return 1
+    fi
+
+    local upload_db="${UPLOAD_CACHE_DB:-/var/lib/fantastic-probe/upload_cache.db}"
+
+    if [ ! -f "$upload_db" ]; then
+        echo "   ℹ️  上传数据库不存在"
+        echo ""
+        return 0
+    fi
+
+    # 查询统计信息
+    local total_count
+    total_count=$(sqlite3 "$upload_db" \
+        "SELECT COUNT(*) FROM upload_cache;" 2>/dev/null || echo "0")
+
+    local success_count
+    success_count=$(sqlite3 "$upload_db" \
+        "SELECT COUNT(*) FROM upload_cache WHERE status='success';" 2>/dev/null || echo "0")
+
+    local failed_count
+    failed_count=$(sqlite3 "$upload_db" \
+        "SELECT COUNT(*) FROM upload_cache WHERE status='failed';" 2>/dev/null || echo "0")
+
+    local pending_count
+    pending_count=$(sqlite3 "$upload_db" \
+        "SELECT COUNT(*) FROM upload_cache WHERE status='pending';" 2>/dev/null || echo "0")
+
+    # 显示统计信息
+    echo "   总任务数: $total_count"
+    echo "   ✅ 成功: $success_count"
+    echo "   ❌ 失败: $failed_count"
+    echo "   ⏳ 待上传: $pending_count"
+    echo ""
+
+    # 显示最近的失败记录（如果有）
+    if [ "$failed_count" -gt 0 ]; then
+        echo "   最近5条失败记录:"
+        echo "   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        sqlite3 "$upload_db" \
+            "SELECT json_file, last_error_message FROM upload_cache WHERE status='failed' ORDER BY updated_at DESC LIMIT 5;" 2>/dev/null | \
+            while IFS='|' read -r json_file error_msg; do
+                echo "   📄 $(basename "$json_file")"
+                echo "      错误: $error_msg"
+                echo ""
+            done
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+}
+
+#==============================================================================
 # 日志管理函数（增强版）
 #==============================================================================
 
@@ -1716,9 +1891,12 @@ system_menu() {
         echo "  4) 重启服务"
         echo "  5) 检查更新"
         echo "  6) 卸载服务"
+        echo "  7) 批量上传JSON文件"
+        echo "  8) 重试失败上传"
+        echo "  9) 查看上传统计"
         echo "  0) 返回主菜单"
         echo ""
-        read -p"请选择 [0-6]: " sys_choice
+        read -p"请选择 [0-9]: " sys_choice
         echo ""
 
         case "$sys_choice" in
@@ -1744,6 +1922,18 @@ system_menu() {
                 ;;
             6)
                 uninstall_service
+                ;;
+            7)
+                bulk_upload_json
+                read -p "按 Enter 继续..."
+                ;;
+            8)
+                retry_failed_uploads_menu
+                read -p "按 Enter 继续..."
+                ;;
+            9)
+                show_upload_stats_menu
+                read -p "按 Enter 继续..."
                 ;;
             0)
                 return

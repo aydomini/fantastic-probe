@@ -11,7 +11,7 @@ set -euo pipefail
 
 # Read version dynamically
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="1.2.1"  # Hardcoded default
+VERSION="1.2.2"  # Hardcoded default
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"

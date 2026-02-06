@@ -4,6 +4,18 @@ All notable changes to Fantastic-Probe are documented here.
 
 ---
 
+## [1.2.2] - 2026-02-06
+
+### New Features
+
+- Automatic JSON upload to cloud storage after generation
+- Path mapping from `.iso.strm` to calculate upload target
+- SQLite database tracks upload status
+- Serial upload queue with 15-second interval for rate limiting
+- Config panel: Bulk upload, Retry failed, Upload stats
+
+---
+
 ## [1.2.1] - 2026-02-02
 
 ### Initial Release

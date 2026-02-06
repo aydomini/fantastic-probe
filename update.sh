@@ -13,14 +13,14 @@ INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/aydomini/fantastic-probe/m
 
 # 动态读取当前版本号（从 Git tags → 硬编码默认值）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CURRENT_VERSION="1.2.1"  # 硬编码默认值
+CURRENT_VERSION="1.2.2"  # 硬编码默认值
 
 if [ -f "$SCRIPT_DIR/get-version.sh" ]; then
     source "$SCRIPT_DIR/get-version.sh"
     CURRENT_VERSION="$VERSION"
 elif command -v git &> /dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
     # 从 Git tags 获取版本号
-    CURRENT_VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "1.2.1")
+    CURRENT_VERSION=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "1.2.2")
 fi
 
 #==============================================================================
