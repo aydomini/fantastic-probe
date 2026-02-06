@@ -724,6 +724,20 @@ if [ "$CONFIG_WIZARD_SKIP" != "true" ]; then
         else
             echo "   ✅ Emby 配置已保留"
         fi
+
+        # 验证自动上传配置是否存在，如果不存在则追加
+        if ! grep -q "^AUTO_UPLOAD_ENABLED=" "$CONFIG_FILE" 2>/dev/null; then
+            echo "" >> "$CONFIG_FILE"
+            echo "# 自动上传配置（可选）" >> "$CONFIG_FILE"
+            echo "AUTO_UPLOAD_ENABLED=false" >> "$CONFIG_FILE"
+            echo "UPLOAD_FILE_TYPES=\"json\"" >> "$CONFIG_FILE"
+            echo "UPLOAD_LOG_FILE=\"/var/log/fantastic_probe_upload.log\"" >> "$CONFIG_FILE"
+            echo "UPLOAD_CACHE_DB=\"/var/lib/fantastic-probe/upload_cache.db\"" >> "$CONFIG_FILE"
+            echo "UPLOAD_INTERVAL=15" >> "$CONFIG_FILE"
+            echo "   ✅ 已补充自动上传配置项（默认关闭）"
+        else
+            echo "   ✅ 自动上传配置已保留"
+        fi
     elif [ -f "$SCRIPT_DIR/config/config.template" ]; then
         echo "   生成新配置文件..."
         cp "$SCRIPT_DIR/config/config.template" "$CONFIG_FILE"

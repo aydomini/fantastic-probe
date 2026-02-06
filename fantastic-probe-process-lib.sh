@@ -1704,9 +1704,11 @@ process_iso_strm_full() {
 
     notify_emby_refresh "$json_file"
 
-    # Trigger async JSON upload to network storage
-    if command -v upload_json_async &> /dev/null; then
-        upload_json_async "$json_file"
+    # Trigger async JSON upload to network storage (if enabled)
+    if [ "${AUTO_UPLOAD_ENABLED:-false}" = "true" ]; then
+        if command -v upload_json_async &> /dev/null; then
+            upload_json_async "$json_file"
+        fi
     fi
 
     # Fix 16: 任务成功后删除缓存文件（节省磁盘空间）

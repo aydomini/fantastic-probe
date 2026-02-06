@@ -192,6 +192,11 @@ show_current_config() {
     echo "    Emby URL: ${EMBY_URL:-(未配置)}"
     echo "    API Key: ${EMBY_API_KEY:+(已配置)}"
     echo "    通知超时: ${EMBY_NOTIFY_TIMEOUT:-5}秒"
+    echo ""
+    echo "  📤 自动上传:"
+    echo "    启用状态: ${AUTO_UPLOAD_ENABLED:-false}"
+    echo "    上传类型: ${UPLOAD_FILE_TYPES:-json}"
+    echo "    批次间隔: ${UPLOAD_INTERVAL:-10}秒（目录之间）"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 }
@@ -752,6 +757,100 @@ configure_emby() {
         update_config_line "EMBY_ENABLED" "false"
         EMBY_ENABLED="false"
         echo "   ✅ Emby 集成已禁用"
+    fi
+
+    # 询问是否重启服务
+    echo ""
+    read -p "   是否立即重启服务以应用配置？[Y/n]: " do_restart
+    do_restart="${do_restart:-Y}"
+
+    if [[ "$do_restart" =~ ^[Yy]$ ]]; then
+        restart_service
+    else
+        echo "   ⚠️  配置已更新，但需要应用后才能生效"
+        if [ -f "/etc/cron.d/fantastic-probe" ]; then
+            echo "   ℹ️  Cron 模式：配置将在下次扫描时自动应用（最多等待 1 分钟）"
+        else
+            echo "   手动重启: sudo fp-config restart"
+        fi
+    fi
+}
+
+# 配置自动上传
+configure_upload() {
+    echo ""
+    echo "📤 配置自动上传到网络存储"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   说明："
+    echo "   • 启用后，生成媒体信息文件时自动上传到网络存储（rclone）"
+    echo "   • 支持多种文件类型：JSON、NFO、字幕、图片"
+    echo "   • 自动适应电影和剧集目录结构"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "   当前状态："
+    echo "     启用: ${AUTO_UPLOAD_ENABLED:-false}"
+    echo "     上传类型: ${UPLOAD_FILE_TYPES:-json}"
+    echo "     上传间隔: ${UPLOAD_INTERVAL:-10}秒"
+    echo ""
+
+    # 判断当前启用状态
+    local current_enabled="${AUTO_UPLOAD_ENABLED:-false}"
+    local enable_prompt
+    if [ "$current_enabled" = "true" ]; then
+        enable_prompt="Y/n"
+    else
+        enable_prompt="y/N"
+    fi
+
+    read -p "   是否启用自动上传？[$enable_prompt]: " enable_upload
+
+    if [ "$current_enabled" = "true" ]; then
+        enable_upload="${enable_upload:-Y}"
+    else
+        enable_upload="${enable_upload:-N}"
+    fi
+
+    if [[ "$enable_upload" =~ ^[Yy]$ ]]; then
+        # 启用自动上传
+        echo ""
+        echo "   配置上传参数："
+        echo ""
+
+        # 配置上传类型
+        echo "   📦 上传文件类型"
+        echo "      支持的类型: json, nfo, srt, ass, ssa, png, jpg"
+        echo "      默认: json（仅上传媒体信息 JSON 文件）"
+        echo "      示例: json,nfo,srt,ass,png（上传 JSON、NFO、字幕和图片）"
+        read -p "      请输入上传类型 [默认: ${UPLOAD_FILE_TYPES:-json}]: " new_upload_types
+        new_upload_types="${new_upload_types:-${UPLOAD_FILE_TYPES:-json}}"
+
+        # 配置上传间隔
+        echo ""
+        echo "   ⏱️  上传间隔（秒）"
+        echo "      说明: 批次间隔（目录之间的等待时间，同一目录内连续上传）"
+        echo "      推荐: 10 秒（批次间隔，风控保护）"
+        read -p "      请输入上传间隔 [默认: ${UPLOAD_INTERVAL:-10}]: " new_upload_interval
+        new_upload_interval="${new_upload_interval:-${UPLOAD_INTERVAL:-10}}"
+
+        # 更新配置
+        update_config_line "AUTO_UPLOAD_ENABLED" "true"
+        update_config_line "UPLOAD_FILE_TYPES" "\"$new_upload_types\""
+        update_config_line "UPLOAD_INTERVAL" "$new_upload_interval"
+
+        # 更新当前环境变量
+        AUTO_UPLOAD_ENABLED="true"
+        UPLOAD_FILE_TYPES="$new_upload_types"
+        UPLOAD_INTERVAL="$new_upload_interval"
+
+        echo ""
+        echo "   ✅ 自动上传已启用"
+        echo "      上传类型: $new_upload_types"
+        echo "      上传间隔: ${new_upload_interval}秒"
+    else
+        # 禁用自动上传
+        update_config_line "AUTO_UPLOAD_ENABLED" "false"
+        AUTO_UPLOAD_ENABLED="false"
+        echo "   ✅ 自动上传已禁用"
     fi
 
     # 询问是否重启服务
@@ -1995,9 +2094,10 @@ show_menu() {
                 echo "  1) 修改 STRM 根目录"
                 echo "  2) 重新配置 FFprobe"
                 echo "  3) 配置 Emby 集成"
+                echo "  4) 配置自动上传"
                 echo "  0) 返回主菜单"
                 echo ""
-                read -p "请选择 [0-3]: " config_choice
+                read -p "请选择 [0-4]: " config_choice
                 echo ""
 
                 case "$config_choice" in
@@ -2011,6 +2111,10 @@ show_menu() {
                         ;;
                     3)
                         configure_emby
+                        read -p "按 Enter 继续..."
+                        ;;
+                    4)
+                        configure_upload
                         read -p "按 Enter 继续..."
                         ;;
                     0)

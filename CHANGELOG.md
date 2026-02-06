@@ -8,11 +8,12 @@ All notable changes to Fantastic-Probe are documented here.
 
 ### New Features
 
-- Automatic JSON upload to cloud storage after generation
-- Path mapping from `.iso.strm` to calculate upload target
-- SQLite database tracks upload status
-- Serial upload queue with 15-second interval for rate limiting
-- Config panel: Bulk upload, Retry failed, Upload stats
+- Automatic upload to cloud storage with configurable file types
+- Directory-grouped upload with batch interval optimization
+- Show-level file support for TV series metadata
+- Real-time console feedback and progress display
+- SQLite database for persistent upload status
+- Config panel for upload management
 
 ---
 
