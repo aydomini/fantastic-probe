@@ -297,7 +297,9 @@ if [ -f "$UPLOAD_LIB" ]; then
     chmod +x "$TARGET_UPLOAD_LIB"
     echo "   ✅ 上传库已安装到: $TARGET_UPLOAD_LIB"
 else
-    echo "   ⚠️  未找到上传库（跳过，不影响正常使用）"
+    echo "   ⚠️  未找到上传库文件: $UPLOAD_LIB"
+    echo "   ⚠️  警告：目录上传功能将不可用"
+    echo "   ⚠️  如需使用上传功能，请确保源码完整后重新安装"
 fi
 
 # 创建失败缓存目录（Cron 模式使用）
