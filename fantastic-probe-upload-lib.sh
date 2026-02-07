@@ -435,6 +435,155 @@ upload_json_async() {
 }
 
 #==============================================================================
+# Auto upload function (for single directory)
+#==============================================================================
+
+# Upload all configured file types in a single directory (sync)
+# Called by process_iso_strm_full() after JSON generation
+upload_directory_files() {
+    local strm_dir="$1"
+    local file_types="${2:-$UPLOAD_FILE_TYPES}"
+
+    # Skip if directory doesn't exist
+    if [ ! -d "$strm_dir" ]; then
+        upload_log_error "目录不存在: $strm_dir"
+        return 1
+    fi
+
+    upload_log_info "开始自动上传: $strm_dir (类型: $file_types)"
+
+    # Parse file types and build find patterns (reuse logic from upload_all_pending)
+    IFS=',' read -ra types_array <<< "$file_types"
+    local find_patterns=()
+    local first=true
+
+    for type in "${types_array[@]}"; do
+        type=$(echo "$type" | tr -d ' ')  # Remove spaces
+        case "$type" in
+            json)
+                if [ "$first" = true ]; then
+                    find_patterns+=("-name" "*.iso-mediainfo.json")
+                    first=false
+                else
+                    find_patterns+=("-o" "-name" "*.iso-mediainfo.json")
+                fi
+                ;;
+            nfo)
+                if [ "$first" = true ]; then
+                    find_patterns+=("-name" "*.nfo")
+                    first=false
+                else
+                    find_patterns+=("-o" "-name" "*.nfo")
+                fi
+                ;;
+            srt)
+                if [ "$first" = true ]; then
+                    find_patterns+=("-name" "*.srt")
+                    first=false
+                else
+                    find_patterns+=("-o" "-name" "*.srt")
+                fi
+                ;;
+            ass)
+                if [ "$first" = true ]; then
+                    find_patterns+=("-name" "*.ass")
+                    first=false
+                else
+                    find_patterns+=("-o" "-name" "*.ass")
+                fi
+                ;;
+            ssa)
+                if [ "$first" = true ]; then
+                    find_patterns+=("-name" "*.ssa")
+                    first=false
+                else
+                    find_patterns+=("-o" "-name" "*.ssa")
+                fi
+                ;;
+            png)
+                if [ "$first" = true ]; then
+                    find_patterns+=("-name" "*.png")
+                    first=false
+                else
+                    find_patterns+=("-o" "-name" "*.png")
+                fi
+                ;;
+            jpg)
+                if [ "$first" = true ]; then
+                    find_patterns+=("(" "-name" "*.jpg" "-o" "-name" "*.jpeg" ")")
+                    first=false
+                else
+                    find_patterns+=("-o" "(" "-name" "*.jpg" "-o" "-name" "*.jpeg" ")")
+                fi
+                ;;
+        esac
+    done
+
+    if [ ${#find_patterns[@]} -eq 0 ]; then
+        upload_log_error "没有配置有效的上传文件类型"
+        return 1
+    fi
+
+    # Find all matching files in this directory (maxdepth 1)
+    local -a dir_files=()
+    while IFS= read -r file; do
+        dir_files+=("$file")
+    done < <(find "$strm_dir" -maxdepth 1 -type f \( "${find_patterns[@]}" \) 2>/dev/null || true)
+
+    # Skip if no matching files
+    if [ ${#dir_files[@]} -eq 0 ]; then
+        upload_log_debug "未找到匹配的文件: $strm_dir"
+        return 0
+    fi
+
+    upload_log_info "找到 ${#dir_files[@]} 个待上传文件"
+
+    # Statistics
+    local success_count=0
+    local failure_count=0
+    local skipped_count=0
+
+    # Process files in this directory
+    for file in "${dir_files[@]}"; do
+        # Check if file exists in database with success status
+        local db_status
+        db_status=$(sqlite3 "$UPLOAD_CACHE_DB" \
+            "SELECT status FROM upload_cache WHERE json_file='$file';" 2>/dev/null || echo "")
+
+        if [ "$db_status" = "success" ]; then
+            upload_log_debug "跳过已上传: $(basename "$file")"
+            skipped_count=$((skipped_count + 1))
+            continue
+        fi
+
+        upload_log_info "上传文件: $(basename "$file")"
+
+        # Upload file (serial, blocking)
+        if upload_file_single "$file"; then
+            success_count=$((success_count + 1))
+        else
+            failure_count=$((failure_count + 1))
+        fi
+    done
+
+    upload_log_info "自动上传完成: 成功 $success_count, 失败 $failure_count, 跳过 $skipped_count"
+    return 0
+}
+
+# Upload all configured file types in a single directory (async)
+# Wrapper for background execution
+upload_directory_files_async() {
+    local strm_dir="$1"
+    local file_types="${2:-$UPLOAD_FILE_TYPES}"
+
+    # Run in background
+    (
+        upload_directory_files "$strm_dir" "$file_types"
+    ) &
+    disown
+}
+
+#==============================================================================
 # Bulk upload function (for existing JSON files)
 #==============================================================================
 

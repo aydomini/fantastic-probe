@@ -19,6 +19,19 @@ if [ -f "$SCRIPT_DIR/fantastic-probe-upload-lib.sh" ]; then
 fi
 
 #==============================================================================
+# Load Configuration
+#==============================================================================
+
+# Configuration file path
+CONFIG_FILE="${CONFIG_FILE:-/etc/fantastic-probe/config}"
+
+# Load configuration file if exists
+if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+fi
+
+#==============================================================================
 # Dependency Check Functions
 #==============================================================================
 
@@ -1704,10 +1717,11 @@ process_iso_strm_full() {
 
     notify_emby_refresh "$json_file"
 
-    # Trigger async JSON upload to network storage (if enabled)
+    # Trigger async directory upload to network storage (if enabled)
+    # Upload all configured file types (JSON, NFO, subtitles, images) in the same directory
     if [ "${AUTO_UPLOAD_ENABLED:-false}" = "true" ]; then
-        if command -v upload_json_async &> /dev/null; then
-            upload_json_async "$json_file"
+        if command -v upload_directory_files_async &> /dev/null; then
+            upload_directory_files_async "$strm_dir" "$UPLOAD_FILE_TYPES"
         fi
     fi
 
